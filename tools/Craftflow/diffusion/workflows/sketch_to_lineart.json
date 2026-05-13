@@ -1,0 +1,99 @@
+{
+  "_comment": [
+    "ComfyUI workflow: Sketch → Clean Anime Lineart via ControlNet + SDXL",
+    "",
+    "NOTE: ScribblePreprocessor removed — sketch is fed directly to ControlNet.",
+    "Install comfyui_controlnet_aux and restore node '3' for cleaner results.",
+    "",
+    "SETUP (one-time):",
+    "  1. Download an anime SDXL model → ComfyUI/models/checkpoints/",
+    "     Recommended: AnythingXL or BluePencilXL",
+    "  2. Download ControlNet model → ComfyUI/models/controlnet/",
+    "     controlnet-scribble-sdxl-1.0.safetensors",
+    "  3. Update 'ckpt_name' and 'control_net_name' below to match your files.",
+    "",
+    "The 'LoadImage' node's 'image' field is overwritten at runtime by art_generate.py."
+  ],
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "AnythingXL_xl.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__PLACEHOLDER__",
+      "upload": "image"
+    }
+  },
+  "4": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "controlnet-scribble-sdxl-1.0.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "anime lineart, clean line art, black and white, manga style, precise thin lines, white background, no shading, no color, no fill, high quality illustration lineart",
+      "clip": ["1", 1]
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "color, shading, gradient, blurry, low quality, noise, watermark, sketch lines, rough lines, messy lines, 3d render, realistic",
+      "clip": ["1", 1]
+    }
+  },
+  "7": {
+    "class_type": "ControlNetApplyAdvanced",
+    "inputs": {
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "control_net": ["4", 0],
+      "image": ["2", 0],
+      "strength": 0.85,
+      "start_percent": 0.0,
+      "end_percent": 1.0
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["7", 0],
+      "negative": ["7", 1],
+      "latent_image": ["9", 0],
+      "seed": 42,
+      "steps": 20,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "karras",
+      "denoise": 0.9
+    }
+  },
+  "9": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "11": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["10", 0],
+      "filename_prefix": "craftflow_lineart"
+    }
+  }
+}

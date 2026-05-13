@@ -1,0 +1,25 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f0f17;
+  --surface: #1a1a2e;
+  --border: #2e2e4a;
+  --accent: #7c6af7;
+  --accent-hover: #9585ff;
+  --text: #e2e2f0;
+  --muted: #6b6b8a;
+  --danger: #f97070;
+  --success: #6fcf97;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,45 @@
+# Craftflow Senior Architect & Full-stack Developer Instructions
+
+## 1. Project Context
+- **Name:** Craftflow
+- **Description:** A private creative assistant for writers and artists. Focuses on local-first AI (Ollama/ComfyUI) for novel writing and art generation.
+- **Core Philosophy:** Human-in-the-loop (AI suggests, never overwrites), Local-first (GPU-intensive tasks on local machine), and Content Integrity (Original drafts stay untouched).
+
+## 2. Tech Stack
+- **Backend:** Python 3.10+, FastAPI, SQLAlchemy (SQLite), Pydantic v2.
+- **Frontend:** React 18 (Vite), JavaScript, Vanilla CSS.
+- **AI Infrastructure:** 
+  - Ollama (LLM/Vision): `http://host.docker.internal:11434`
+  - ComfyUI (Diffusion): `http://host.docker.internal:8188`
+  - Models: `dolphin-llama3` (Text/Translation), `qwen2.5vl:7b` (Vision Analysis).
+- **Environment:** Dockerized environment. Use `host.docker.internal` for host machine services.
+
+## 3. Directory Structure
+- `backend/`: FastAPI app, models, and service layer.
+- `frontend/`: React source code (ComposeTab, GenerateTab, ProcessTab).
+- `tools/Craftflow/`: Core algorithms (Legacy logic to be migrated to services).
+- `doc/`: Strategic plans and development logs.
+
+## 4. Coding Standards & Rules
+- **Backend:** 
+    - Use FastAPI router patterns.
+    - Business logic in `app/services/`.
+    - Data models in `app/models/`.
+    - Schemas in `app/schemas/`.
+    - Maintain type safety with Pydantic v2.
+- **Frontend:** 
+    - Functional components with React Hooks.
+    - CSS-in-JS or Vanilla CSS (Prefer simplicity).
+    - Clean state management.
+- **AI Integration:** 
+    - Always handle timeouts and connection errors.
+    - Provide real-time progress feedback for long tasks.
+- **Non-destructive:** 
+    - Rewrite/analysis results MUST be saved to separate files or fields.
+    - NEVER overwrite user's original text without explicit command.
+
+## 5. Mission Pattern
+1. **Analyze:** Check interaction between FE -> BE -> AI.
+2. **Strategy:** Propose a plan before writing code.
+3. **Execution:** Provide clean, idiomatic, and documented code.
+4. **Validation:** Suggest test cases or run existing tests.
