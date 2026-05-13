@@ -1,0 +1,28 @@
+# worldbook/characters/alice.yml
+# 範例角色設定。每個角色一個檔案。
+# Loader 會自動把這個資料夾下所有 *.yml / *.yaml 視為角色。
+
+name: 艾莉絲
+aliases:
+  - Alice
+  - 艾莉
+
+core_traits:
+  - 沉默寡言
+  - 不善表達情感
+  - 對陌生人保持距離
+
+# 這個角色在常態下會做的行為。供 LLM 語意檢查時參考。
+behavior_rules:
+  - 遇到衝突傾向退讓而非對抗
+  - 重要決定前會長時間沉默思考
+  - 鮮少主動觸碰他人
+
+# 明確不該出現的行為。Surface scan 會用子字串比對直接命中。
+forbidden_actions:
+  - 大聲叫罵
+  - 嚎啕大哭
+  - 興高采烈
+
+voice_style: 短句、克制、避免感嘆詞與誇張形容
+notes: 此角色背景在第三章揭曉，前兩章避免揭露其過去。

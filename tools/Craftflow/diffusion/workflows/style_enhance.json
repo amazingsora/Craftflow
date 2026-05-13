@@ -1,0 +1,154 @@
+{
+  "_comment": [
+    "ComfyUI workflow: Style-Consistent Enhancement via IP-Adapter + ControlNet",
+    "",
+    "Used by two modes:",
+    "  enhance      — sketch + user's own art → personal style, commercial quality",
+    "  style_explore — sketch + any style ref → see sketch in a different art style",
+    "",
+    "IP-Adapter weight is overwritten at runtime by art_enhancer.py:",
+    "  enhance:      0.85  (stay close to style reference)",
+    "  style_explore: 0.65 (looser blend with base model)",
+    "",
+    "Node roles (referenced by ID in art_enhancer.py):",
+    "  '2' → LoadImage: sketch input   (overwritten at runtime)",
+    "  '3' → LoadImage: style reference (overwritten at runtime)",
+    "  '6' → IPAdapterAdvanced: weight  (overwritten at runtime)",
+    "",
+    "SETUP (one-time):",
+    "  1. Install IP-Adapter nodes:",
+    "       cd ComfyUI/custom_nodes",
+    "       git clone https://github.com/cubiq/ComfyUI_IPAdapter_plus.git",
+    "  2. Download IP-Adapter model → ComfyUI/models/ipadapter/",
+    "       ip-adapter-plus_sdxl_vit-h.bin",
+    "       https://huggingface.co/h94/IP-Adapter/tree/main/sdxl_models",
+    "  3. Download CLIP Vision model → ComfyUI/models/clip_vision/",
+    "       CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+    "       https://huggingface.co/h94/IP-Adapter/tree/main/models/image_encoder",
+    "  4. Confirm ckpt_name and control_net_name match your downloaded files.",
+    "  5. See doc/art_module_setup.md for full instructions."
+  ],
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "AnythingXL_xl.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__SKETCH__",
+      "upload": "image"
+    }
+  },
+  "3": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__STYLE_REF__",
+      "upload": "image"
+    }
+  },
+  "4": {
+    "class_type": "IPAdapterModelLoader",
+    "inputs": {
+      "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "open_clip_model.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "model": ["1", 0],
+      "ipadapter": ["4", 0],
+      "image": ["3", 0],
+      "clip_vision": ["5", 0],
+      "weight": 0.85,
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0.0,
+      "end_at": 1.0,
+      "embeds_scaling": "V only"
+    }
+  },
+  "7": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "controlnet-scribble-sdxl-1.0.safetensors"
+    }
+  },
+  "8": {
+    "class_type": "ScribblePreprocessor",
+    "inputs": {
+      "image": ["2", 0],
+      "resolution": 1024
+    }
+  },
+  "9": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "high quality illustration, detailed linework, masterpiece, best quality",
+      "clip": ["1", 1]
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "low quality, blurry, watermark, text, bad anatomy, extra limbs",
+      "clip": ["1", 1]
+    }
+  },
+  "11": {
+    "class_type": "ControlNetApplyAdvanced",
+    "inputs": {
+      "positive": ["9", 0],
+      "negative": ["10", 0],
+      "control_net": ["7", 0],
+      "image": ["8", 0],
+      "strength": 0.8,
+      "start_percent": 0.0,
+      "end_percent": 1.0
+    }
+  },
+  "12": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["6", 0],
+      "positive": ["11", 0],
+      "negative": ["11", 1],
+      "latent_image": ["13", 0],
+      "seed": 42,
+      "steps": 25,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "karras",
+      "denoise": 1.0
+    }
+  },
+  "13": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "14": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["12", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "15": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["14", 0],
+      "filename_prefix": "craftflow_enhanced"
+    }
+  }
+}
