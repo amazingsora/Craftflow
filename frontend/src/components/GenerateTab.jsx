@@ -99,7 +99,8 @@ const S = {
 export default function GenerateTab({ onAddHistory }) {
   const [promptZh, setPromptZh] = useState('')
   const [promptEn, setPromptEn] = useState('')
-  const [optimizedEn, setOptimizedEn] = useState('') // 新增：儲存 AI 優化的內容
+  const [optimizedEn, setOptimizedEn] = useState('')
+  const [detectedStyle, setDetectedStyle] = useState(null) // 後端偵測到的 checkpoint style
   const [negPrompt, setNegPrompt] = useState(DEFAULT_NEGATIVE)
   const [steps, setSteps] = useState(20)
   const [seed, setSeed] = useState(-1)
@@ -107,7 +108,9 @@ export default function GenerateTab({ onAddHistory }) {
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [optimizing, setOptimizing] = useState(false)
-  const [copied, setCopied] = useState(false) // 新增：複製狀態
+  const [optimizeElapsed, setOptimizeElapsed] = useState(0)
+  const optimizeTimer = useRef()
+  const [copied, setCopied] = useState(false)
   const [progress, setProgress] = useState(0)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState(null)
@@ -130,20 +133,24 @@ export default function GenerateTab({ onAddHistory }) {
   const onOptimize = async () => {
     if (!promptZh.trim() || optimizing) return
     setOptimizing(true)
+    setOptimizeElapsed(0)
+    optimizeTimer.current = setInterval(() => setOptimizeElapsed(s => s + 1), 1000)
     try {
-      const resp = await fetch('/api/v1/art/optimize-prompt', {
+      const resp = await fetch('/api/v1/art/compile-prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: promptZh }),
       })
       const data = await resp.json()
-      if (data.optimized) {
-        // 更新獨立的優化內容，而不改動 promptZh 和 promptEn 欄位
-        setOptimizedEn(data.optimized.trim())
+      if (data.positive) {
+        setOptimizedEn(data.positive.trim())
+        setNegPrompt(data.negative || DEFAULT_NEGATIVE)
+        setDetectedStyle(data.style || null)
       }
     } catch (e) {
-      console.error('Optimization failed:', e)
+      console.error('Compile failed:', e)
     } finally {
+      clearInterval(optimizeTimer.current)
       setOptimizing(false)
     }
   }
@@ -229,13 +236,25 @@ export default function GenerateTab({ onAddHistory }) {
       <div style={S.form}>
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <label style={S.label}>中文描述 (用於翻譯優化)</label>
-            <button 
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ ...S.label, marginBottom: 0 }}>中文描述 (用於翻譯優化)</label>
+              {detectedStyle && (
+                <span style={{
+                  fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                  background: 'rgba(124, 106, 247, 0.15)',
+                  border: '1px solid rgba(124, 106, 247, 0.4)',
+                  color: 'var(--accent)', fontWeight: 600, letterSpacing: '0.05em',
+                }}>
+                  {detectedStyle.toUpperCase()}
+                </span>
+              )}
+            </div>
+            <button
               style={{ ...S.btnSecondary, padding: '2px 8px', fontSize: 11, background: 'rgba(126, 184, 247, 0.1)', borderColor: 'var(--accent)', color: 'var(--accent)' }}
               onClick={onOptimize}
               disabled={optimizing || !promptZh.trim()}
             >
-              {optimizing ? '優化中...' : '✨ AI 優化英文'}
+              {optimizing ? '編譯中...' : '✨ AI 編譯提示詞'}
             </button>
           </div>
           <textarea
@@ -244,6 +263,23 @@ export default function GenerateTab({ onAddHistory }) {
             value={promptZh}
             onChange={(e) => setPromptZh(e.target.value)}
           />
+          {optimizing && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 11, color: 'var(--accent)' }}>✨ AI 翻譯優化中...</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>{optimizeElapsed}s</span>
+              </div>
+              <div style={{ width: '100%', background: 'var(--border)', height: 4, borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  background: 'var(--accent)',
+                  borderRadius: 2,
+                  width: '40%',
+                  animation: 'optimizePulse 1.2s ease-in-out infinite',
+                }} />
+              </div>
+            </div>
+          )}
         </div>
         <div>
           <label style={S.label}>手動英文標籤 (技術關鍵字/補充)</label>

@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import time
 from pathlib import Path
+from typing import Optional
 
 import requests
 
@@ -18,11 +19,25 @@ TIMEOUT_TEXT = 300
 TIMEOUT_VISION = 300
 
 
-def generate(prompt: str, model: str = DEFAULT_TEXT_MODEL) -> str:
+def generate(
+    prompt: str,
+    model: str = DEFAULT_TEXT_MODEL,
+    options: Optional[dict] = None,
+) -> str:
+    """
+    Text generation via Ollama /api/generate.
+
+    options examples:
+      {"temperature": 0.3, "num_predict": 200}  — stable tag output
+      {"temperature": 0.8}                       — creative writing
+    """
+    payload: dict = {"model": model, "prompt": prompt, "stream": False}
+    if options:
+        payload["options"] = options
     try:
         r = requests.post(
             f"{OLLAMA_BASE}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
+            json=payload,
             timeout=TIMEOUT_TEXT,
         )
         r.raise_for_status()
