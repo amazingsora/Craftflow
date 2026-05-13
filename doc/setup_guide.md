@@ -48,32 +48,39 @@ npm --version        # 10.x.x
 
 ## 步驟 0 — 依硬體選擇模型
 
+> **目標：** 所有 AI 功能在 **1–3 分鐘內**完成。  
 > **決定因素：** 有 GPU 看 **VRAM**，無 GPU 看 **RAM**。  
 > 確認後，把對應的 `TEXT_MODEL` / `VISION_MODEL` 填入 `.env`。
 
 ### 有 GPU（NVIDIA RTX 系列）
 
-| GPU 型號 | VRAM | TEXT_MODEL | VISION_MODEL |
-|---|---|---|---|
-| RTX 5090 | 32GB | `qwen2.5:14b` | `qwen2.5vl:7b` |
-| RTX 4090 / 3090 | 24GB | `qwen2.5:14b` | `qwen2.5vl:7b` |
-| RTX 5070 Ti / 4080 / 3080 Ti | 16GB | `dolphin-llama3` | `qwen2.5vl:7b` ← 預設 |
-| RTX 5070 / 4070 Ti / 3080 | 12GB | `dolphin-llama3` | `llava:7b` |
-| RTX 4070 / 3060 12GB | 12GB | `dolphin-llama3` | `llava:7b` |
-| RTX 4060 Ti / 3070 | 8GB | `llama3.2:3b` | `llava:7b` |
-| RTX 4060 / 3060 8GB | 8GB | `llama3.2:3b` | `moondream` |
+時間估算欄位：**文字分析** / **視覺分析** / **ComfyUI 生圖**（均為單次作業）
 
-> **ComfyUI 圖像生成** 建議 12GB VRAM 以上。8GB 可執行但解析度受限。
+| GPU 型號 | VRAM | TEXT_MODEL | VISION_MODEL | 文字 | 視覺 | ComfyUI | ≤3min |
+|---|---|---|---|---|---|---|---|
+| RTX 5090 | 32GB | `qwen2.5:14b` | `qwen2.5vl:7b` | ~12s | ~20s | ~35s | ✅ |
+| RTX 4090 / 3090 | 24GB | `qwen2.5:14b` | `qwen2.5vl:7b` | ~17s | ~27s | ~50s | ✅ |
+| RTX 5070 Ti / 4080 | 16GB | `dolphin-llama3` | `qwen2.5vl:7b` | ~25s | ~40s | ~75s | ✅ ← **當前配置** |
+| RTX 5070 / 3080 Ti | 12GB | `dolphin-llama3` | `llava:7b` | ~33s | ~53s | ~100s | ✅ |
+| RTX 4070 / 3060 12GB | 12GB | `dolphin-llama3` | `llava:7b` | ~38s | ~62s | ~110s | ✅ |
+| RTX 4060 Ti / 3070 | 8GB | `llama3.2:3b` | `llava:7b` | ~50s | ~80s | ~2.5min | ✅ |
+| RTX 4060 / 3060 8GB | 8GB | `llama3.2:3b` | `moondream` | ~60s | ~100s | ~3min | ⚠️ 邊緣 |
+
+> ⚠️ **8GB VRAM**：ComfyUI 生圖可能剛好壓線，解析度建議不超過 512×512。  
+> ✳️ **視覺分析 ~40s** 為 RTX 5070 Ti 實測值（`qwen2.5vl:7b`，2026-05-13）。其餘為等比推算。
 
 ### 無 GPU（CPU 模式）
 
-| RAM | TEXT_MODEL | VISION_MODEL | 預期速度 |
-|---|---|---|---|
-| 64GB | `llama3.2:8b` | `llava:7b` | 慢（約 2–5 min/次） |
-| 32GB | `llama3.2:8b` | `llava:7b` | 慢（約 3–8 min/次） |
-| 16GB | `llama3.2:3b` | `moondream` | 極慢（約 5–15 min/次） |
+> ❌ **CPU 模式無法達到 1–3 分鐘目標**，ComfyUI 圖像生成亦不可用。  
+> 適合純文字功能的輕度使用或暫時替代方案。
 
-> CPU 型號（i5 12代 ~ AMD 9800X3D）影響速度但不影響模型選擇；RAM 才是上限。
+| RAM | TEXT_MODEL | VISION_MODEL | 文字 | 視覺 |
+|---|---|---|---|---|
+| 64GB | `llama3.2:8b` | `llava:7b` | ~5min | ~10min |
+| 32GB | `llama3.2:8b` | `llava:7b` | ~6min | ~13min |
+| 16GB | `llama3.2:3b` | `moondream` | ~10min | ~20min+ |
+
+> CPU 型號（i5 12代 ~ AMD 9800X3D）影響速度但不影響模型選擇；RAM 才是瓶頸。
 
 ---
 
@@ -103,7 +110,9 @@ ollama pull <VISION_MODEL>    # 視覺分析，例如 qwen2.5vl:7b
 ```powershell
 .\run_nvidia_gpu.bat -- --listen 0.0.0.0
 ```
-
+圖中為ComfyUI_portable
+![alt text](image.png)
+![alt text](image-1.png)
 > `--listen 0.0.0.0` 讓 Docker 容器可以連進 ComfyUI。
 
 ### 3. 複製專案與設定環境
@@ -112,8 +121,20 @@ ollama pull <VISION_MODEL>    # 視覺分析，例如 qwen2.5vl:7b
 git clone <repo-url> Craftflow
 cd Craftflow
 copy .env.example .env
-# .env 預設值即可直接使用，不需修改
 ```
+配置如圖(5070ti)
+![alt text](image-2.png)
+
+
+
+依**步驟 0** 的結果，開啟 `.env` 確認或修改模型設定：
+
+```env
+TEXT_MODEL=dolphin-llama3    # ← 依步驟 0 的建議填入
+VISION_MODEL=qwen2.5vl:7b   # ← 同上
+```
+
+> 💡 **之後換裝置或更換模型**：只需修改 `.env` 的這兩行，再執行 `docker compose down && docker compose up` 即可，不需改任何程式碼。
 
 ### 4. 啟動 Docker 服務
 

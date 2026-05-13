@@ -1,0 +1,35 @@
+# Craftflow — Checkpoint → Prompt Style 對照表
+#
+# 規則：
+#   key   = checkpoint 檔名的關鍵字（不含副檔名，大小寫不分）
+#   value = 對應的 prompt style（sdxl / pony / flux / noobai / illustrious）
+#
+# 新增模型時，只要在這裡加一行，不需要改任何程式碼。
+# 若 checkpoint 名稱不在清單內，系統預設使用 sdxl。
+
+checkpoints:
+  # ── SDXL 系列 ──────────────────────────────────────────────
+  AnythingXL:       sdxl
+  BluePencilXL:     sdxl
+  CounterfeitXL:    sdxl
+  DreamShaperXL:    sdxl
+  JuggernautXL:     sdxl
+  RealVisXL:        sdxl
+
+  # ── Pony 系列 ──────────────────────────────────────────────
+  ponyDiffusion:    pony
+  autismmixSDXL:    pony
+  prefectPonyXL:    pony
+
+  # ── Flux 系列 ──────────────────────────────────────────────
+  flux1-dev:        flux
+  flux1-schnell:    flux
+  fluxDev:          flux
+
+  # ── NoobAI 系列 ────────────────────────────────────────────
+  noobaiXL:         noobai
+  noobAI:           noobai
+
+  # ── Illustrious 系列 ───────────────────────────────────────
+  illustriousXL:    illustrious
+  IllustriousXL:    illustrious
