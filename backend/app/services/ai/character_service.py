@@ -9,6 +9,58 @@ from __future__ import annotations
 from app.services.ai import ollama_client
 
 
+def generate_summary(
+    name: str,
+    core_traits: str | None = None,
+    behavior_rules: str | None = None,
+    voice_style: str | None = None,
+    notes: str | None = None,
+    model: str = ollama_client.DEFAULT_TEXT_MODEL,
+) -> str:
+    """
+    Take raw user-input character fields and produce a structured AI-organized profile summary.
+    Output is in Traditional Chinese, formatted for display.
+    """
+    raw_notes = "\n".join(filter(None, [
+        f"外貌/個性：{core_traits}" if core_traits else None,
+        f"行為模式：{behavior_rules}" if behavior_rules else None,
+        f"說話風格：{voice_style}" if voice_style else None,
+        f"補充筆記：{notes}" if notes else None,
+    ])) or "（無補充資料）"
+
+    prompt = f"""你是一位專業的角色設定整理師，正在為小說角色「{name}」建立角色檔案。
+
+以下是作者提供的原始筆記：
+{raw_notes}
+
+請將上述資料整理成一份結構清晰的角色設定檔，使用繁體中文，格式如下：
+
+## 角色概述
+（一段話總結這個角色的核心定位與魅力，50字以內）
+
+## 外貌與氣質
+（外貌特徵、穿著風格、整體氣質）
+
+## 性格特質
+（核心個性、優點、缺點或矛盾面）
+
+## 行為模式
+（面對事情的反應方式、習慣、癖好）
+
+## 說話方式
+（語氣、常用詞彙、說話特色）
+
+## 創作備注
+（對作者有用的額外提示、潛在故事線等）
+
+請只輸出格式化內容，不要加入任何前言或說明。"""
+
+    return ollama_client.generate(
+        prompt, model=model,
+        options={"num_predict": 600, "temperature": 0.7},
+    )
+
+
 def extract_from_text(
     chapter_text: str,
     character_name: str,

@@ -7,16 +7,37 @@ so callers can decide how to surface them to the user.
 from __future__ import annotations
 
 import base64
+import io
 import time
 from pathlib import Path
 from typing import Optional
 
 import requests
+from PIL import Image
 
 from app.core.config import OLLAMA_BASE, DEFAULT_TEXT_MODEL, DEFAULT_VISION_MODEL
 
 TIMEOUT_TEXT = 300
 TIMEOUT_VISION = 300
+
+_VISION_MAX_PX = 768  # resize before sending to vision model — enough for analysis, much faster
+
+
+def _resize_for_vision(image_bytes: bytes) -> bytes:
+    """Resize image so its longest side is at most _VISION_MAX_PX. Returns original on failure."""
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        w, h = img.size
+        if max(w, h) <= _VISION_MAX_PX:
+            return image_bytes
+        scale = _VISION_MAX_PX / max(w, h)
+        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        buf = io.BytesIO()
+        fmt = img.format or "PNG"
+        img.save(buf, format=fmt)
+        return buf.getvalue()
+    except Exception:
+        return image_bytes
 
 
 def generate(
@@ -64,13 +85,23 @@ def analyze_image(image_path: str, prompt: str, model: str = DEFAULT_VISION_MODE
         return f"[Vision error at {OLLAMA_BASE}: {e}]"
 
 
-def analyze_image_bytes(image_bytes: bytes, prompt: str, model: str = DEFAULT_VISION_MODEL) -> str:
+def analyze_image_bytes(
+    image_bytes: bytes,
+    prompt: str,
+    model: str = DEFAULT_VISION_MODEL,
+    options: Optional[dict] = None,
+) -> str:
     start = time.time()
     try:
-        image_b64 = base64.b64encode(image_bytes).decode()
+        resized = _resize_for_vision(image_bytes)
+        print(f"DEBUG: image bytes {len(image_bytes)} → {len(resized)} after resize", flush=True)
+        image_b64 = base64.b64encode(resized).decode()
+        payload: dict = {"model": model, "prompt": prompt, "images": [image_b64], "stream": False}
+        if options:
+            payload["options"] = options
         r = requests.post(
             f"{OLLAMA_BASE}/api/generate",
-            json={"model": model, "prompt": prompt, "images": [image_b64], "stream": False},
+            json=payload,
             timeout=TIMEOUT_VISION,
         )
         print(f"DEBUG: Ollama HTTP POST took {time.time() - start:.2f}s", flush=True)
