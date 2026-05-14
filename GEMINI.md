@@ -27,6 +27,7 @@
 2. **Progressive feedback** — slow AI tasks must have backend status + frontend progress UI.
 3. **Resilient errors** — Ollama/ComfyUI failures must not crash the app.
 4. Read before editing. Explain *why* before changing.
+5. **Permission First** — No code changes without explicit Directive.
 
 ## Workflow
 Research → Plan → Execute → Verify

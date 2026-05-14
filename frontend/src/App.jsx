@@ -2,11 +2,13 @@ import React, { useState } from 'react'
 import ProcessTab from './components/ProcessTab.jsx'
 import GenerateTab from './components/GenerateTab.jsx'
 import ComposeTab from './components/ComposeTab.jsx'
+import CharacterTab from './components/CharacterTab.jsx'
 
 const TABS = [
   { id: 'process', label: '草稿 → 線稿' },
   { id: 'generate', label: '文字 → 生圖' },
   { id: 'compose', label: '草圖問答' },
+  { id: 'character', label: '角色管理' },
 ]
 
 const S = {
@@ -97,8 +99,13 @@ function formatTime(ts) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState('process')
+  const [tab, setTab] = useState(() => localStorage.getItem('craftflow_tab') ?? 'process')
   const [history, setHistory] = useState([])
+
+  const switchTab = (id) => {
+    localStorage.setItem('craftflow_tab', id)
+    setTab(id)
+  }
 
   const addHistory = (item) => {
     setHistory(prev => [{ ...item, id: Date.now(), ts: Date.now() }, ...prev])
@@ -116,7 +123,7 @@ export default function App() {
           <button
             key={t.id}
             style={{ ...S.tab, ...(tab === t.id ? S.tabActive : {}) }}
-            onClick={() => setTab(t.id)}
+            onClick={() => switchTab(t.id)}
           >
             {t.label}
           </button>
@@ -133,6 +140,9 @@ export default function App() {
         </div>
         <div style={{ display: tab === 'compose' ? 'block' : 'none' }}>
           <ComposeTab onAddHistory={addHistory} />
+        </div>
+        <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
+          <CharacterTab />
         </div>
       </div>
 

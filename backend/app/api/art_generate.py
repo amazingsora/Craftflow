@@ -226,6 +226,63 @@ def _inject_txt2img(wf: dict, prompt: str, negative: str, seed: int, steps: int 
             inputs["steps"] = steps
 
 
+def _inject_controlnet_compose(
+    wf: dict, uploaded_name: str, prompt: str, negative: str, seed: int,
+    width: int, height: int, steps: int = 20
+) -> None:
+    """Inject runtime values into sketch_to_reference.json workflow."""
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type")
+        inputs = node.get("inputs", {})
+        if ct == "LoadImage":
+            inputs["image"] = uploaded_name
+        elif ct == "CLIPTextEncode":
+            if inputs.get("text") == "__POSITIVE__":
+                inputs["text"] = prompt
+            elif inputs.get("text") == "__NEGATIVE__":
+                inputs["text"] = negative
+        elif ct == "EmptyLatentImage":
+            inputs["width"] = width
+            inputs["height"] = height
+        elif ct == "KSampler":
+            inputs["seed"] = seed
+            inputs["steps"] = steps
+
+
+import struct
+
+def _image_dimensions(image_bytes: bytes) -> tuple[int, int]:
+    """Read width/height from PNG or JPEG bytes without external libs. Falls back to 1024x1024."""
+    try:
+        if image_bytes[:4] == b'\x89PNG':
+            w = struct.unpack('>I', image_bytes[16:20])[0]
+            h = struct.unpack('>I', image_bytes[20:24])[0]
+            return _clamp_dim(w), _clamp_dim(h)
+        if image_bytes[:2] == b'\xff\xd8':
+            i = 2
+            while i + 4 < len(image_bytes):
+                if image_bytes[i] != 0xff:
+                    break
+                marker = image_bytes[i + 1]
+                if marker in (0xc0, 0xc1, 0xc2):
+                    h = struct.unpack('>H', image_bytes[i + 5:i + 7])[0]
+                    w = struct.unpack('>H', image_bytes[i + 7:i + 9])[0]
+                    return _clamp_dim(w), _clamp_dim(h)
+                length = struct.unpack('>H', image_bytes[i + 2:i + 4])[0]
+                i += 2 + length
+    except Exception:
+        pass
+    return 1024, 1024
+
+
+def _clamp_dim(v: int) -> int:
+    """Round to nearest multiple of 64, clamped to [512, 2048] for SDXL."""
+    v = max(512, min(2048, v))
+    return (v // 64) * 64
+
+
 @router.post("/art/compose", summary="草圖問答 → 構圖意見 + 參考圖")
 async def compose(
     file: Annotated[UploadFile, File(description="草稿圖片")],
@@ -234,6 +291,8 @@ async def compose(
 ):
     start_total = time.time()
     image_bytes = await file.read()
+    width, height = _image_dimensions(image_bytes)
+    print(f"DEBUG: Detected image size: {width}x{height}", flush=True)
 
     try:
         start_ollama = time.time()
@@ -246,8 +305,40 @@ async def compose(
     seed = random.randint(0, 2**31 - 1)
     style = _detect_style("text_to_image.json")
     negative = STYLE_CONFIG[style]["negative"]
+
+    # Sketch-style suffix: complete the figure but keep a rough draft feeling
+    _COMPOSE_SUFFIX = ", complete figure, all body parts visible, pencil sketch, rough sketch, monochrome, black and white, sketch style, simple white background"
+    final_prompt = sdxl_prompt.rstrip(", ") + _COMPOSE_SUFFIX
+
+    # Cap generation to 1024px max (preserve aspect ratio from original sketch)
+    _MAX_COMPOSE_DIM = 1024
+    ratio = width / height
+    if width >= height:
+        gen_w = _MAX_COMPOSE_DIM
+        gen_h = _clamp_dim(int(_MAX_COMPOSE_DIM / ratio))
+    else:
+        gen_h = _MAX_COMPOSE_DIM
+        gen_w = _clamp_dim(int(_MAX_COMPOSE_DIM * ratio))
+    gen_w = max(512, gen_w)
+    gen_h = max(512, gen_h)
+    print(f"DEBUG: Compose gen size: {gen_w}x{gen_h}", flush=True)
+
     wf = _load_workflow("text_to_image.json")
-    _inject_txt2img(wf, sdxl_prompt, negative, seed)
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type")
+        inputs = node.get("inputs", {})
+        if ct == "CLIPTextEncode":
+            if inputs.get("text") == "__POSITIVE__":
+                inputs["text"] = final_prompt
+            elif inputs.get("text") == "__NEGATIVE__":
+                inputs["text"] = negative
+        elif ct == "EmptyLatentImage":
+            inputs["width"] = gen_w
+            inputs["height"] = gen_h
+        elif ct == "KSampler":
+            inputs["seed"] = seed
     image_data = _run(wf)
     print(f"DEBUG: ComfyUI generation took {time.time() - start_comfy:.2f}s", flush=True)
 
@@ -256,7 +347,7 @@ async def compose(
 
     return {
         "advice": advice,
-        "suggested_prompt": sdxl_prompt,
+        "suggested_prompt": final_prompt,
         "image": encoded_image,
         "seed": seed,
         "style": style.value,

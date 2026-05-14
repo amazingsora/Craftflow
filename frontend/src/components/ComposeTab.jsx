@@ -123,7 +123,7 @@ const PLACEHOLDER_QUESTIONS = [
 export default function ComposeTab({ onAddHistory }) {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
-  const [question, setQuestion] = useState('')
+  const [question, setQuestion] = useState(() => localStorage.getItem('compose_question') ?? '')
   const [result, setResult] = useState(null)   // { advice, suggested_prompt, image (b64), seed }
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -261,7 +261,7 @@ export default function ComposeTab({ onAddHistory }) {
             style={S.textarea}
             placeholder={PLACEHOLDER_QUESTIONS[Math.floor(Math.random() * PLACEHOLDER_QUESTIONS.length)]}
             value={question}
-            onChange={(e) => setQuestion(e.target.value)}
+            onChange={(e) => { setQuestion(e.target.value); localStorage.setItem('compose_question', e.target.value) }}
           />
         </div>
 

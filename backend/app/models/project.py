@@ -22,6 +22,8 @@ class Project(Base):
     author: Mapped[str] = mapped_column(String(100))
     synopsis: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     cover_image_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    genre: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default='構思中')
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

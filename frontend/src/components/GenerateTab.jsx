@@ -97,11 +97,11 @@ const S = {
 }
 
 export default function GenerateTab({ onAddHistory }) {
-  const [promptZh, setPromptZh] = useState('')
-  const [promptEn, setPromptEn] = useState('')
-  const [optimizedEn, setOptimizedEn] = useState('')
-  const [detectedStyle, setDetectedStyle] = useState(null) // 後端偵測到的 checkpoint style
-  const [negPrompt, setNegPrompt] = useState(DEFAULT_NEGATIVE)
+  const [promptZh, setPromptZh] = useState(() => localStorage.getItem('gen_promptZh') ?? '')
+  const [promptEn, setPromptEn] = useState(() => localStorage.getItem('gen_promptEn') ?? '')
+  const [optimizedEn, setOptimizedEn] = useState(() => localStorage.getItem('gen_optimizedEn') ?? '')
+  const [detectedStyle, setDetectedStyle] = useState(null)
+  const [negPrompt, setNegPrompt] = useState(() => localStorage.getItem('gen_negPrompt') ?? DEFAULT_NEGATIVE)
   const [steps, setSteps] = useState(20)
   const [seed, setSeed] = useState(-1)
   const [size, setSize] = useState('1024x1024')
@@ -120,6 +120,11 @@ export default function GenerateTab({ onAddHistory }) {
 
   // 實際發送給 SDXL 的 Prompt：[英文輸入, AI 優化結果]
   const finalPrompt = [promptEn, optimizedEn].filter(Boolean).join(', ')
+
+  const setPromptZhP = (v) => { setPromptZh(v); localStorage.setItem('gen_promptZh', v) }
+  const setPromptEnP = (v) => { setPromptEn(v); localStorage.setItem('gen_promptEn', v) }
+  const setOptimizedEnP = (v) => { setOptimizedEn(v); localStorage.setItem('gen_optimizedEn', v) }
+  const setNegPromptP = (v) => { setNegPrompt(v); localStorage.setItem('gen_negPrompt', v) }
 
   const randomSeed = () => setSeed(Math.floor(Math.random() * 2 ** 31))
 
@@ -143,8 +148,8 @@ export default function GenerateTab({ onAddHistory }) {
       })
       const data = await resp.json()
       if (data.positive) {
-        setOptimizedEn(data.positive.trim())
-        setNegPrompt(data.negative || DEFAULT_NEGATIVE)
+        setOptimizedEnP(data.positive.trim())
+        setNegPromptP(data.negative || DEFAULT_NEGATIVE)
         setDetectedStyle(data.style || null)
       }
     } catch (e) {
@@ -261,7 +266,7 @@ export default function GenerateTab({ onAddHistory }) {
             style={{ ...S.textarea, minHeight: 60 }}
             placeholder="例如：一個可愛的少女，穿著黃色連帽衫，室內光線..."
             value={promptZh}
-            onChange={(e) => setPromptZh(e.target.value)}
+            onChange={(e) => setPromptZhP(e.target.value)}
           />
           {optimizing && (
             <div style={{ marginTop: 8 }}>
@@ -287,7 +292,7 @@ export default function GenerateTab({ onAddHistory }) {
             style={{ ...S.textarea, minHeight: 60 }}
             placeholder="e.g. masterpiece, 8k, bokeh..."
             value={promptEn}
-            onChange={(e) => setPromptEn(e.target.value)}
+            onChange={(e) => setPromptEnP(e.target.value)}
           />
         </div>
 
@@ -331,7 +336,7 @@ export default function GenerateTab({ onAddHistory }) {
           <textarea
             style={{ ...S.textarea, minHeight: 50 }}
             value={negPrompt}
-            onChange={(e) => setNegPrompt(e.target.value)}
+            onChange={(e) => setNegPromptP(e.target.value)}
           />
         </div>
 
