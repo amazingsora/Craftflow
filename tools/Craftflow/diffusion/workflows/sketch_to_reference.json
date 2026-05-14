@@ -1,0 +1,92 @@
+{
+  "_comment": [
+    "ComfyUI workflow: Sketch → Colored Reference via ControlNet + SDXL",
+    "Uses the original sketch as ControlNet scribble guide to lock pose and composition.",
+    "Positive/negative prompts are injected at runtime by art_generate.py compose endpoint.",
+    "Width/height are injected at runtime from the uploaded image dimensions.",
+    "",
+    "SETUP: same models as sketch_to_lineart.json — AnythingXL + controlnet-scribble-sdxl-1.0"
+  ],
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "AnythingXL_xl.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__PLACEHOLDER__",
+      "upload": "image"
+    }
+  },
+  "4": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "controlnet-scribble-sdxl-1.0.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__POSITIVE__",
+      "clip": ["1", 1]
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__NEGATIVE__",
+      "clip": ["1", 1]
+    }
+  },
+  "7": {
+    "class_type": "ControlNetApplyAdvanced",
+    "inputs": {
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "control_net": ["4", 0],
+      "image": ["2", 0],
+      "strength": 0.4,
+      "start_percent": 0.0,
+      "end_percent": 0.7
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["1", 0],
+      "positive": ["7", 0],
+      "negative": ["7", 1],
+      "latent_image": ["9", 0],
+      "seed": 42,
+      "steps": 20,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "karras",
+      "denoise": 0.9
+    }
+  },
+  "9": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "11": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["10", 0],
+      "filename_prefix": "craftflow_reference"
+    }
+  }
+}

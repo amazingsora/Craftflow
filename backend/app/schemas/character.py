@@ -21,6 +21,8 @@ class CharacterUpdate(BaseModel):
     voice_style: Optional[str] = None
     forbidden_actions: Optional[str] = None
     notes: Optional[str] = None
+    ai_summary: Optional[str] = None
+    portrait_path: Optional[str] = None
 
 
 class CharacterResponse(BaseModel):
@@ -35,5 +37,7 @@ class CharacterResponse(BaseModel):
     voice_style: Optional[str]
     forbidden_actions: Optional[str]
     notes: Optional[str]
+    ai_summary: Optional[str]
+    portrait_path: Optional[str]
     created_at: datetime
     updated_at: datetime
