@@ -20,6 +20,7 @@ from app.models.character import Character
 from app.models.illustration import Illustration
 from app.services.ai import art_service, character_service
 from app.services.ai.ollama_client import DEFAULT_VISION_MODEL
+from app.services.ai.vram_manager import guardian
 
 router = APIRouter(tags=["ai-art"])
 DbDep = Annotated[Session, Depends(get_db)]
@@ -44,12 +45,14 @@ class DescribePortraitRequest(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/illustrations/{illustration_id}/analyze")
-def analyze_illustration(illustration_id: int, req: AnalyzeIllustrationRequest, db: DbDep):
+async def analyze_illustration(illustration_id: int, req: AnalyzeIllustrationRequest, db: DbDep):
     if req.mode not in VALID_MODES:
         raise HTTPException(status_code=400, detail=f"mode must be one of {VALID_MODES}")
 
     illus = _get_illustration(illustration_id, db)
     image_path = str(UPLOAD_DIR / illus.file_path)
+
+    await guardian.request_focus("ollama")
 
     if req.mode == "sketch_critique":
         result = art_service.critique_sketch(image_path, model=req.model)
@@ -68,10 +71,11 @@ def analyze_illustration(illustration_id: int, req: AnalyzeIllustrationRequest, 
 
 
 @router.post("/illustrations/{illustration_id}/describe")
-def describe_illustration(illustration_id: int, db: DbDep, model: str = DEFAULT_VISION_MODEL):
+async def describe_illustration(illustration_id: int, db: DbDep, model: str = DEFAULT_VISION_MODEL):
     illus = _get_illustration(illustration_id, db)
     image_path = str(UPLOAD_DIR / illus.file_path)
 
+    await guardian.request_focus("ollama")
     description = art_service.describe_illustration(image_path, model=model)
     illus.ai_description = description
     db.commit()
@@ -80,10 +84,11 @@ def describe_illustration(illustration_id: int, db: DbDep, model: str = DEFAULT_
 
 
 @router.post("/illustrations/{illustration_id}/ask")
-def ask_with_illustration(illustration_id: int, req: ArtAskRequest, db: DbDep):
+async def ask_with_illustration(illustration_id: int, req: ArtAskRequest, db: DbDep):
     illus = _get_illustration(illustration_id, db)
     image_path = str(UPLOAD_DIR / illus.file_path)
 
+    await guardian.request_focus("ollama")
     answer = art_service.composition_ask(
         question=req.question,
         image_path=image_path,
@@ -105,6 +110,7 @@ async def art_ask_freeform(
     if image:
         image_bytes = await image.read()
 
+    await guardian.request_focus("ollama")
     answer = art_service.composition_ask(
         question=question,
         image_bytes=image_bytes,
@@ -114,7 +120,7 @@ async def art_ask_freeform(
 
 
 @router.post("/characters/{character_id}/describe-portrait")
-def describe_character_portrait(
+async def describe_character_portrait(
     character_id: int,
     req: DescribePortraitRequest,
     db: DbDep,
@@ -145,6 +151,7 @@ def describe_character_portrait(
             )
 
     image_path = str(UPLOAD_DIR / illus.file_path)
+    await guardian.request_focus("ollama")
     description = character_service.describe_portrait(image_path, character.name, model=req.model)
 
     existing = character.notes or ""

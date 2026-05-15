@@ -19,6 +19,7 @@ from app.models.chapter import Chapter
 from app.models.character import Character
 from app.services.ai import rhythm_service, rewrite_service, consistency_service, character_service
 from app.services.ai.ollama_client import DEFAULT_TEXT_MODEL
+from app.services.ai.vram_manager import guardian
 
 router = APIRouter(tags=["ai-text"])
 DbDep = Annotated[Session, Depends(get_db)]
@@ -50,7 +51,7 @@ class CharacterAskRequest(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/chapters/{chapter_id}/analyze")
-def analyze_chapter(chapter_id: int, req: AnalyzeRequest, db: DbDep):
+async def analyze_chapter(chapter_id: int, req: AnalyzeRequest, db: DbDep):
     chapter = db.get(Chapter, chapter_id)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
@@ -67,6 +68,7 @@ def analyze_chapter(chapter_id: int, req: AnalyzeRequest, db: DbDep):
 
     # 2. Consistency (uses characters from DB)
     db_chars = db.query(Character).filter(Character.project_id == chapter.project_id).all()
+    await guardian.request_focus("ollama")
     profiles = [
         consistency_service.CharacterProfile(
             name=c.name,
@@ -115,13 +117,14 @@ def analyze_chapter(chapter_id: int, req: AnalyzeRequest, db: DbDep):
 
 
 @router.post("/chapters/{chapter_id}/rewrite")
-def rewrite_chapter(chapter_id: int, req: RewriteRequest, db: DbDep):
+async def rewrite_chapter(chapter_id: int, req: RewriteRequest, db: DbDep):
     chapter = db.get(Chapter, chapter_id)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
     if not chapter.content:
         raise HTTPException(status_code=400, detail="Chapter has no content")
 
+    await guardian.request_focus("ollama")
     rhythm = rhythm_service.analyze(chapter.content)
     paragraphs = [p.strip() for p in chapter.content.split("\n\n") if p.strip()]
 
@@ -159,7 +162,7 @@ def rewrite_chapter(chapter_id: int, req: RewriteRequest, db: DbDep):
 
 
 @router.post("/characters/{character_id}/extract")
-def extract_character_traits(character_id: int, req: ExtractRequest, db: DbDep):
+async def extract_character_traits(character_id: int, req: ExtractRequest, db: DbDep):
     character = db.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -172,6 +175,7 @@ def extract_character_traits(character_id: int, req: ExtractRequest, db: DbDep):
     if not chapter.content:
         raise HTTPException(status_code=400, detail="Chapter has no content")
 
+    await guardian.request_focus("ollama")
     extracted = character_service.extract_from_text(chapter.content, character.name, model=req.model)
     return {
         "character_id": character_id,
@@ -183,7 +187,7 @@ def extract_character_traits(character_id: int, req: ExtractRequest, db: DbDep):
 
 
 @router.post("/characters/{character_id}/ask")
-def character_design_ask(character_id: int, req: CharacterAskRequest, db: DbDep):
+async def character_design_ask(character_id: int, req: CharacterAskRequest, db: DbDep):
     character = db.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -194,6 +198,7 @@ def character_design_ask(character_id: int, req: CharacterAskRequest, db: DbDep)
         "voice_style": character.voice_style,
         "notes": character.notes,
     }
+    await guardian.request_focus("ollama")
     answer = character_service.design_chat(
         question=req.question,
         character_name=character.name,
