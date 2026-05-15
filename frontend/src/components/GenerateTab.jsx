@@ -97,11 +97,11 @@ const S = {
 }
 
 export default function GenerateTab({ onAddHistory }) {
-  const [promptZh, setPromptZh] = useState(() => localStorage.getItem('gen_promptZh') ?? '')
-  const [promptEn, setPromptEn] = useState(() => localStorage.getItem('gen_promptEn') ?? '')
-  const [optimizedEn, setOptimizedEn] = useState(() => localStorage.getItem('gen_optimizedEn') ?? '')
+  const [promptZh, setPromptZh] = useState(() => sessionStorage.getItem('gen_promptZh') ?? '')
+  const [promptEn, setPromptEn] = useState(() => sessionStorage.getItem('gen_promptEn') ?? '')
+  const [optimizedEn, setOptimizedEn] = useState(() => sessionStorage.getItem('gen_optimizedEn') ?? '')
   const [detectedStyle, setDetectedStyle] = useState(null)
-  const [negPrompt, setNegPrompt] = useState(() => localStorage.getItem('gen_negPrompt') ?? DEFAULT_NEGATIVE)
+  const [negPrompt, setNegPrompt] = useState(() => sessionStorage.getItem('gen_negPrompt') ?? DEFAULT_NEGATIVE)
   const [steps, setSteps] = useState(20)
   const [seed, setSeed] = useState(-1)
   const [size, setSize] = useState('1024x1024')
@@ -121,10 +121,10 @@ export default function GenerateTab({ onAddHistory }) {
   // 實際發送給 SDXL 的 Prompt：[英文輸入, AI 優化結果]
   const finalPrompt = [promptEn, optimizedEn].filter(Boolean).join(', ')
 
-  const setPromptZhP = (v) => { setPromptZh(v); localStorage.setItem('gen_promptZh', v) }
-  const setPromptEnP = (v) => { setPromptEn(v); localStorage.setItem('gen_promptEn', v) }
-  const setOptimizedEnP = (v) => { setOptimizedEn(v); localStorage.setItem('gen_optimizedEn', v) }
-  const setNegPromptP = (v) => { setNegPrompt(v); localStorage.setItem('gen_negPrompt', v) }
+  const setPromptZhP = (v) => { setPromptZh(v); sessionStorage.setItem('gen_promptZh', v) }
+  const setPromptEnP = (v) => { setPromptEn(v); sessionStorage.setItem('gen_promptEn', v) }
+  const setOptimizedEnP = (v) => { setOptimizedEn(v); sessionStorage.setItem('gen_optimizedEn', v) }
+  const setNegPromptP = (v) => { setNegPrompt(v); sessionStorage.setItem('gen_negPrompt', v) }
 
   const randomSeed = () => setSeed(Math.floor(Math.random() * 2 ** 31))
 

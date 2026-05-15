@@ -142,3 +142,134 @@ def get_portrait(character_id: int, db: DbDep):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Portrait file missing")
     return FileResponse(str(path))
+
+
+# ── Concept Images (multi, max 3) ─────────────────────────────────────────────
+
+_MAX_CONCEPT = 3
+_AI_IMAGE_DIR = UPLOAD_DIR / "ai_images"
+
+
+@router.post("/characters/{character_id}/concept-images", response_model=CharacterResponse)
+async def upload_concept_image(
+    character_id: int,
+    file: Annotated[UploadFile, File(...)],
+    db: DbDep,
+):
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    if file.content_type not in _ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Unsupported type: {file.content_type}")
+    existing = list(character.concept_images or [])
+    if len(existing) >= _MAX_CONCEPT:
+        raise HTTPException(status_code=400, detail=f"最多只能上傳 {_MAX_CONCEPT} 張概念圖")
+
+    _PORTRAIT_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename).suffix if file.filename else ".png"
+    filename = f"concept_{character_id}_{uuid.uuid4().hex}{suffix}"
+    dest = _PORTRAIT_DIR / filename
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    character.concept_images = [*existing, filename]
+    db.commit()
+    db.refresh(character)
+    return character
+
+
+@router.delete("/characters/{character_id}/concept-images/{index}", response_model=CharacterResponse)
+def delete_concept_image(character_id: int, index: int, db: DbDep):
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    existing = list(character.concept_images or [])
+    if index < 0 or index >= len(existing):
+        raise HTTPException(status_code=404, detail="概念圖不存在")
+
+    filename = existing[index]
+    path = _PORTRAIT_DIR / filename
+    path.unlink(missing_ok=True)
+
+    character.concept_images = [f for i, f in enumerate(existing) if i != index]
+    db.commit()
+    db.refresh(character)
+    return character
+
+
+@router.get("/characters/{character_id}/concept-images/{index}")
+def get_concept_image(character_id: int, index: int, db: DbDep):
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    existing = list(character.concept_images or [])
+    if index < 0 or index >= len(existing):
+        raise HTTPException(status_code=404, detail="概念圖不存在")
+    path = _PORTRAIT_DIR / existing[index]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="概念圖檔案不存在")
+    return FileResponse(str(path))
+
+
+# ── AI Generated Images (max 3) ───────────────────────────────────────────────
+
+_MAX_AI_IMAGES = 8
+
+
+@router.post("/characters/{character_id}/ai-images", response_model=CharacterResponse)
+async def save_ai_image(
+    character_id: int,
+    file: Annotated[UploadFile, File(...)],
+    db: DbDep,
+):
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    existing = list(character.ai_generated_images or [])
+    if len(existing) >= _MAX_AI_IMAGES:
+        raise HTTPException(status_code=400, detail=f"最多只能儲存 {_MAX_AI_IMAGES} 張 AI 生成圖")
+
+    _AI_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename).suffix if file.filename else ".png"
+    filename = f"ai_{character_id}_{uuid.uuid4().hex}{suffix}"
+    dest = _AI_IMAGE_DIR / filename
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    character.ai_generated_images = [*existing, filename]
+    db.commit()
+    db.refresh(character)
+    return character
+
+
+@router.delete("/characters/{character_id}/ai-images/{index}", response_model=CharacterResponse)
+def delete_ai_image(character_id: int, index: int, db: DbDep):
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    existing = list(character.ai_generated_images or [])
+    if index < 0 or index >= len(existing):
+        raise HTTPException(status_code=404, detail="AI 圖不存在")
+
+    filename = existing[index]
+    path = _AI_IMAGE_DIR / filename
+    path.unlink(missing_ok=True)
+
+    character.ai_generated_images = [f for i, f in enumerate(existing) if i != index]
+    db.commit()
+    db.refresh(character)
+    return character
+
+
+@router.get("/characters/{character_id}/ai-images/{index}")
+def get_ai_image(character_id: int, index: int, db: DbDep):
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    existing = list(character.ai_generated_images or [])
+    if index < 0 or index >= len(existing):
+        raise HTTPException(status_code=404, detail="AI 圖不存在")
+    path = _AI_IMAGE_DIR / existing[index]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="AI 圖檔案不存在")
+    return FileResponse(str(path))
