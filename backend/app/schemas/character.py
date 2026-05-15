@@ -11,6 +11,10 @@ class CharacterCreate(BaseModel):
     voice_style: Optional[str] = None
     forbidden_actions: Optional[str] = None
     notes: Optional[str] = None
+    color: Optional[str] = None
+    age: Optional[int] = None
+    birthday: Optional[str] = None
+    ai_prompt: Optional[str] = None
 
 
 class CharacterUpdate(BaseModel):
@@ -23,6 +27,12 @@ class CharacterUpdate(BaseModel):
     notes: Optional[str] = None
     ai_summary: Optional[str] = None
     portrait_path: Optional[str] = None
+    color: Optional[str] = None
+    age: Optional[int] = None
+    birthday: Optional[str] = None
+    ai_prompt: Optional[str] = None
+    concept_images: Optional[list[str]] = None
+    ai_generated_images: Optional[list[str]] = None
 
 
 class CharacterResponse(BaseModel):
@@ -39,5 +49,12 @@ class CharacterResponse(BaseModel):
     notes: Optional[str]
     ai_summary: Optional[str]
     portrait_path: Optional[str]
+    color: Optional[str]
+    concept_images: Optional[list] = []
+    ai_generated_images: Optional[list] = []
+    age: Optional[int] = None
+    birthday: Optional[str] = None
+    ai_prompt: Optional[str] = None
+    faction_ids: list[int] = []
     created_at: datetime
     updated_at: datetime

@@ -165,7 +165,6 @@ PROMPT:
         image_bytes, prompt, model=model,
         options={"num_predict": 350, "temperature": 0.4},
     )
-    print(f"DEBUG: Ollama raw response: {raw}")
 
     if raw.startswith("["):
         raise RuntimeError(raw)

@@ -9,21 +9,30 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import random
-import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 import yaml
-from fastapi import APIRouter, Form, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from app.core.config import UPLOAD_DIR
+from app.core.database import get_db
+from app.models.character import Character
 from app.services import comfyui_client
-from app.services.ai import art_service
+from app.services.ai import art_service, ollama_client as _oc
 from app.services.ai.ollama_client import DEFAULT_VISION_MODEL, DEFAULT_TEXT_MODEL
 from app.services.ai.prompt_engine import compile as compile_prompt, PromptStyle
 from app.services.ai.prompt_engine.styles import STYLE_CONFIG
+from app.services.ai.vram_manager import guardian
+
+_PORTRAIT_DIR = UPLOAD_DIR / "portraits"
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["art-generate"])
 
@@ -36,8 +45,8 @@ _STYLES_YML = Path("/app/backend/checkpoint_styles.yml")
 if not _STYLES_YML.exists():
     _STYLES_YML = Path(__file__).resolve().parents[3] / "checkpoint_styles.yml"
 
-print(f"DEBUG: workflow dir: {_WORKFLOW_DIR}", flush=True)
-print(f"DEBUG: checkpoint styles: {_STYLES_YML}", flush=True)
+logger.info("workflow dir: %s", _WORKFLOW_DIR)
+logger.info("checkpoint styles: %s", _STYLES_YML)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -81,12 +90,12 @@ def _detect_style(workflow_name: str = "text_to_image.json") -> PromptStyle:
             ckpt_base = Path(ckpt).stem.lower()
             for pattern, style_str in mapping.items():
                 if pattern.lower() in ckpt_base:
-                    print(f"DEBUG: checkpoint '{ckpt}' matched pattern '{pattern}' → style '{style_str}'", flush=True)
+                    logger.debug("checkpoint '%s' matched pattern '%s' → style '%s'", ckpt, pattern, style_str)
                     try:
                         return PromptStyle(style_str)
                     except ValueError:
                         pass
-    print(f"DEBUG: checkpoint style not found in mapping, falling back to SDXL", flush=True)
+    logger.debug("checkpoint style not found in mapping, falling back to SDXL")
     return PromptStyle.SDXL
 
 
@@ -117,7 +126,7 @@ class CompilePromptRequest(BaseModel):
 
 
 @router.post("/art/compile-prompt", summary="AI 編譯提示詞 (中文 → 模型對應格式)")
-def compile_prompt_endpoint(req: CompilePromptRequest):
+async def compile_prompt_endpoint(req: CompilePromptRequest):
     """
     Detect current checkpoint style from text_to_image.json,
     then compile Chinese description into the correct prompt format.
@@ -128,12 +137,8 @@ def compile_prompt_endpoint(req: CompilePromptRequest):
       style     — detected style (sdxl / pony / flux / ...)
     """
     style = _detect_style("text_to_image.json")
-    print(f"DEBUG: Compiling for style={style}, model={req.model}, input={req.prompt!r}", flush=True)
-
-    start = time.time()
+    await guardian.request_focus("ollama")
     positive, negative = compile_prompt(req.prompt, style=style, model=req.model)
-    print(f"DEBUG: compile took {time.time() - start:.2f}s → positive={positive!r}", flush=True)
-
     return {
         "positive": positive,
         "negative": negative,
@@ -143,8 +148,8 @@ def compile_prompt_endpoint(req: CompilePromptRequest):
 
 # Keep old endpoint as alias for backward compatibility
 @router.post("/art/optimize-prompt", summary="[deprecated] 請改用 /art/compile-prompt")
-def optimize_prompt_compat(req: CompilePromptRequest):
-    return compile_prompt_endpoint(req)
+async def optimize_prompt_compat(req: CompilePromptRequest):
+    return await compile_prompt_endpoint(req)
 
 
 @router.post("/art/lineart", summary="草稿→線稿 (ComfyUI ControlNet)")
@@ -159,6 +164,7 @@ async def lineart(file: Annotated[UploadFile, File(description="草稿圖片 (JP
         if isinstance(node, dict) and node.get("class_type") == "LoadImage":
             node["inputs"]["image"] = uploaded_name
 
+    await guardian.request_focus("comfyui")
     return Response(content=_run(wf), media_type="image/png")
 
 
@@ -172,7 +178,7 @@ class GenerateRequest(BaseModel):
 
 
 @router.post("/art/generate", summary="文字→圖片 (SDXL txt2img)")
-def generate(req: GenerateRequest):
+async def generate(req: GenerateRequest):
     """
     Generate an illustration from a text prompt via ComfyUI.
     If negative_prompt is empty, uses the model-appropriate preset.
@@ -199,6 +205,7 @@ def generate(req: GenerateRequest):
             inputs["seed"] = seed
             inputs["steps"] = req.steps
 
+    await guardian.request_focus("comfyui")
     return Response(
         content=_run(wf),
         media_type="image/png",
@@ -289,25 +296,21 @@ async def compose(
     question: str = Form(..., description="針對草圖的構圖問題"),
     model: str = Form(DEFAULT_VISION_MODEL),
 ):
-    start_total = time.time()
     image_bytes = await file.read()
     width, height = _image_dimensions(image_bytes)
-    print(f"DEBUG: Detected image size: {width}x{height}", flush=True)
 
+    await guardian.request_focus("ollama")
     try:
-        start_ollama = time.time()
         advice, sdxl_prompt = art_service.compose_ask(question, image_bytes, model=model)
-        print(f"DEBUG: Ollama analysis took {time.time() - start_ollama:.2f}s", flush=True)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-    start_comfy = time.time()
     seed = random.randint(0, 2**31 - 1)
     style = _detect_style("text_to_image.json")
     negative = STYLE_CONFIG[style]["negative"]
 
-    # Sketch-style suffix: complete the figure but keep a rough draft feeling
-    _COMPOSE_SUFFIX = ", complete figure, all body parts visible, pencil sketch, rough sketch, monochrome, black and white, sketch style, simple white background"
+    # Sketch-style suffix: complete the figure, force monochrome lineart for consistent draft look
+    _COMPOSE_SUFFIX = ", full body, complete character, all limbs visible, white background, monochrome, lineart, clean lines, no shading, no color"
     final_prompt = sdxl_prompt.rstrip(", ") + _COMPOSE_SUFFIX
 
     # Cap generation to 1024px max (preserve aspect ratio from original sketch)
@@ -321,7 +324,6 @@ async def compose(
         gen_w = _clamp_dim(int(_MAX_COMPOSE_DIM * ratio))
     gen_w = max(512, gen_w)
     gen_h = max(512, gen_h)
-    print(f"DEBUG: Compose gen size: {gen_w}x{gen_h}", flush=True)
 
     wf = _load_workflow("text_to_image.json")
     for node in wf.values():
@@ -339,11 +341,10 @@ async def compose(
             inputs["height"] = gen_h
         elif ct == "KSampler":
             inputs["seed"] = seed
+    await guardian.request_focus("comfyui")
     image_data = _run(wf)
-    print(f"DEBUG: ComfyUI generation took {time.time() - start_comfy:.2f}s", flush=True)
 
     encoded_image = base64.b64encode(image_data).decode()
-    print(f"DEBUG: Total compose took {time.time() - start_total:.2f}s", flush=True)
 
     return {
         "advice": advice,
@@ -352,3 +353,141 @@ async def compose(
         "seed": seed,
         "style": style.value,
     }
+
+
+# ── Character Design Sheet Generation ────────────────────────────────────────
+
+_VISUAL_EXTRACT_PROMPT = """\
+請用40字以內描述這張參考圖中角色的視覺外型。
+只列出：髮色、髮型、眼睛顏色、主要服裝顏色與風格。
+格式：逗號分隔的短語，使用中文，不要句子。"""
+
+# expression id → (English SD tags for positive, Chinese label)
+_EXPRESSION_MAP: dict[str, tuple[str, str]] = {
+    "smile":   ("smiling, happy expression, gentle smile", "喜"),
+    "angry":   ("angry expression, frowning, fierce glare", "怒"),
+    "sad":     ("sad expression, teary eyes, sorrowful", "哀"),
+    "joy":     ("laughing, joyful expression, excited, wide grin", "樂"),
+    "neutral": ("neutral expression, calm, composed, expressionless", "平靜"),
+}
+
+
+@router.post("/characters/{character_id}/generate-design", summary="角色人設圖生成（ComfyUI）")
+async def generate_character_design(
+    character_id: int,
+    expression: Optional[str] = None,  # None=full body; key from _EXPRESSION_MAP = bust shot
+    db: Session = Depends(get_db),
+):
+    """
+    expression=None  → full-body character design sheet (768×1024)
+    expression=<key> → bust/face close-up with that expression (512×640)
+    Returns PNG bytes.
+    """
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    if expression and expression not in _EXPRESSION_MAP:
+        raise HTTPException(status_code=400, detail=f"Unknown expression. Valid: {list(_EXPRESSION_MAP)}")
+
+    is_expression = expression is not None
+    expr_tags, _ = _EXPRESSION_MAP[expression] if is_expression else ("", "")
+
+    # ── Build Chinese description ──────────────────────────────────────────
+    parts = [f"角色名稱：{character.name}"]
+    if character.age:
+        parts.append(f"年齡：{character.age}歲")
+    if character.core_traits:
+        parts.append(f"外貌與個性：{character.core_traits}")
+
+    # Visual traits from first concept image (30-60% influence)
+    concept_imgs = list(character.concept_images or [])
+    if not concept_imgs and character.portrait_path:
+        concept_imgs = [character.portrait_path]
+
+    if concept_imgs:
+        img_path = _PORTRAIT_DIR / concept_imgs[0]
+        if img_path.exists():
+            await guardian.request_focus("ollama")
+            visual = _oc.analyze_image(str(img_path), _VISUAL_EXTRACT_PROMPT, model=DEFAULT_VISION_MODEL)
+            if visual and not visual.startswith("["):
+                parts.append(f"視覺參考特徵：{visual}")
+
+    # Background
+    if character.color:
+        parts.append(f"背景為{character.color}色調的純色特效背景，無場景細節")
+    else:
+        parts.append("簡單純色背景，無場景細節")
+
+    if is_expression:
+        parts.append("動漫插畫風格，角色臉部特寫半身圖")
+    else:
+        parts.append("人設圖，全身正面，動漫插畫風格，清晰展示角色外觀")
+
+    raw_desc = "，".join(parts)
+
+    # ── Compile character description ──────────────────────────────────────
+    style = _detect_style("text_to_image.json")
+    await guardian.request_focus("ollama")
+    positive, negative = compile_prompt(raw_desc, style=style, model=DEFAULT_TEXT_MODEL)
+
+    # ── Compile ai_prompt separately (placed first → higher SD attention weight) ──
+    extra_prefix = ""
+    if character.ai_prompt and character.ai_prompt.strip():
+        await guardian.request_focus("ollama")
+        extra_compiled, _ = compile_prompt(
+            character.ai_prompt.strip(), style=style, model=DEFAULT_TEXT_MODEL
+        )
+        if extra_compiled:
+            extra_prefix = extra_compiled + ", "
+
+    # ── Build final prompt based on mode ──────────────────────────────────
+    bg_tag = f", {character.color} background, color gradient background" if character.color else ", gradient background"
+
+    if is_expression:
+        suffix = (
+            f", {expr_tags}"
+            ", bust shot, upper body, close-up portrait, face focus"
+            ", simple background, flat background" + bg_tag
+        )
+        width, height, steps = 512, 640, 20
+    else:
+        suffix = (
+            ", character design sheet, character reference sheet"
+            ", full body, front view"
+            ", simple background, flat background, no background detail, no scenery" + bg_tag
+        )
+        width, height, steps = 768, 1024, 25
+
+    # ai_prompt compiled tags lead the prompt for maximum enforcement
+    final_positive = extra_prefix + positive + suffix
+
+    extra_neg = "detailed background, complex background, scenery, landscape, buildings, environment"
+    final_negative = f"{negative}, {extra_neg}" if negative else extra_neg
+
+    # ── Generate ──────────────────────────────────────────────────────────
+    seed = random.randint(0, 2**31 - 1)
+    wf = _load_workflow("text_to_image.json")
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type")
+        inputs = node.get("inputs", {})
+        if ct == "CLIPTextEncode":
+            if inputs.get("text") == "__POSITIVE__":
+                inputs["text"] = final_positive
+            elif inputs.get("text") == "__NEGATIVE__":
+                inputs["text"] = final_negative
+        elif ct == "EmptyLatentImage":
+            inputs["width"] = width
+            inputs["height"] = height
+        elif ct == "KSampler":
+            inputs["seed"] = seed
+            inputs["steps"] = steps
+
+    await guardian.request_focus("comfyui")
+    return Response(
+        content=_run(wf),
+        media_type="image/png",
+        headers={"X-Seed": str(seed), "X-Style": style.value},
+    )

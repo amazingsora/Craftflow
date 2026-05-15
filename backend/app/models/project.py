@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.models.chapter import Chapter
     from app.models.character import Character
     from app.models.illustration import Illustration
+    from app.models.faction import Faction
 
 
 class Project(Base):
@@ -36,4 +37,7 @@ class Project(Base):
     )
     illustrations: Mapped[list[Illustration]] = relationship(
         "Illustration", back_populates="project", cascade="all, delete-orphan",
+    )
+    factions: Mapped[list[Faction]] = relationship(
+        "Faction", back_populates="project", cascade="all, delete-orphan",
     )

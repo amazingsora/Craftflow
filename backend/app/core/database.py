@@ -29,6 +29,12 @@ def _migrate() -> None:
     _add_columns("characters", [
         ("ai_summary", "TEXT"),
         ("portrait_path", "VARCHAR(500)"),
+        ("color", "VARCHAR(7)"),
+        ("concept_images", "TEXT"),
+        ("ai_generated_images", "TEXT"),
+        ("age", "INTEGER"),
+        ("birthday", "VARCHAR(30)"),
+        ("ai_prompt", "TEXT"),
     ])
     _add_columns("projects", [
         ("genre", "VARCHAR(50)"),

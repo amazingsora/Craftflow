@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 import io
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -44,6 +43,7 @@ def generate(
     prompt: str,
     model: str = DEFAULT_TEXT_MODEL,
     options: Optional[dict] = None,
+    keep_alive: Optional[int] = None,
 ) -> str:
     """
     Text generation via Ollama /api/generate.
@@ -51,10 +51,14 @@ def generate(
     options examples:
       {"temperature": 0.3, "num_predict": 200}  — stable tag output
       {"temperature": 0.8}                       — creative writing
+
+    keep_alive: seconds to keep model in VRAM after request (0 = unload immediately).
     """
     payload: dict = {"model": model, "prompt": prompt, "stream": False}
     if options:
         payload["options"] = options
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
     try:
         r = requests.post(
             f"{OLLAMA_BASE}/api/generate",
@@ -90,21 +94,21 @@ def analyze_image_bytes(
     prompt: str,
     model: str = DEFAULT_VISION_MODEL,
     options: Optional[dict] = None,
+    keep_alive: Optional[int] = None,
 ) -> str:
-    start = time.time()
     try:
         resized = _resize_for_vision(image_bytes)
-        print(f"DEBUG: image bytes {len(image_bytes)} → {len(resized)} after resize", flush=True)
         image_b64 = base64.b64encode(resized).decode()
         payload: dict = {"model": model, "prompt": prompt, "images": [image_b64], "stream": False}
         if options:
             payload["options"] = options
+        if keep_alive is not None:
+            payload["keep_alive"] = keep_alive
         r = requests.post(
             f"{OLLAMA_BASE}/api/generate",
             json=payload,
             timeout=TIMEOUT_VISION,
         )
-        print(f"DEBUG: Ollama HTTP POST took {time.time() - start:.2f}s", flush=True)
         r.raise_for_status()
         return r.json().get("response", "").strip()
     except requests.exceptions.ConnectionError:
