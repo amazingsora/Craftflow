@@ -6,6 +6,9 @@ Character AI services:
 """
 from __future__ import annotations
 
+import json
+import re
+
 from app.services.ai import ollama_client
 
 
@@ -70,23 +73,29 @@ def extract_from_text(
     Analyse chapter text and extract/suggest character profile fields.
     Returns a dict with keys matching the Character model fields.
     """
-    prompt = f"""You are a character profile assistant for a novel.
+    prompt = f"""[TASK]
+Analyze the provided chapter text and extract character profile information for "{character_name}".
 
-Analyse the following chapter text and extract information about the character "{character_name}".
-
-Return a JSON object with these fields:
+[OUTPUT FORMAT]
+Return ONLY a valid JSON object. No conversational filler, no markdown code blocks (```json).
+Strictly follow this JSON schema:
 {{
-  "core_traits": "personality traits observed (string, or null)",
-  "behavior_rules": "how this character tends to act / react (string, or null)",
-  "voice_style": "how this character speaks / their dialogue style (string, or null)",
-  "notes": "other notable observations (string, or null)",
-  "aliases": ["any alternative names or nicknames mentioned"]
+  "core_traits": "personality traits observed (Traditional Chinese string or null)",
+  "behavior_rules": "how this character acts/reacts (Traditional Chinese string or null)",
+  "voice_style": "dialogue style and patterns (Traditional Chinese string or null)",
+  "notes": "other notable observations (Traditional Chinese string or null)",
+  "aliases": ["list of alternative names, nicknames, or titles mentioned"]
 }}
 
-Return ONLY the JSON object, nothing else.
+[CONSTRAINTS]
+1. Content Language: Use Traditional Chinese (繁體中文) for all string values.
+2. Objectivity: Only include facts supported by the text. If no info exists for a field, use null.
+3. JSON Integrity: Ensure all quotes are escaped. Do not truncate the JSON.
 
-Chapter text:
-{chapter_text}"""
+[CHAPTER TEXT]
+{chapter_text}
+
+[RESULT]"""
 
     raw = ollama_client.generate(prompt, model=model)
     return _parse_json_object(raw) or {}
@@ -127,15 +136,23 @@ def describe_portrait(
     Given an illustration/portrait, describe the character's visual appearance
     to be used as reference for the character profile.
     """
-    prompt = f"""你正在為小說角色「{character_name}」建立視覺設定檔。
-請仔細分析這張插畫，用繁體中文描述：
+    prompt = f"""[TASK]
+Analyze the provided illustration for the character "{character_name}" and create a structured visual profile.
 
-1. **外貌特徵**：髮色、髮型、眼睛顏色、膚色、臉型
-2. **體型與身形**：高矮、體型、姿態
-3. **服裝與配件**：衣著風格、顏色、特殊配件
-4. **視覺氛圍**：整體氣質、給人的第一印象
+[OUTPUT FORMAT]
+Provide a detailed description in Traditional Chinese (繁體中文) using the following sections:
 
-請以結構化方式呈現，方便作者參考與後續創作使用。"""
+1. **外貌特徵 (Physical Traits)**: 髮色、髮型、瞳色、膚色、五官特色。
+2. **身形體態 (Body & Posture)**: 體型描述、身高感、當前姿勢、給人的動態感。
+3. **服裝細節 (Outfit & Accessories)**: 衣著層次、材質感、配色方案、特殊配件或武器。
+4. **視覺氣質 (Atmosphere)**: 整體氣氛、光影表現、性格映射到視覺上的感覺。
+
+[CONSTRAINTS]
+- Be precise: Instead of "long hair", use "silver waist-length straight hair" if applicable.
+- Semantic Focus: Focus on details that define the character's identity.
+- Language: Use professional Traditional Chinese creative writing vocabulary.
+
+[RESULT]"""
 
     return ollama_client.analyze_image(image_path, prompt, model=model)
 
@@ -145,21 +162,25 @@ def describe_portrait_bytes(
     character_name: str,
     model: str = ollama_client.DEFAULT_VISION_MODEL,
 ) -> str:
-    prompt = f"""你正在為小說角色「{character_name}」建立視覺設定檔。
-請仔細分析這張插畫，用繁體中文描述：
+    prompt = f"""[TASK]
+Analyze the provided illustration for the character "{character_name}" and create a structured visual profile.
 
-1. **外貌特徵**：髮色、髮型、眼睛顏色、膚色、臉型
-2. **體型與身形**：高矮、體型、姿態
-3. **服裝與配件**：衣著風格、顏色、特殊配件
-4. **視覺氛圍**：整體氣質、給人的第一印象
+[OUTPUT FORMAT]
+Provide a detailed description in Traditional Chinese (繁體中文) using the following sections:
 
-請以結構化方式呈現，方便作者參考與後續創作使用。"""
+1. **外貌特徵 (Physical Traits)**: 髮色、髮型、瞳色、膚色、五官特色。
+2. **身形體態 (Body & Posture)**: 體型描述、身高感、當前姿勢、給人的動態感。
+3. **服裝細節 (Outfit & Accessories)**: 衣著層次、材質感、配色方案、特殊配件或武器。
+4. **視覺氣質 (Atmosphere)**: 整體氣氛、光影表現、性格映射到視覺上的感覺。
+
+[CONSTRAINTS]
+- Be precise: Instead of "long hair", use "silver waist-length straight hair" if applicable.
+- Semantic Focus: Focus on details that define the character's identity.
+- Language: Use professional Traditional Chinese creative writing vocabulary.
+
+[RESULT]"""
 
     return ollama_client.analyze_image_bytes(image_bytes, prompt, model=model)
-
-
-import json
-import re
 
 
 def _parse_json_object(raw: str) -> dict | None:
