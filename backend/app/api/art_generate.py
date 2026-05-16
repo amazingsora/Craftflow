@@ -11,6 +11,7 @@ import base64
 import json
 import logging
 import random
+import struct
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -66,7 +67,7 @@ def _load_checkpoint_styles() -> dict:
             data = yaml.safe_load(f)
         return data.get("checkpoints", {})
     except Exception as e:
-        print(f"WARN: Could not load checkpoint_styles.yml: {e}", flush=True)
+        logger.warning("Could not load checkpoint_styles.yml: %s", e)
         return {}
 
 
@@ -257,8 +258,6 @@ def _inject_controlnet_compose(
             inputs["seed"] = seed
             inputs["steps"] = steps
 
-
-import struct
 
 def _image_dimensions(image_bytes: bytes) -> tuple[int, int]:
     """Read width/height from PNG or JPEG bytes without external libs. Falls back to 1024x1024."""
@@ -489,5 +488,9 @@ async def generate_character_design(
     return Response(
         content=_run(wf),
         media_type="image/png",
-        headers={"X-Seed": str(seed), "X-Style": style.value},
+        headers={
+            "X-Seed": str(seed),
+            "X-Style": style.value,
+            "X-Prompt": base64.b64encode(final_positive.encode()).decode()  # Encode to avoid header char issues
+        },
     )

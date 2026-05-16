@@ -658,7 +658,8 @@ function FactionView({ faction: initFaction, project, allChars, onBack, onSelect
 
   const addMember = async (charId) => {
     try {
-      await fetch(`${API}/factions/${faction.id}/members/${charId}`, { method: 'POST' })
+      const r = await fetch(`${API}/factions/${faction.id}/members/${charId}`, { method: 'POST' })
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText) }
       const char = allChars.find(c => c.id === charId)
       if (char) setMembers(prev => [...prev, char])
       setAddingMember(false)
@@ -667,7 +668,8 @@ function FactionView({ faction: initFaction, project, allChars, onBack, onSelect
 
   const removeMember = async (charId) => {
     try {
-      await fetch(`${API}/factions/${faction.id}/members/${charId}`, { method: 'DELETE' })
+      const r = await fetch(`${API}/factions/${faction.id}/members/${charId}`, { method: 'DELETE' })
+      if (!r.ok && r.status !== 204) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText) }
       setMembers(prev => prev.filter(c => c.id !== charId))
     } catch (e) { setError(e.message) }
   }
@@ -895,6 +897,8 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   const [charFactionIds, setCharFactionIds] = useState(initChar.faction_ids ?? [])
   const [addingFaction, setAddingFaction] = useState(false)
   const conceptRef = useRef()
+  const [deletingConceptIdx, setDeletingConceptIdx] = useState(null)
+  const [deletingAiIdx, setDeletingAiIdx] = useState(null)
 
   const charFactions = allFactions.filter(f => charFactionIds.includes(f.id))
   const availableFactions = allFactions.filter(f => !charFactionIds.includes(f.id))
@@ -946,11 +950,11 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   }
 
   const deleteConceptImage = async (idx) => {
-    if (!window.confirm('確定刪除這張概念圖？')) return
     try {
       const updated = await apiFetch(`/characters/${char.id}/concept-images/${idx}`, { method: 'DELETE' })
       setChar(updated)
       setConceptImages(updated.concept_images || [])
+      setDeletingConceptIdx(null)
     } catch (e) { setError(e.message) }
   }
 
@@ -959,8 +963,25 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
     try {
       const resp = await fetch(`${API}/characters/${char.id}/generate-design`, { method: 'POST' })
       if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
+      
+      // Retrieve debug prompt from header
+      let debugPrompt = null
+      const b64Prompt = resp.headers.get('X-Prompt')
+      if (b64Prompt) {
+        try {
+          debugPrompt = atob(b64Prompt)
+          // Decode UTF-8 if needed (atob handles latin1)
+          debugPrompt = decodeURIComponent(escape(debugPrompt))
+        } catch (e) { console.warn('Failed to decode debug prompt', e) }
+      }
+
       const blob = await resp.blob()
-      setPendingQueue([{ blob, url: URL.createObjectURL(blob), label: '全身人設圖' }])
+      setPendingQueue([{ 
+        blob, 
+        url: URL.createObjectURL(blob), 
+        label: '全身人設圖',
+        debugPrompt 
+      }])
     } catch (e) { setError(e.message) }
     finally { setGenerating(false) }
   }
@@ -993,17 +1014,18 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   }
 
   const deleteAiImage = async (idx) => {
-    if (!window.confirm('確定移除這張 AI 生成圖？')) return
     try {
       const updated = await apiFetch(`/characters/${char.id}/ai-images/${idx}`, { method: 'DELETE' })
       setChar(updated)
       setAiImages(updated.ai_generated_images || [])
+      setDeletingAiIdx(null)
     } catch (e) { setError(e.message) }
   }
 
   const joinFaction = async (factionId) => {
     try {
-      await fetch(`${API}/factions/${factionId}/members/${char.id}`, { method: 'POST' })
+      const r = await fetch(`${API}/factions/${factionId}/members/${char.id}`, { method: 'POST' })
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText) }
       setCharFactionIds(prev => [...prev, factionId])
       setAddingFaction(false)
     } catch (e) { setError(e.message) }
@@ -1011,7 +1033,8 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
   const leaveFaction = async (factionId) => {
     try {
-      await fetch(`${API}/factions/${factionId}/members/${char.id}`, { method: 'DELETE' })
+      const r = await fetch(`${API}/factions/${factionId}/members/${char.id}`, { method: 'DELETE' })
+      if (!r.ok && r.status !== 204) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText) }
       setCharFactionIds(prev => prev.filter(id => id !== factionId))
     } catch (e) { setError(e.message) }
   }
@@ -1066,10 +1089,19 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     alt={`概念圖${idx + 1}`}
                   />
-                  <button
-                    onClick={() => deleteConceptImage(idx)}
-                    style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
-                  >×</button>
+                  {deletingConceptIdx === idx
+                    ? <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 11, color: '#f07070' }}>確認刪除？</span>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button onClick={() => deleteConceptImage(idx)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: '#5c2020', color: '#f07070', cursor: 'pointer' }}>刪除</button>
+                          <button onClick={() => setDeletingConceptIdx(null)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>取消</button>
+                        </div>
+                      </div>
+                    : <button
+                        onClick={() => setDeletingConceptIdx(idx)}
+                        style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
+                      >×</button>
+                  }
                 </div>
               ))}
               {conceptImages.length < 3 && (
@@ -1107,7 +1139,28 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                     待確認 {pendingQueue.length} 張
                   </span>
                 </div>
+                
                 <img src={pendingQueue[0].url} style={{ ...S.genImg, marginTop: 0 }} alt={pendingQueue[0].label} />
+                
+                {/* Debug Prompt Section */}
+                {pendingQueue[0].debugPrompt && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4, fontWeight: 600 }}>DEBUG PROMPT:</div>
+                    <div style={{ 
+                      fontSize: 11, 
+                      color: '#b09ef0', 
+                      background: '#1e1a3a', 
+                      padding: '6px 10px', 
+                      borderRadius: 6, 
+                      wordBreak: 'break-all',
+                      lineHeight: 1.4,
+                      border: '1px solid #3a2d6a'
+                    }}>
+                      {pendingQueue[0].debugPrompt}
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ ...S.btnRow, marginTop: 6 }}>
                   <button
                     style={{ ...S.btn, flex: 1, padding: '7px 0', fontSize: 13 }}
@@ -1132,7 +1185,13 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                     <img src={`${API}/characters/${char.id}/ai-images/${idx}?t=${img}`} style={{ width: '100%', display: 'block', borderRadius: 8 }} alt={`AI圖${idx + 1}`} />
                     <div style={{ display: 'flex', gap: 4, marginTop: 4, justifyContent: 'center' }}>
                       <a href={`${API}/characters/${char.id}/ai-images/${idx}`} download={`${char.name}_ai_${idx + 1}.png`} style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px', textDecoration: 'none', textAlign: 'center' }}>下載</a>
-                      <button style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px' }} onClick={() => deleteAiImage(idx)}>移除</button>
+                      {deletingAiIdx === idx
+                        ? <>
+                            <button style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: '#5c2020', color: '#f07070', cursor: 'pointer' }} onClick={() => deleteAiImage(idx)}>確認</button>
+                            <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px' }} onClick={() => setDeletingAiIdx(null)}>取消</button>
+                          </>
+                        : <button style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px' }} onClick={() => setDeletingAiIdx(idx)}>移除</button>
+                      }
                     </div>
                   </div>
                 ))}

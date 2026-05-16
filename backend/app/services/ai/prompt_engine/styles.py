@@ -51,105 +51,131 @@ _SD_SYNTAX_TAGS = {
 
 # ── Per-style LLM templates (English for better instruction-following) ────────
 
-_SDXL_TEMPLATE = """\
-Convert the Chinese description into Danbooru-style image tags for Stable Diffusion SDXL.
+_SDXL_TEMPLATE = """[TASK]
+Convert Chinese descriptions into clean, lowercase Danbooru tags for Stable Diffusion SDXL.
 
-Rules:
-- Output ONLY lowercase English tags, comma-separated, no explanations or extra text
-- Keep ALL subjects, actions, held objects, and directional words intact
-  (右手 → right hand, 左手 → left hand, 右腳 → right leg, 左腳 → left leg)
-- Add relevant scene, mood, and style details
-- Do NOT add quality tags (masterpiece, best quality, ultra detailed, etc.)
+[CRITICAL RULES]
+- FORMAT: Output ONLY comma-separated tags. NO key-value pairs (e.g., no "name:", no "age:").
+- GENDER: Always start with a gender tag (1boy, 1girl, 2boys, etc.) based on the input.
+- NO-GO: No "Output:" prefix, No "Tags:" prefix, No explanations, No capital letters.
+- STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
+- QUALITY: Do NOT add quality tags (e.g., masterpiece, best quality). They are handled elsewhere.
+- PRESERVE: Keep subjects, actions, and orientation (right/left hand).
 
-Examples:
+[EXAMPLES]
 Input: 一個女孩右手拿傘
-Output: 1girl, solo, holding umbrella, right hand, umbrella, standing, outdoors
+Output: 1girl, solo, holding umbrella, right hand, standing, outdoors
 
-Input: 少年坐在窗邊望向夜空
-Output: 1boy, sitting, window, looking at sky, night sky, stars, indoors, melancholy
+Input: 賽博龐克風格的街道，雨天，霓虹燈招牌
+Output: cyberpunk, street, raining, neon lights, sign, cinematic lighting, cityscape
 
-Input: {prompt}
-Output:"""
+Input: 左眼為紅色，右眼為綠色的異色瞳女孩
+Output: 1girl, solo, heterochromia, red eye (left), green eye (right), looking at viewer
 
-_PONY_TEMPLATE = """\
-Convert the Chinese description into Danbooru-style image tags for Pony Diffusion.
+Input: 一名15歲的冷酷少年，黑色短髮，黑眼，穿著高中制服
+Output: 1boy, solo, male focus, short hair, black hair, black eyes, school uniform, closed mouth, cold expression, 15 years old
 
-Rules:
-- Output ONLY lowercase English tags, comma-separated, no explanations
-- Keep ALL subjects, actions, and directional words intact
-- Add source_anime for anime-style characters
-- Do NOT add masterpiece, best quality, or score tags (handled automatically)
+[INPUT]
+{prompt}
 
-Examples:
+[RESULT]"""
+
+_PONY_TEMPLATE = """[TASK]
+Convert Chinese descriptions into clean, lowercase Danbooru tags for Pony Diffusion.
+
+[CRITICAL RULES]
+- FORMAT: Output ONLY comma-separated tags. NO key-value pairs (e.g., no "name:", no "age:").
+- GENDER: Always start with a gender tag (1boy, 1girl, 2boys, etc.) based on the input.
+- STYLE: Always include 'source_anime' for anime-style descriptions.
+- NO-GO: No "Output:" prefix, No "Tags:" prefix, No explanations, No capital letters.
+- STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
+- QUALITY: Do NOT add masterpiece, best quality, or score tags. They are handled elsewhere.
+
+[EXAMPLES]
 Input: 一個女孩右手拿傘
-Output: 1girl, solo, holding umbrella, right hand, umbrella, standing, source_anime
+Output: 1girl, solo, holding umbrella, right hand, standing, source_anime
 
-Input: 少年在雨中奔跑
-Output: 1boy, solo, running, rain, wet, outdoors, source_anime
+Input: 銀髮少女拿著武士刀，背景是紅色的月亮
+Output: 1girl, solo, silver hair, holding sword, katana, red moon, night, source_anime
 
-Input: 一隻貓趴在書桌上
-Output: cat, lying, desk, indoors, looking at viewer, source_furry
+Input: 左眼為紅色，右眼為綠色的異色瞳女孩
+Output: 1girl, solo, heterochromia, red eye (left), green eye (right), looking at viewer, source_anime
 
-Input: {prompt}
-Output:"""
+Input: 一名15歲的冷酷少年，黑色短髮，黑眼，穿著高中制服
+Output: 1boy, solo, male focus, short hair, black hair, black eyes, school uniform, closed mouth, cold expression, 15 years old, source_anime
 
-_FLUX_TEMPLATE = """\
-Rewrite the Chinese description as a natural English image prompt for Flux.
+[INPUT]
+{prompt}
 
-Rules:
-- Write 1-2 natural English sentences describing the scene
-- Do NOT use comma-separated tag format
-- Do NOT use SD-specific syntax (masterpiece, 1girl, score_9, etc.)
-- Preserve directional words (right hand, left hand)
-- Be descriptive and cinematic
+[RESULT]"""
 
-Examples:
+_FLUX_TEMPLATE = """[TASK]
+Rewrite the Chinese description as a natural, cinematic English image prompt for Flux.
+
+[CRITICAL RULES]
+- FORMAT: Write 1-2 natural English sentences.
+- NO-GO: Do NOT use comma-separated tag format. Do NOT use SD-specific syntax (1girl, score_9).
+- PRESERVE: Keep all directional details (right hand, left hand).
+- TONE: Be descriptive, cinematic, and clear.
+
+[EXAMPLES]
 Input: 一個女孩右手拿傘
 Output: A young girl standing outdoors, holding a colorful umbrella in her right hand, with a calm and serene expression.
 
-Input: 少年坐在窗邊望向夜空
-Output: A teenage boy sitting quietly by the window at night, gazing at the vast starry sky outside.
+Input: 賽博龐克風格的街道，雨天，霓虹燈招牌
+Output: A cinematic shot of a rainy cyberpunk street at night, illuminated by vibrant neon signs and glowing advertisements.
 
-Input: {prompt}
-Output:"""
+Input: 左眼為紅色，右眼為綠色的異色瞳女孩
+Output: A close-up portrait of a girl with striking heterochromia; her left eye is a vivid red while her right eye is a bright green.
 
-_NOOBAI_TEMPLATE = """\
-Convert the Chinese description into dense Danbooru-style image tags for NoobAI.
+[INPUT]
+{prompt}
 
-Rules:
-- Output ONLY lowercase English tags, comma-separated, no explanations
-- Be thorough: include clothing, expression, setting, lighting, and pose
-- Keep ALL subjects, actions, and directional words intact
-- Do NOT add quality tags (masterpiece, absurdres, newest, etc.)
+[RESULT]"""
 
-Examples:
+_NOOBAI_TEMPLATE = """[TASK]
+Convert Chinese descriptions into dense, descriptive Danbooru tags for NoobAI.
+
+[CRITICAL RULES]
+- FORMAT: Output ONLY comma-separated tags.
+- DEPTH: Be thorough; include clothing, expression, setting, lighting, and pose.
+- NO-GO: No "Output:" prefix, No explanations, No capital letters.
+- STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
+- QUALITY: Do NOT add quality tags (masterpiece, absurdres, newest, etc.).
+
+[EXAMPLES]
 Input: 一個女孩右手拿傘
-Output: 1girl, solo, holding umbrella, right hand, open umbrella, standing, looking at viewer, smile, rain, wet hair, outdoors, puddle, blush
+Output: 1girl, solo, holding umbrella, right hand, standing, looking at viewer, smile, rain, wet hair, outdoors, puddle, blush
 
-Input: 少女坐在咖啡廳窗邊看書
-Output: 1girl, solo, sitting, reading book, cafe, window, sunlight, warm lighting, cozy, book, table, long hair, casual clothes
+Input: 一個身穿盔甲的騎士在戰場上
+Output: 1boy, solo, knight, full armor, holding sword, battlefield, fire, smoke, debris, intense expression, dynamic pose, cinematic lighting
 
-Input: {prompt}
-Output:"""
+[INPUT]
+{prompt}
 
-_ILLUSTRIOUS_TEMPLATE = """\
-Convert the Chinese description into anime semantic tags for Illustrious XL.
+[RESULT]"""
 
-Rules:
-- Output ONLY lowercase English tags, comma-separated, no explanations
-- Use anime-appropriate semantic vocabulary
-- Keep ALL subjects, actions, and directional words intact (右手 → right hand)
-- Do NOT add quality tags (masterpiece, highres, newest, etc.)
+_ILLUSTRIOUS_TEMPLATE = """[TASK]
+Convert Chinese descriptions into anime semantic tags for Illustrious XL.
 
-Examples:
+[CRITICAL RULES]
+- FORMAT: Output ONLY comma-separated tags.
+- VOCABULARY: Use anime-appropriate semantic vocabulary.
+- NO-GO: No "Output:" prefix, No explanations, No capital letters.
+- STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
+- QUALITY: Do NOT add quality tags (masterpiece, highres, newest, etc.).
+
+[EXAMPLES]
 Input: 一個女孩右手拿傘
-Output: 1girl, solo, holding umbrella, right hand, umbrella, standing, detailed eyes, anime coloring
+Output: 1girl, solo, holding umbrella, right hand, standing, detailed eyes, anime coloring
 
-Input: 少年與少女在夕陽下並肩走路
-Output: 1boy, 1girl, walking, side by side, sunset, warm colors, silhouette, romantic atmosphere
+Input: 森林中的精靈，手中散發著魔法光芒
+Output: 1girl, solo, elf, long hair, pointed ears, forest, glowing hands, magic, particle effects, soft lighting, fantasy art style
 
-Input: {prompt}
-Output:"""
+[INPUT]
+{prompt}
+
+[RESULT]"""
 
 
 # ── Style config ──────────────────────────────────────────────────────────────
