@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import API_PREFIX, APP_TITLE, APP_VERSION
 from app.core.database import init_db
-from app.api import projects, chapters, characters, illustrations, analysis, ai_text, ai_art, status, art_generate, factions
+from app.api import projects, chapters, characters, illustrations, analysis, ai_text, ai_art, status, art_generate, factions, settings, art_styles
 
 
 @asynccontextmanager
@@ -34,6 +34,8 @@ app.include_router(ai_art.router, prefix=API_PREFIX)
 app.include_router(status.router, prefix=API_PREFIX)
 app.include_router(art_generate.router, prefix=API_PREFIX)
 app.include_router(factions.router, prefix=API_PREFIX)
+app.include_router(settings.router, prefix=API_PREFIX)
+app.include_router(art_styles.router, prefix=API_PREFIX)
 
 
 @app.exception_handler(Exception)

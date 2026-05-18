@@ -15,6 +15,8 @@ class CharacterCreate(BaseModel):
     age: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
+    gender: Optional[str] = None
+    art_style_id: Optional[int] = None
 
 
 class CharacterUpdate(BaseModel):
@@ -31,8 +33,12 @@ class CharacterUpdate(BaseModel):
     age: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
+    gender: Optional[str] = None
+    art_style_id: Optional[int] = None
     concept_images: Optional[list[str]] = None
     ai_generated_images: Optional[list[str]] = None
+    tab_names: Optional[list[str]] = None
+    variants: Optional[list] = None
 
 
 class CharacterResponse(BaseModel):
@@ -55,6 +61,10 @@ class CharacterResponse(BaseModel):
     age: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
+    gender: Optional[str] = None
     faction_ids: list[int] = []
+    art_style_id: Optional[int] = None
+    tab_names: Optional[list] = None
+    variants: Optional[list] = None
     created_at: datetime
     updated_at: datetime

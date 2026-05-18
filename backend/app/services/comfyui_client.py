@@ -9,13 +9,7 @@ from io import BytesIO
 
 import requests
 
-# app/services/comfyui_client.py
-
-# 修正前：指向容器內部 (錯誤)
-# COMFYUI_BASE = "http://localhost:8188"
-
-# 修正後：指向 Windows 主機 (正確)
-COMFYUI_BASE = "http://host.docker.internal:8188"
+from app.core.config import COMFYUI_BASE
 
 def is_available() -> bool:
     try:
