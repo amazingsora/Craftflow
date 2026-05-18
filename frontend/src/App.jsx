@@ -1,21 +1,35 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import ProcessTab from './components/ProcessTab.jsx'
 import GenerateTab from './components/GenerateTab.jsx'
 import ComposeTab from './components/ComposeTab.jsx'
 import CharacterTab from './components/CharacterTab.jsx'
+import ArtStyleTab from './components/ArtStyleTab.jsx'
 
 const TABS = [
   { id: 'process', label: '草稿 → 線稿' },
   { id: 'generate', label: '文字 → 生圖' },
   { id: 'compose', label: '草圖問答' },
   { id: 'character', label: '角色管理' },
+  { id: 'artstyle', label: '畫風' },
 ]
 
 const S = {
   page: { minHeight: '100vh', display: 'flex', flexDirection: 'column', padding: '24px 32px', gap: 20 },
-  header: {},
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
+  headerLeft: {},
   title: { fontSize: 22, fontWeight: 700, letterSpacing: 1, color: 'var(--accent)' },
   subtitle: { fontSize: 13, color: 'var(--muted)', marginTop: 4 },
+  modelSelect: {
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 8,
+    color: 'var(--text)',
+    padding: '6px 10px',
+    fontSize: 13,
+    outline: 'none',
+    maxWidth: 260,
+  },
+  modelLabel: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 },
   tabBar: { display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', paddingBottom: 0 },
   tab: {
     padding: '9px 22px',
@@ -101,6 +115,28 @@ function formatTime(ts) {
 export default function App() {
   const [tab, setTab] = useState(() => localStorage.getItem('craftflow_tab') ?? 'process')
   const [history, setHistory] = useState([])
+  const [checkpoints, setCheckpoints] = useState([])
+  const [activeCheckpoint, setActiveCheckpoint] = useState('')
+
+  useEffect(() => {
+    fetch('/api/v1/settings/checkpoints')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return
+        setCheckpoints(data.checkpoints ?? [])
+        setActiveCheckpoint(data.active ?? '')
+      })
+      .catch(() => {})
+  }, [])
+
+  const onCheckpointChange = async (name) => {
+    setActiveCheckpoint(name)
+    await fetch('/api/v1/settings/checkpoint', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checkpoint: name }),
+    }).catch(() => {})
+  }
 
   const switchTab = (id) => {
     localStorage.setItem('craftflow_tab', id)
@@ -114,8 +150,24 @@ export default function App() {
   return (
     <div style={S.page}>
       <div style={S.header}>
-        <div style={S.title}>Craftflow 生圖測試台</div>
-        <div style={S.subtitle}>ComfyUI · AnythingXL · localhost:8188</div>
+        <div style={S.headerLeft}>
+          <div style={S.title}>Craftflow 生圖測試台</div>
+          <div style={S.subtitle}>ComfyUI · {activeCheckpoint || '未連線'} · localhost:8188</div>
+        </div>
+        {checkpoints.length > 0 && (
+          <div style={{ textAlign: 'right' }}>
+            <div style={S.modelLabel}>Checkpoint</div>
+            <select
+              style={S.modelSelect}
+              value={activeCheckpoint}
+              onChange={e => onCheckpointChange(e.target.value)}
+            >
+              {checkpoints.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div style={S.tabBar}>
@@ -143,6 +195,9 @@ export default function App() {
         </div>
         <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
           <CharacterTab />
+        </div>
+        <div style={{ display: tab === 'artstyle' ? 'block' : 'none' }}>
+          <ArtStyleTab />
         </div>
       </div>
 

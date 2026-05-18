@@ -8,8 +8,11 @@
 # 若 checkpoint 名稱不在清單內，系統預設使用 sdxl。
 
 checkpoints:
+  # ── Anything XL 系列 ───────────────────────────────────────
+  AnythingXL:       anythingxl
+  anythingXL:       anythingxl
+
   # ── SDXL 系列 ──────────────────────────────────────────────
-  AnythingXL:       sdxl
   BluePencilXL:     sdxl
   CounterfeitXL:    sdxl
   DreamShaperXL:    sdxl
@@ -33,3 +36,4 @@ checkpoints:
   # ── Illustrious 系列 ───────────────────────────────────────
   illustriousXL:    illustrious
   IllustriousXL:    illustrious
+  illustrious-xl:   illustrious    # Illustrious-XL-v2.0 等帶連字號命名

@@ -35,10 +35,17 @@ def _migrate() -> None:
         ("age", "INTEGER"),
         ("birthday", "VARCHAR(30)"),
         ("ai_prompt", "TEXT"),
+        ("gender", "VARCHAR(10)"),
+        ("tab_names", "TEXT"),
+        ("variants", "TEXT"),
     ])
     _add_columns("projects", [
         ("genre", "VARCHAR(50)"),
         ("status", "VARCHAR(20)"),
+        ("art_style_id", "INTEGER"),
+    ])
+    _add_columns("characters", [
+        ("art_style_id", "INTEGER"),
     ])
 
 
