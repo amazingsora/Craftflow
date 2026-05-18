@@ -41,6 +41,10 @@ class Character(Base):
     ai_generated_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
     age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     birthday: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    gender: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # male | female | neutral
+    tab_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
+    variants: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
+    art_style_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("art_styles.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

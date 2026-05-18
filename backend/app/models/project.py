@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import String, Text, DateTime
+from sqlalchemy import String, Text, DateTime, Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -25,6 +25,7 @@ class Project(Base):
     cover_image_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     genre: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default='構思中')
+    art_style_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("art_styles.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

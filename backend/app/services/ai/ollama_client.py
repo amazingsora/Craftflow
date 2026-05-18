@@ -19,17 +19,18 @@ from app.core.config import OLLAMA_BASE, DEFAULT_TEXT_MODEL, DEFAULT_VISION_MODE
 TIMEOUT_TEXT = 300
 TIMEOUT_VISION = 300
 
-_VISION_MAX_PX = 768  # resize before sending to vision model — enough for analysis, much faster
+_VISION_MAX_PX = 768   # single-image: enough detail, acceptable speed
+_VISION_MULTI_MAX_PX = 448  # multi-image: reduce patches ~66% to avoid quadratic slowdown
 
 
-def _resize_for_vision(image_bytes: bytes) -> bytes:
-    """Resize image so its longest side is at most _VISION_MAX_PX. Returns original on failure."""
+def _resize_for_vision(image_bytes: bytes, max_px: int = _VISION_MAX_PX) -> bytes:
+    """Resize image so its longest side is at most max_px. Returns original on failure."""
     try:
         img = Image.open(io.BytesIO(image_bytes))
         w, h = img.size
-        if max(w, h) <= _VISION_MAX_PX:
+        if max(w, h) <= max_px:
             return image_bytes
-        scale = _VISION_MAX_PX / max(w, h)
+        scale = max_px / max(w, h)
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
         buf = io.BytesIO()
         fmt = img.format or "PNG"
@@ -100,6 +101,43 @@ def analyze_image_bytes(
         resized = _resize_for_vision(image_bytes)
         image_b64 = base64.b64encode(resized).decode()
         payload: dict = {"model": model, "prompt": prompt, "images": [image_b64], "stream": False}
+        if options:
+            payload["options"] = options
+        if keep_alive is not None:
+            payload["keep_alive"] = keep_alive
+        r = requests.post(
+            f"{OLLAMA_BASE}/api/generate",
+            json=payload,
+            timeout=TIMEOUT_VISION,
+        )
+        r.raise_for_status()
+        return r.json().get("response", "").strip()
+    except requests.exceptions.ConnectionError:
+        return f"[Vision unavailable at {OLLAMA_BASE}: run `ollama serve` and ensure OLLAMA_HOST=0.0.0.0]"
+    except Exception as e:
+        return f"[Vision error at {OLLAMA_BASE}: {e}]"
+
+
+def analyze_multi_images_bytes(
+    images_bytes: list[bytes],
+    prompt: str,
+    model: str = DEFAULT_VISION_MODEL,
+    options: Optional[dict] = None,
+    keep_alive: Optional[int] = None,
+) -> str:
+    """
+    Send multiple images in one Ollama request so the vision model can
+    cross-reference them.  images_bytes must be non-empty.
+    Each image is resized to _VISION_MULTI_MAX_PX (smaller than single-image)
+    to prevent quadratic patch growth from causing extreme slowdown.
+    """
+    try:
+        max_px = _VISION_MULTI_MAX_PX if len(images_bytes) > 1 else _VISION_MAX_PX
+        encoded = [
+            base64.b64encode(_resize_for_vision(b, max_px=max_px)).decode()
+            for b in images_bytes
+        ]
+        payload: dict = {"model": model, "prompt": prompt, "images": encoded, "stream": False}
         if options:
             payload["options"] = options
         if keep_alive is not None:

@@ -8,12 +8,18 @@ ComfyUI image generation endpoints:
 from __future__ import annotations
 
 import base64
+import colorsys
+import io
 import json
 import logging
 import random
+import statistics
 import struct
+import time
 from pathlib import Path
 from typing import Annotated, Optional
+
+from PIL import Image
 
 import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File
@@ -22,7 +28,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import UPLOAD_DIR
+from app.core import state
 from app.core.database import get_db
+from app.models.art_style import ArtStyle
 from app.models.character import Character
 from app.services import comfyui_client
 from app.services.ai import art_service, ollama_client as _oc
@@ -50,6 +58,83 @@ logger.info("workflow dir: %s", _WORKFLOW_DIR)
 logger.info("checkpoint styles: %s", _STYLES_YML)
 
 
+# ── Art Style helpers ─────────────────────────────────────────────────────────
+
+def _resolve_style(art_style: Optional[ArtStyle], workflow: str = "text_to_image.json") -> PromptStyle:
+    """Return effective PromptStyle: art_style.base_style > checkpoint detection."""
+    if art_style and art_style.base_style:
+        try:
+            return PromptStyle(art_style.base_style)
+        except ValueError:
+            pass
+    return _detect_style(workflow)
+
+
+def _compile_overrides(art_style: Optional[ArtStyle]) -> dict:
+    """Return kwargs to pass into compile_prompt() for art_style overrides."""
+    if not art_style:
+        return {}
+    return {
+        "quality_prefix_override": art_style.quality_prefix or None,
+        "negative_override": art_style.negative or None,
+    }
+
+
+def _extra_tags(art_style: Optional[ArtStyle]) -> str:
+    return (art_style.extra_tags or "").strip() if art_style else ""
+
+
+def _inject_loras(wf: dict, loras: list) -> None:
+    """Insert a LoraLoader chain into the workflow (mutates wf in place).
+
+    Finds CheckpointLoaderSimple as the chain root, then rewires KSampler.model
+    and all CLIPTextEncode.clip to point to the last LoRA node output.
+    Empty model names are silently skipped.
+    """
+    valid = [l for l in (loras or []) if isinstance(l, dict) and l.get("model", "").strip()]
+    if not valid:
+        return
+
+    ckpt_id = next(
+        (nid for nid, n in wf.items()
+         if isinstance(n, dict) and n.get("class_type") == "CheckpointLoaderSimple"),
+        None,
+    )
+    if ckpt_id is None:
+        logger.warning("[lora] CheckpointLoaderSimple not found — skipping LoRA injection")
+        return
+
+    prev_id = ckpt_id
+    for i, lora in enumerate(valid):
+        node_id = f"_lora_{i}"
+        weight = float(lora.get("weight", 0.8))
+        wf[node_id] = {
+            "class_type": "LoraLoader",
+            "inputs": {
+                "model": [prev_id, 0],
+                "clip": [prev_id, 1],
+                "lora_name": lora["model"].strip(),
+                "strength_model": weight,
+                "strength_clip": weight,
+            },
+        }
+        logger.debug("[lora] injected %s (weight=%.2f)", lora["model"], weight)
+        prev_id = node_id
+
+    # Rewire KSampler.model and CLIPTextEncode.clip to the last LoRA node
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs", {})
+        ct = node.get("class_type")
+        if ct == "KSampler":
+            if isinstance(inputs.get("model"), list) and inputs["model"][0] == ckpt_id:
+                inputs["model"] = [prev_id, 0]
+        elif ct == "CLIPTextEncode":
+            if isinstance(inputs.get("clip"), list) and inputs["clip"][0] == ckpt_id:
+                inputs["clip"] = [prev_id, 1]
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _load_workflow(name: str) -> dict:
@@ -57,6 +142,11 @@ def _load_workflow(name: str) -> dict:
     with open(path, encoding="utf-8") as f:
         wf = json.load(f)
     wf.pop("_comment", None)
+    ckpt = state.get_checkpoint()
+    if ckpt:
+        for node in wf.values():
+            if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":
+                node["inputs"]["ckpt_name"] = ckpt
     return wf
 
 
@@ -124,10 +214,11 @@ def _run(workflow: dict) -> bytes:
 class CompilePromptRequest(BaseModel):
     prompt: str
     model: str = DEFAULT_TEXT_MODEL
+    art_style_id: Optional[int] = None
 
 
 @router.post("/art/compile-prompt", summary="AI 編譯提示詞 (中文 → 模型對應格式)")
-async def compile_prompt_endpoint(req: CompilePromptRequest):
+async def compile_prompt_endpoint(req: CompilePromptRequest, db: Session = Depends(get_db)):
     """
     Detect current checkpoint style from text_to_image.json,
     then compile Chinese description into the correct prompt format.
@@ -137,13 +228,18 @@ async def compile_prompt_endpoint(req: CompilePromptRequest):
       negative  — model-appropriate negative prompt
       style     — detected style (sdxl / pony / flux / ...)
     """
-    style = _detect_style("text_to_image.json")
+    art_style = db.get(ArtStyle, req.art_style_id) if req.art_style_id else None
+    style = _resolve_style(art_style)
     await guardian.request_focus("ollama")
-    positive, negative = compile_prompt(req.prompt, style=style, model=req.model)
+    positive, negative = compile_prompt(req.prompt, style=style, model=req.model, **_compile_overrides(art_style))
+    extra = _extra_tags(art_style)
+    if extra:
+        positive = f"{positive}, {extra}"
     return {
         "positive": positive,
         "negative": negative,
         "style": style.value,
+        "art_style_id": req.art_style_id,
     }
 
 
@@ -171,24 +267,32 @@ async def lineart(file: Annotated[UploadFile, File(description="草稿圖片 (JP
 
 class GenerateRequest(BaseModel):
     prompt: str
-    negative_prompt: str = ""   # 若為空，由偵測到的 style 自動填入
+    negative_prompt: str = ""   # 若為空，由偵測到的 style 或 art_style 自動填入
     width: int = 1024
     height: int = 1024
     steps: int = 20
     seed: int = -1
+    art_style_id: Optional[int] = None
 
 
 @router.post("/art/generate", summary="文字→圖片 (SDXL txt2img)")
-async def generate(req: GenerateRequest):
+async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
     """
     Generate an illustration from a text prompt via ComfyUI.
-    If negative_prompt is empty, uses the model-appropriate preset.
+    If negative_prompt is empty, uses the model-appropriate preset (or art_style override).
     """
-    style = _detect_style("text_to_image.json")
-    negative = req.negative_prompt or STYLE_CONFIG[style]["negative"]
+    art_style = db.get(ArtStyle, req.art_style_id) if req.art_style_id else None
+    style = _resolve_style(art_style)
+    default_neg = (art_style.negative or STYLE_CONFIG[style].negative) if art_style else STYLE_CONFIG[style].negative
+    negative = req.negative_prompt or default_neg
     seed = req.seed if req.seed >= 0 else random.randint(0, 2**31 - 1)
+    prompt = req.prompt
+    extra = _extra_tags(art_style)
+    if extra:
+        prompt = f"{prompt}, {extra}"
 
     wf = _load_workflow("text_to_image.json")
+    _inject_loras(wf, art_style.loras if art_style else [])
     for node in wf.values():
         if not isinstance(node, dict):
             continue
@@ -196,7 +300,7 @@ async def generate(req: GenerateRequest):
         inputs = node.get("inputs", {})
         if ct == "CLIPTextEncode":
             if inputs.get("text") == "__POSITIVE__":
-                inputs["text"] = req.prompt
+                inputs["text"] = prompt
             elif inputs.get("text") == "__NEGATIVE__":
                 inputs["text"] = negative
         elif ct == "EmptyLatentImage":
@@ -289,6 +393,24 @@ def _clamp_dim(v: int) -> int:
     return (v // 64) * 64
 
 
+_FLAT_COLOR_STD_THRESHOLD = 25.0  # max per-channel std to be considered a flat-color draft
+
+
+def _is_flat_color_draft(image_bytes: bytes) -> bool:
+    """
+    Returns True when the image is a single-color fill with no meaningful content.
+    Uses per-channel std-deviation on a 32×32 thumbnail; a purely flat canvas has
+    std ≈ 0, a fully colored character illustration typically exceeds 40.
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((32, 32))
+        pixels = list(img.getdata())
+        channel_stds = [statistics.stdev(p[c] for p in pixels) for c in range(3)]
+        return max(channel_stds) < _FLAT_COLOR_STD_THRESHOLD
+    except Exception:
+        return False
+
+
 @router.post("/art/compose", summary="草圖問答 → 構圖意見 + 參考圖")
 async def compose(
     file: Annotated[UploadFile, File(description="草稿圖片")],
@@ -306,7 +428,7 @@ async def compose(
 
     seed = random.randint(0, 2**31 - 1)
     style = _detect_style("text_to_image.json")
-    negative = STYLE_CONFIG[style]["negative"]
+    negative = STYLE_CONFIG[style].negative
 
     # Sketch-style suffix: complete the figure, force monochrome lineart for consistent draft look
     _COMPOSE_SUFFIX = ", full body, complete character, all limbs visible, white background, monochrome, lineart, clean lines, no shading, no color"
@@ -356,10 +478,83 @@ async def compose(
 
 # ── Character Design Sheet Generation ────────────────────────────────────────
 
-_VISUAL_EXTRACT_PROMPT = """\
-請用40字以內描述這張參考圖中角色的視覺外型。
-只列出：髮色、髮型、眼睛顏色、主要服裝顏色與風格。
-格式：逗號分隔的短語，使用中文，不要句子。"""
+def _hex_to_sd_color(hex_color: str) -> str:
+    """Convert #RRGGBB to an approximate SD color name (e.g. 'dark green')."""
+    try:
+        h = hex_color.lstrip('#')
+        r, g, b = int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255
+        hue, sat, val = colorsys.rgb_to_hsv(r, g, b)
+        hue_deg = hue * 360
+        if val < 0.15:
+            return "black"
+        if val > 0.85 and sat < 0.12:
+            return "white"
+        if sat < 0.12:
+            return "gray"
+        if   hue_deg < 15 or hue_deg >= 345: base = "red"
+        elif hue_deg < 40:  base = "orange"
+        elif hue_deg < 70:  base = "yellow"
+        elif hue_deg < 150: base = "green"
+        elif hue_deg < 185: base = "cyan"
+        elif hue_deg < 260: base = "blue"
+        elif hue_deg < 290: base = "purple"
+        else:               base = "pink"
+        prefix = "dark " if val < 0.45 else "light " if val > 0.75 else ""
+        return prefix + base
+    except Exception:
+        return "colored"
+
+
+def _age_gender_tag(gender: str | None, age: int | None) -> str:
+    """
+    Return the primary SD subject tag(s) based on gender + age.
+    Placed at the very front of the positive prompt to anchor subject count.
+    Returns empty string when gender is unset.
+    """
+    if gender == "female":
+        base = "1girl" if (age is None or age < 25) else "1woman"
+        suffix = ", mature female" if age is not None and age >= 40 else ""
+        return base + suffix
+    if gender == "male":
+        base = "1boy" if (age is None or age < 25) else "1man"
+        suffix = ", mature male" if age is not None and age >= 40 else ""
+        return base + suffix
+    if gender == "neutral":
+        return "androgynous"
+    return ""
+
+
+def _visual_extract_prompt(n: int) -> str:
+    """Return a vision prompt tuned for single or multi-image analysis."""
+    ignore_bg = (
+        "【重要警告】這是一張草稿或帶有單色背景的參考圖。請完全忽略背景顏色（例如：如果背景是純粉色，請勿將其判定為衣服或髮色）。"
+        "背景不屬於角色特徵。請只觀察「角色線條內」的特徵。"
+    )
+    if n == 1:
+        return (
+            f"{ignore_bg}\n"
+            "請仔細觀察這張角色參考圖，描述以下視覺特徵：\n"
+            "① 髮色與髮型（顏色、長度、形狀，請根據角色本身的髮色判斷）"
+            "② 眼睛顏色"
+            "③ 膚色"
+            "④ 體型輪廓（高挑/嬌小、胖瘦）"
+            "⑤ 服裝主要顏色與風格（僅描述角色穿著的部分，無視背景）"
+            "⑥ 明顯特殊特徵（獸耳、印記、武器等）\n"
+            "格式：逗號分隔的中文短語，不加標號，不寫句子，控制在70字以內。"
+        )
+    return (
+        f"{ignore_bg}\n"
+        f"你收到了 {n} 張同一角色的不同參考圖。"
+        "請綜合比較所有圖片，找出在多張圖中一致出現的視覺特徵：\n"
+        "① 髮色與髮型"
+        "② 眼睛顏色"
+        "③ 膚色"
+        "④ 體型輪廓"
+        "⑤ 服裝主要顏色與風格"
+        "⑥ 各圖均出現的特殊特徵\n"
+        "以共同特徵為主，忽略只在單張圖出現的細節。"
+        "格式：逗號分隔的中文短語，不加標號，不寫句子，控制在90字以內。"
+    )
 
 # expression id → (English SD tags for positive, Chinese label)
 _EXPRESSION_MAP: dict[str, tuple[str, str]] = {
@@ -375,6 +570,7 @@ _EXPRESSION_MAP: dict[str, tuple[str, str]] = {
 async def generate_character_design(
     character_id: int,
     expression: Optional[str] = None,  # None=full body; key from _EXPRESSION_MAP = bust shot
+    art_style_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -389,34 +585,71 @@ async def generate_character_design(
     if expression and expression not in _EXPRESSION_MAP:
         raise HTTPException(status_code=400, detail=f"Unknown expression. Valid: {list(_EXPRESSION_MAP)}")
 
+    # Priority: explicit param > character.art_style_id > project.art_style_id > _detect_style()
+    if art_style_id is None and character.art_style_id:
+        art_style_id = character.art_style_id
+    if art_style_id is None:
+        from app.models.project import Project as _Project
+        proj = db.get(_Project, character.project_id)
+        if proj and proj.art_style_id:
+            art_style_id = proj.art_style_id
+
     is_expression = expression is not None
     expr_tags, _ = _EXPRESSION_MAP[expression] if is_expression else ("", "")
 
-    # ── Build Chinese description ──────────────────────────────────────────
-    parts = [f"角色名稱：{character.name}"]
-    if character.age:
-        parts.append(f"年齡：{character.age}歲")
-    if character.core_traits:
-        parts.append(f"外貌與個性：{character.core_traits}")
+    timings: dict[str, float] = {}
+    t_total = time.perf_counter()
 
-    # Visual traits from first concept image (30-60% influence)
+    # ── Build Chinese description ──────────────────────────────────────────
+    # Age/gender are encoded via gender_prefix (1boy/1girl/1man/1woman) — do NOT
+    # pass age text to the LLM to avoid spurious "15 years old" text tags.
+    parts = [f"角色名稱：{character.name}"]
+
+    # Visual traits from first concept image — added BEFORE core_traits so that
+    # the author's explicit description (core_traits) takes precedence when the
+    # LLM resolves conflicts (recency bias: later tokens win).
     concept_imgs = list(character.concept_images or [])
     if not concept_imgs and character.portrait_path:
         concept_imgs = [character.portrait_path]
 
     if concept_imgs:
-        img_path = _PORTRAIT_DIR / concept_imgs[0]
-        if img_path.exists():
-            await guardian.request_focus("ollama")
-            visual = _oc.analyze_image(str(img_path), _VISUAL_EXTRACT_PROMPT, model=DEFAULT_VISION_MODEL)
-            if visual and not visual.startswith("["):
-                parts.append(f"視覺參考特徵：{visual}")
+        # Load all available concept images (up to 3) for multi-image analysis
+        valid_images: list[bytes] = []
+        for img_filename in concept_imgs[:3]:
+            img_path = _PORTRAIT_DIR / img_filename
+            if img_path.exists():
+                try:
+                    valid_images.append(img_path.read_bytes())
+                except Exception:
+                    pass
 
-    # Background
-    if character.color:
-        parts.append(f"背景為{character.color}色調的純色特效背景，無場景細節")
+        # Detect flat-color drafts before vision analysis
+        all_flat = all(_is_flat_color_draft(img) for img in valid_images)
+        logger.info("[prompt-log] concept images flat_draft=%s (%d imgs)", all_flat, len(valid_images))
+
+        if valid_images:
+            t0 = time.perf_counter()
+            await guardian.request_focus("ollama")
+            prompt_txt = _visual_extract_prompt(len(valid_images))
+            visual = _oc.analyze_multi_images_bytes(
+                valid_images, prompt_txt, model=DEFAULT_VISION_MODEL,
+                options={"num_predict": 160, "temperature": 0.1},
+            )
+            timings["vision_extract"] = round(time.perf_counter() - t0, 1)
+            logger.debug("visual extract (%d imgs): %s", len(valid_images), visual)
+            if visual and not visual.startswith("["):
+                label = "視覺參考特徵（多圖共同特徵）" if len(valid_images) > 1 else "視覺參考特徵（僅供風格參考）"
+                parts.append(f"{label}：{visual}")
     else:
-        parts.append("簡單純色背景，無場景細節")
+        all_flat = True  # no images → treat as flat, use core_traits for anchors
+
+    if character.core_traits:
+        parts.append(f"外貌與個性（優先採用）：{character.core_traits}")
+
+    # Background colour is injected directly into the SD suffix (bg_tag) — NOT
+    # passed through Ollama compilation, to avoid duplicate background tokens and
+    # mixed-language noise in the compiled prompt.
+    bg_color_name = _hex_to_sd_color(character.color) if character.color else None
 
     if is_expression:
         parts.append("動漫插畫風格，角色臉部特寫半身圖")
@@ -424,24 +657,39 @@ async def generate_character_design(
         parts.append("人設圖，全身正面，動漫插畫風格，清晰展示角色外觀")
 
     raw_desc = "，".join(parts)
+    logger.info("[prompt-log] raw_desc (中文，AI翻譯前): %s", raw_desc)
+
+    # Color anchor source:
+    #   flat draft (single fill) → core_traits wins (vision colors are canvas fill, not character)
+    #   properly colored         → raw_desc (vision colors trusted as actual character appearance)
+    _color_anchor = character.core_traits or ""
 
     # ── Compile character description ──────────────────────────────────────
-    style = _detect_style("text_to_image.json")
+    t0 = time.perf_counter()
+    art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
+    style = _resolve_style(art_style)
+    _overrides = _compile_overrides(art_style)
     await guardian.request_focus("ollama")
-    positive, negative = compile_prompt(raw_desc, style=style, model=DEFAULT_TEXT_MODEL)
+    positive, negative = compile_prompt(
+        raw_desc, style=style, model=DEFAULT_TEXT_MODEL,
+        anchor_text=_color_anchor, **_overrides,
+    )
+    timings["compile_prompt"] = round(time.perf_counter() - t0, 1)
 
     # ── Compile ai_prompt separately (placed first → higher SD attention weight) ──
     extra_prefix = ""
     if character.ai_prompt and character.ai_prompt.strip():
+        t0 = time.perf_counter()
         await guardian.request_focus("ollama")
         extra_compiled, _ = compile_prompt(
-            character.ai_prompt.strip(), style=style, model=DEFAULT_TEXT_MODEL
+            character.ai_prompt.strip(), style=style, model=DEFAULT_TEXT_MODEL, **_overrides,
         )
+        timings["compile_ai_prompt"] = round(time.perf_counter() - t0, 1)
         if extra_compiled:
             extra_prefix = extra_compiled + ", "
 
     # ── Build final prompt based on mode ──────────────────────────────────
-    bg_tag = f", {character.color} background, color gradient background" if character.color else ", gradient background"
+    bg_tag = f", {bg_color_name} background" if bg_color_name else ", gradient background"
 
     if is_expression:
         suffix = (
@@ -458,15 +706,38 @@ async def generate_character_design(
         )
         width, height, steps = 768, 1024, 25
 
+    # Gender/age tag anchors subject count — must be at absolute front
+    gender_tag = _age_gender_tag(character.gender, character.age)
+    gender_prefix = gender_tag + ", " if gender_tag else ""
+
+    # Gender-specific prompt reinforcement
+    is_male = gender_tag.startswith(("1boy", "1man"))
+    is_female = gender_tag.startswith(("1girl", "1woman"))
+    # "clothed, shirt" anchors clothing when core_traits lacks an explicit outfit.
+    # If core_traits already specifies clothing (e.g. jacket, robe), those tags carry
+    # higher weight and override these soft defaults.
+    gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
+    gender_neg_extra = (
+        ", bare chest, shirtless, topless, naked upper body, no shirt"
+        ", skirt, dress, miniskirt, female clothes, feminine clothing, thighhighs, sailor uniform"
+        if is_male else
+        ", male face, masculine features" if is_female else ""
+    )
+
+    # art_style extra_tags appended after character tags
+    style_extra = _extra_tags(art_style)
+    style_extra_str = f", {style_extra}" if style_extra else ""
+
     # ai_prompt compiled tags lead the prompt for maximum enforcement
-    final_positive = extra_prefix + positive + suffix
+    final_positive = gender_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
 
     extra_neg = "detailed background, complex background, scenery, landscape, buildings, environment"
-    final_negative = f"{negative}, {extra_neg}" if negative else extra_neg
+    final_negative = f"{negative}, {extra_neg}{gender_neg_extra}" if negative else f"{extra_neg}{gender_neg_extra}"
 
     # ── Generate ──────────────────────────────────────────────────────────
     seed = random.randint(0, 2**31 - 1)
     wf = _load_workflow("text_to_image.json")
+    _inject_loras(wf, art_style.loras if art_style else [])
     for node in wf.values():
         if not isinstance(node, dict):
             continue
@@ -484,13 +755,207 @@ async def generate_character_design(
             inputs["seed"] = seed
             inputs["steps"] = steps
 
+    t0 = time.perf_counter()
     await guardian.request_focus("comfyui")
+    image_bytes = _run(wf)
+    timings["comfyui"] = round(time.perf_counter() - t0, 1)
+    timings["total"] = round(time.perf_counter() - t_total, 1)
+
     return Response(
-        content=_run(wf),
+        content=image_bytes,
         media_type="image/png",
         headers={
             "X-Seed": str(seed),
             "X-Style": style.value,
-            "X-Prompt": base64.b64encode(final_positive.encode()).decode()  # Encode to avoid header char issues
+            "X-Flat-Draft": "1" if all_flat else "0",
+            "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
+            "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
+            "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
+        },
+    )
+
+
+# ── Variant Design Sheet Generation ──────────────────────────────────────────
+
+@router.post("/characters/{character_id}/variants/{slot}/generate-design", summary="角色變體人設圖生成（ComfyUI）")
+async def generate_variant_design(
+    character_id: int,
+    slot: int,
+    expression: Optional[str] = None,
+    art_style_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """Generate a design sheet using the variant's data instead of the main character fields."""
+    from app.api.characters import _get_variants, _slot_index
+
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    idx = _slot_index(slot)
+    variants = _get_variants(character)
+    v = variants[idx]
+
+    if expression and expression not in _EXPRESSION_MAP:
+        raise HTTPException(status_code=400, detail=f"Unknown expression. Valid: {list(_EXPRESSION_MAP)}")
+
+    # Priority: explicit param > character.art_style_id > project.art_style_id > _detect_style()
+    if art_style_id is None and character.art_style_id:
+        art_style_id = character.art_style_id
+    if art_style_id is None:
+        from app.models.project import Project as _Project
+        proj = db.get(_Project, character.project_id)
+        if proj and proj.art_style_id:
+            art_style_id = proj.art_style_id
+
+    is_expression = expression is not None
+    expr_tags, _ = _EXPRESSION_MAP[expression] if is_expression else ("", "")
+
+    timings: dict[str, float] = {}
+    t_total = time.perf_counter()
+
+    # ── Build description from variant data ────────────────────────────────
+    parts = [f"角色名稱：{character.name}"]
+
+    concept_imgs = list(v.get("concept_images") or [])
+    all_flat = True  # default: no images → use core_traits anchors
+    if concept_imgs:
+        valid_images: list[bytes] = []
+        for img_filename in concept_imgs[:3]:
+            img_path = _PORTRAIT_DIR / img_filename
+            if img_path.exists():
+                try:
+                    valid_images.append(img_path.read_bytes())
+                except Exception:
+                    pass
+        if valid_images:
+            all_flat = all(_is_flat_color_draft(img) for img in valid_images)
+            logger.info("[prompt-log] variant concept images flat_draft=%s (%d imgs)", all_flat, len(valid_images))
+            t0 = time.perf_counter()
+            await guardian.request_focus("ollama")
+            prompt_txt = _visual_extract_prompt(len(valid_images))
+            visual = _oc.analyze_multi_images_bytes(
+                valid_images, prompt_txt, model=DEFAULT_VISION_MODEL,
+                options={"num_predict": 160, "temperature": 0.1},
+            )
+            timings["vision_extract"] = round(time.perf_counter() - t0, 1)
+            if visual and not visual.startswith("["):
+                label = "視覺參考特徵（多圖共同特徵）" if len(valid_images) > 1 else "視覺參考特徵（僅供風格參考）"
+                parts.append(f"{label}：{visual}")
+
+    core_traits = v.get("core_traits")
+    if core_traits:
+        parts.append(f"外貌與個性（優先採用）：{core_traits}")
+
+    v_color = v.get("color")
+    bg_color_name = _hex_to_sd_color(v_color) if v_color else None
+
+    if is_expression:
+        parts.append("動漫插畫風格，角色臉部特寫半身圖")
+    else:
+        parts.append("人設圖，全身正面，動漫插畫風格，清晰展示角色外觀")
+
+    raw_desc = "，".join(parts)
+    logger.info("[prompt-log] variant raw_desc (中文，AI翻譯前): %s", raw_desc)
+
+    _color_anchor = core_traits or ""
+
+    # ── Compile ───────────────────────────────────────────────────────────
+    t0 = time.perf_counter()
+    art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
+    style = _resolve_style(art_style)
+    _overrides = _compile_overrides(art_style)
+    await guardian.request_focus("ollama")
+
+    v_gender = v.get("gender")
+    v_age = v.get("age")
+    v_ai_prompt = v.get("ai_prompt")
+
+    positive, negative = compile_prompt(
+        raw_desc, style=style, model=DEFAULT_TEXT_MODEL,
+        anchor_text=_color_anchor, **_overrides,
+    )
+    timings["compile_prompt"] = round(time.perf_counter() - t0, 1)
+
+    extra_prefix = ""
+    if v_ai_prompt and v_ai_prompt.strip():
+        t0 = time.perf_counter()
+        await guardian.request_focus("ollama")
+        extra_compiled, _ = compile_prompt(v_ai_prompt.strip(), style=style, model=DEFAULT_TEXT_MODEL, **_overrides)
+        timings["compile_ai_prompt"] = round(time.perf_counter() - t0, 1)
+        if extra_compiled:
+            extra_prefix = extra_compiled + ", "
+
+    bg_tag = f", {bg_color_name} background" if bg_color_name else ", gradient background"
+
+    if is_expression:
+        suffix = (
+            f", {expr_tags}, bust shot, upper body, close-up portrait, face focus"
+            ", simple background, flat background" + bg_tag
+        )
+        width, height, steps = 512, 640, 20
+    else:
+        suffix = (
+            ", character design sheet, character reference sheet, full body, front view"
+            ", simple background, flat background, no background detail, no scenery" + bg_tag
+        )
+        width, height, steps = 768, 1024, 25
+
+    gender_tag = _age_gender_tag(v_gender, v_age)
+    gender_prefix = gender_tag + ", " if gender_tag else ""
+    is_male = gender_tag.startswith(("1boy", "1man"))
+    is_female = gender_tag.startswith(("1girl", "1woman"))
+    gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
+    gender_neg_extra = (
+        ", bare chest, shirtless, topless, naked upper body, no shirt"
+        ", skirt, dress, miniskirt, female clothes, feminine clothing, thighhighs, sailor uniform"
+        if is_male else
+        ", male face, masculine features" if is_female else ""
+    )
+
+    style_extra = _extra_tags(art_style)
+    style_extra_str = f", {style_extra}" if style_extra else ""
+
+    final_positive = gender_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
+    extra_neg = "detailed background, complex background, scenery, landscape, buildings, environment"
+    final_negative = f"{negative}, {extra_neg}{gender_neg_extra}" if negative else f"{extra_neg}{gender_neg_extra}"
+
+    # ── Generate ──────────────────────────────────────────────────────────
+    seed = random.randint(0, 2**31 - 1)
+    wf = _load_workflow("text_to_image.json")
+    _inject_loras(wf, art_style.loras if art_style else [])
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type")
+        inputs = node.get("inputs", {})
+        if ct == "CLIPTextEncode":
+            if inputs.get("text") == "__POSITIVE__":
+                inputs["text"] = final_positive
+            elif inputs.get("text") == "__NEGATIVE__":
+                inputs["text"] = final_negative
+        elif ct == "EmptyLatentImage":
+            inputs["width"] = width
+            inputs["height"] = height
+        elif ct == "KSampler":
+            inputs["seed"] = seed
+            inputs["steps"] = steps
+
+    t0 = time.perf_counter()
+    await guardian.request_focus("comfyui")
+    image_bytes = _run(wf)
+    timings["comfyui"] = round(time.perf_counter() - t0, 1)
+    timings["total"] = round(time.perf_counter() - t_total, 1)
+
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={
+            "X-Seed": str(seed),
+            "X-Style": style.value,
+            "X-Flat-Draft": "1" if all_flat else "0",
+            "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
+            "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
+            "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
         },
     )
