@@ -4,6 +4,7 @@ import GenerateTab from './components/GenerateTab.jsx'
 import ComposeTab from './components/ComposeTab.jsx'
 import CharacterTab from './components/CharacterTab.jsx'
 import ArtStyleTab from './components/ArtStyleTab.jsx'
+import TrainingTab from './components/TrainingTab.jsx'
 
 const TABS = [
   { id: 'process', label: '草稿 → 線稿' },
@@ -11,6 +12,7 @@ const TABS = [
   { id: 'compose', label: '草圖問答' },
   { id: 'character', label: '角色管理' },
   { id: 'artstyle', label: '畫風' },
+  { id: 'training', label: 'LoRA 訓練' },
 ]
 
 const S = {
@@ -198,6 +200,9 @@ export default function App() {
         </div>
         <div style={{ display: tab === 'artstyle' ? 'block' : 'none' }}>
           <ArtStyleTab />
+        </div>
+        <div style={{ display: tab === 'training' ? 'block' : 'none' }}>
+          <TrainingTab />
         </div>
       </div>
 
