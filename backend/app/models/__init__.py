@@ -5,5 +5,7 @@ from app.models.illustration import Illustration
 from app.models.analysis_report import AnalysisReport
 from app.models.faction import Faction
 from app.models.art_style import ArtStyle
+from app.models.training_image import TrainingImage
+from app.models.training_job import TrainingJob
 
-__all__ = ["Project", "Chapter", "Character", "character_factions", "Illustration", "AnalysisReport", "Faction", "ArtStyle"]
+__all__ = ["Project", "Chapter", "Character", "character_factions", "Illustration", "AnalysisReport", "Faction", "ArtStyle", "TrainingImage", "TrainingJob"]
