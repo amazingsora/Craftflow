@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//f/AI/**)",
+      "Read(//f//**)",
+      "Read(//c//**)",
+      "Bash(grep -v \"^$\")"
+    ]
+  }
+}
