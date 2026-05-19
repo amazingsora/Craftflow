@@ -5,56 +5,20 @@ Prompt Compiler — 中文描述 → 對應模型的最終 prompt
   1. 依 style 選擇 LLM template
   2. Ollama 翻譯生成 raw tags / 描述
   3. Sanitizer：移除 banned_tags
-  3.5 Color anchor：從原始中文抽取髮色/眼色，覆蓋 LLM 的翻譯結果，注入最前端
-  4. 拼接 quality_prefix
-  5. 回傳 (positive_prompt, negative_prompt)
+  4. Anchor Extraction：從原始中文抽取髮色/眼色/長度
+  5. Semantic Cleaning：移除與 Anchor 衝突的標籤
+  6. Reordering & Weighting：按類別排序標籤，並對 Anchor 加權
+  7. 拼接 quality_prefix
+  8. 回傳 (positive_prompt, negative_prompt)
 """
 from __future__ import annotations
 
 import re
+from typing import List, Set
 
 from app.services.ai import ollama_client
 from app.services.ai.prompt_engine.styles import PromptStyle, STYLE_CONFIG
-
-
-# ── Color anchor tables ────────────────────────────────────────────────────────
-# Longer keys first so regex greedily matches "金黃色" before "金色" before "金"
-
-_COLOR_MAP: dict[str, str] = {
-    "白色": "white",   "白": "white",
-    "金黃色": "blonde", "金黃": "blonde",
-    "金色": "golden",  "金": "golden",
-    "銀色": "silver",  "銀": "silver",
-    "黑色": "black",   "黑": "black",
-    "棕色": "brown",   "棕": "brown",   "茶色": "brown",   "褐色": "brown", "褐": "brown",
-    "紅色": "red",     "紅": "red",
-    "藍色": "blue",    "藍": "blue",
-    "紫色": "purple",  "紫": "purple",
-    "粉紅色": "pink",  "粉紅": "pink",  "粉色": "pink", "粉": "pink",
-    "綠色": "green",   "綠": "green",
-    "橘色": "orange",  "橘": "orange",
-    "灰色": "grey",    "灰": "grey",
-    "琥珀色": "amber", "琥珀": "amber",
-}
-
-_COLOR_ALTS = "|".join(re.escape(k) for k in sorted(_COLOR_MAP, key=len, reverse=True))
-
-# 髮 covers: 頭髮 長髮 短髮 捲髮 直髮 金髮 銀髮 etc.
-_HAIR_RE = re.compile(rf"({_COLOR_ALTS})?(長髮|短髮|捲髮|直髮|頭髮|髮|毛髮)")
-_EYE_RE  = re.compile(rf"({_COLOR_ALTS})(眼睛|瞳孔|眼|瞳)")
-
-# All English hair/eye color tags that LLM might output (used for conflict removal)
-_HAIR_EN = {
-    "white hair", "black hair", "brown hair", "blonde hair", "golden hair",
-    "silver hair", "red hair", "blue hair", "purple hair", "pink hair",
-    "green hair", "orange hair", "grey hair", "gray hair", "amber hair",
-    "short hair", "long hair", "medium hair",
-}
-_EYE_EN = {
-    "white eyes", "black eyes", "brown eyes", "golden eyes", "silver eyes",
-    "red eyes", "blue eyes", "purple eyes", "pink eyes", "green eyes",
-    "orange eyes", "grey eyes", "gray eyes", "amber eyes",
-}
+from app.services.ai.prompt_engine import lexicon
 
 
 def _extract_color_anchors(text: str, anchor_source: str = "") -> list[str]:
@@ -65,29 +29,33 @@ def _extract_color_anchors(text: str, anchor_source: str = "") -> list[str]:
     def _scan(src: str) -> list[str]:
         seen: set[str] = set()
         result: list[str] = []
-        for m in _HAIR_RE.finditer(src):
-            color_zh = m.group(1)
-            style_zh = m.group(2)
+        for m in lexicon.HAIR_RE.finditer(src):
+            prefix_zh = m.group(1)
+            color_zh = m.group(2)
+            style_zh = m.group(3)
             
             # Extract color if present
             if color_zh:
-                color_en = _COLOR_MAP.get(color_zh, color_zh)
+                color_en = lexicon.COLOR_MAP.get(color_zh, color_zh)
                 tag = f"{color_en} hair"
                 if tag not in seen:
                     seen.add(tag); result.append(tag)
             
-            # Extract length/style
-            if "短" in style_zh:
+            # Extract length/style from either prefix or keyword
+            combined_style = (prefix_zh or "") + style_zh
+            if "短" in combined_style:
                 tag = "short hair"
                 if tag not in seen:
                     seen.add(tag); result.append(tag)
-            elif "長" in style_zh:
+            elif "長" in combined_style:
                 tag = "long hair"
                 if tag not in seen:
                     seen.add(tag); result.append(tag)
                     
-        for m in _EYE_RE.finditer(src):
-            tag = f"{_COLOR_MAP.get(m.group(1), m.group(1))} eyes"
+        for m in lexicon.EYE_RE.finditer(src):
+            color_zh = m.group(1)
+            color_en = lexicon.COLOR_MAP.get(color_zh, color_zh)
+            tag = f"{color_en} eyes"
             if tag not in seen:
                 seen.add(tag); result.append(tag)
         return result
@@ -99,29 +67,61 @@ def _extract_color_anchors(text: str, anchor_source: str = "") -> list[str]:
     return _scan(text)
 
 
-def _remove_conflicting_colors(tags_str: str, anchors: list[str]) -> str:
-    """Remove LLM-generated hair/eye color/length tags that conflict with our anchors."""
-    has_hair_color = any(" hair" in a and a not in {"short hair", "long hair"} for a in anchors)
-    has_hair_length = any(a in {"short hair", "long hair"} for a in anchors)
-    has_eye_color  = any(" eyes" in a for a in anchors)
+def _remove_conflicting_tags(tags: list[str], anchors: list[str]) -> list[str]:
+    """Remove LLM-generated tags that conflict with our authoritative anchors."""
+    has_hair_color = any(a in lexicon.HAIR_COLORS for a in anchors)
+    has_hair_length = any(a in lexicon.HAIR_LENGTHS for a in anchors)
+    has_eye_color  = any(a in lexicon.EYE_COLORS for a in anchors)
     
     if not has_hair_color and not has_hair_length and not has_eye_color:
-        return tags_str
+        return tags
 
     result = []
-    for t in (t.strip() for t in tags_str.split(",")):
+    anchor_set = set(anchors)
+    for t in tags:
         tl = t.lower()
         # Conflict if our anchors have hair color and LLM outputs a different hair color
-        if has_hair_color and tl in _HAIR_EN and tl not in {"short hair", "long hair"}:
+        if has_hair_color and tl in lexicon.HAIR_COLORS and tl not in anchor_set:
             continue
         # Conflict if our anchors have hair length and LLM outputs a different hair length
-        if has_hair_length and tl in {"short hair", "long hair", "medium hair"}:
+        if has_hair_length and tl in lexicon.HAIR_LENGTHS and tl not in anchor_set:
             continue
         # Conflict if our anchors have eye color and LLM outputs a different eye color
-        if has_eye_color and tl in _EYE_EN:
+        if has_eye_color and tl in lexicon.EYE_COLORS and tl not in anchor_set:
             continue
         result.append(t)
-    return ", ".join(result)
+    return result
+
+
+def _reorder_tags(tags: list[str], anchors: list[str]) -> str:
+    """
+    Sort tags into logical categories and apply weighting to anchors.
+    Order: Subject > Anchors > Others > Meta
+    """
+    subject_tags = []
+    anchor_tags = []
+    meta_tags = []
+    other_tags = []
+
+    # Weighted anchors (e.g. (short hair:1.1))
+    weighted_anchors = [f"({a}:1.1)" for a in anchors]
+    anchor_set = set(anchors)
+
+    for t in tags:
+        tl = t.lower()
+        if tl in anchor_set:
+            continue  # Already handled by weighted_anchors
+        
+        if tl in lexicon.TAG_CATEGORIES["subject"]:
+            subject_tags.append(t)
+        elif tl in lexicon.TAG_CATEGORIES["meta"]:
+            meta_tags.append(t)
+        else:
+            other_tags.append(t)
+
+    # Combine in specific order
+    final_list = subject_tags + weighted_anchors + other_tags + meta_tags
+    return ", ".join(final_list)
 
 
 # ── Main compile ───────────────────────────────────────────────────────────────
@@ -165,19 +165,24 @@ def compile(
     extracted = _extract_output(raw)
 
     # 3. Sanitizer — 移除 banned_tags
-    cleaned = _sanitize(extracted, config.banned_tags)
+    cleaned_tags = _sanitize_to_list(extracted, config.banned_tags)
 
-    # 3.5 Color anchors (tag-based styles only; Flux uses natural language)
+    # 3.5 Processing (tag-based styles only; Flux uses natural language)
     if style is not PromptStyle.FLUX:
+        # Extract authoritative anchors
         anchors = _extract_color_anchors(text, anchor_source=anchor_text)
-        if anchors:
-            cleaned = _remove_conflicting_colors(cleaned, anchors)
-            anchor_str = ", ".join(anchors)
-            cleaned = f"{anchor_str}, {cleaned}" if cleaned else anchor_str
+        
+        # Clean conflicts
+        cleaned_tags = _remove_conflicting_tags(cleaned_tags, anchors)
+        
+        # Reorder and weight
+        final_body = _reorder_tags(cleaned_tags, anchors)
+    else:
+        final_body = extracted
 
     # 4. 拼接 quality_prefix（art_style 覆寫優先）
     prefix = quality_prefix_override if quality_prefix_override else config.quality_prefix
-    positive = f"{prefix}, {cleaned}" if prefix and cleaned else (prefix or cleaned)
+    positive = f"{prefix}, {final_body}" if prefix and final_body else (prefix or final_body)
 
     # 5. Negative preset（art_style 覆寫優先）
     negative = negative_override if negative_override else config.negative
@@ -195,10 +200,9 @@ def _extract_output(raw: str) -> str:
     return raw.strip()
 
 
-def _sanitize(prompt: str, banned: set[str]) -> str:
-    """Remove banned tags from a comma-separated tag string."""
-    if not banned:
-        return prompt
+def _sanitize_to_list(prompt: str, banned: set[str]) -> list[str]:
+    """Remove banned tags and return a list of tags."""
     tags = [t.strip() for t in prompt.split(",")]
-    filtered = [t for t in tags if t.lower() not in banned]
-    return ", ".join(filtered)
+    if not banned:
+        return [t for t in tags if t]
+    return [t for t in tags if t and t.lower() not in banned]

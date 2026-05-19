@@ -147,16 +147,19 @@ _FLUX_TEMPLATE = """[TASK]
 Rewrite the Chinese description as a natural, cinematic English image prompt for Flux.
 
 [CRITICAL RULES]
-- FORMAT: Write 1-2 natural English sentences.
+- GROUNDING: First, list the MANDATORY FACTS extracted from the input in your mind.
+- FORMAT: Write 1-2 natural English sentences that incorporate ALL mandatory facts.
 - NO-GO: Do NOT use comma-separated tag format. Do NOT use SD-specific syntax (1girl, score_9).
-- PRESERVE: Keep all directional details (right hand, left hand).
+- PRESERVE: Keep all directional details (right hand, left hand), colors, and hair/eye styles exactly as described.
 - TONE: Be descriptive, cinematic, and clear.
 
 [EXAMPLES]
 Input: 一個女孩右手拿傘
+Mandatory Facts: girl, right hand, holding umbrella
 Output: A young girl standing outdoors, holding a colorful umbrella in her right hand, with a calm and serene expression.
 
 Input: 賽博龐克風格的街道，雨天，霓虹燈招牌
+Mandatory Facts: cyberpunk, street, rainy, neon signs
 Output: A cinematic shot of a rainy cyberpunk street at night, illuminated by vibrant neon signs and glowing advertisements.
 
 [INPUT]
