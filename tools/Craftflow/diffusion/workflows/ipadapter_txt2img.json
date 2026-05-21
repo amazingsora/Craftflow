@@ -1,0 +1,79 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": { "title": "Load Checkpoint" },
+    "inputs": { "ckpt_name": "Illustrious-XL-v2.0.safetensors" }
+  },
+  "2": {
+    "class_type": "IPAdapterModelLoader",
+    "_meta": { "title": "Load IPAdapter" },
+    "inputs": { "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors" }
+  },
+  "3": {
+    "class_type": "CLIPVisionLoader",
+    "_meta": { "title": "Load CLIP Vision" },
+    "inputs": { "clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors" }
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "_meta": { "title": "Reference Image" },
+    "inputs": { "image": "__REFERENCE_IMAGE__", "upload": "image" }
+  },
+  "5": {
+    "class_type": "IPAdapterAdvanced",
+    "_meta": { "title": "Apply IPAdapter" },
+    "inputs": {
+      "model":          ["1", 0],
+      "ipadapter":      ["2", 0],
+      "image":          ["4", 0],
+      "clip_vision":    ["3", 0],
+      "weight":         0.6,
+      "weight_type":    "linear",
+      "combine_embeds": "concat",
+      "start_at":       0.0,
+      "end_at":         1.0,
+      "embeds_scaling": "V only"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Positive Prompt" },
+    "inputs": { "text": "__POSITIVE__", "clip": ["1", 1] }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Negative Prompt" },
+    "inputs": { "text": "__NEGATIVE__", "clip": ["1", 1] }
+  },
+  "8": {
+    "class_type": "EmptyLatentImage",
+    "_meta": { "title": "Empty Latent" },
+    "inputs": { "width": 1024, "height": 1024, "batch_size": 1 }
+  },
+  "9": {
+    "class_type": "KSampler",
+    "_meta": { "title": "KSampler" },
+    "inputs": {
+      "model":        ["5", 0],
+      "positive":     ["6", 0],
+      "negative":     ["7", 0],
+      "latent_image": ["8", 0],
+      "seed":         42,
+      "steps":        20,
+      "cfg":          7.0,
+      "sampler_name": "euler",
+      "scheduler":    "normal",
+      "denoise":      1.0
+    }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "_meta": { "title": "VAE Decode" },
+    "inputs": { "samples": ["9", 0], "vae": ["1", 2] }
+  },
+  "11": {
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save Image" },
+    "inputs": { "images": ["10", 0], "filename_prefix": "craftflow_ipadapter" }
+  }
+}

@@ -5,6 +5,57 @@ import ComposeTab from './components/ComposeTab.jsx'
 import CharacterTab from './components/CharacterTab.jsx'
 import ArtStyleTab from './components/ArtStyleTab.jsx'
 import TrainingTab from './components/TrainingTab.jsx'
+import SettingsTab from './components/SettingsTab.jsx'
+
+const _HISTORY_KEY = 'craftflow_history_v2'
+const _MAX_HISTORY = 100
+const _THUMB_PX = 300
+
+async function _makeThumbnail(url) {
+  return new Promise(resolve => {
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, _THUMB_PX / Math.max(img.naturalWidth || 1, img.naturalHeight || 1))
+        const c = document.createElement('canvas')
+        c.width = Math.round((img.naturalWidth || 300) * scale)
+        c.height = Math.round((img.naturalHeight || 300) * scale)
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
+        resolve(c.toDataURL('image/jpeg', 0.72))
+      } catch { resolve(null) }
+    }
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
+
+function _saveHistory(items) {
+  try {
+    localStorage.setItem(_HISTORY_KEY, JSON.stringify(
+      items.map(h => ({ ...h, url: h.thumbnail ?? h.url }))
+    ))
+  } catch {
+    try {
+      localStorage.setItem(_HISTORY_KEY, JSON.stringify(
+        items.slice(0, 40).map(h => ({ ...h, url: h.thumbnail ?? h.url }))
+      ))
+    } catch {}
+  }
+}
+
+function _badgeStyle(type, S) {
+  if (type === 'process') return S.badgeProcess
+  if (type === 'generate' || type === 'i2i' || type === 'controlnet') return S.badgeGenerate
+  return S.badgeCompose
+}
+
+function _badgeLabel(type) {
+  if (type === 'process') return '線稿'
+  if (type === 'i2i') return 'i2i'
+  if (type === 'controlnet') return 'CtrlNet'
+  if (type === 'generate') return '生圖'
+  return '問答'
+}
 
 const TABS = [
   { id: 'process', label: '草稿 → 線稿' },
@@ -80,13 +131,13 @@ const S = {
     paddingBottom: 4,
   },
   historyEmpty: { color: 'var(--muted)', fontSize: 13 },
-  historyItem: {
+  historyItemWrap: {
     flex: '0 0 auto',
     width: 100,
     display: 'flex',
     flexDirection: 'column',
     gap: 4,
-    cursor: 'pointer',
+    position: 'relative',
   },
   historyThumb: {
     width: 100,
@@ -94,7 +145,72 @@ const S = {
     objectFit: 'cover',
     borderRadius: 8,
     border: '1px solid var(--border)',
+    cursor: 'zoom-in',
     transition: 'border-color .15s',
+    display: 'block',
+  },
+  historyDeleteBtn: {
+    position: 'absolute',
+    top: 3,
+    left: 3,
+    width: 18,
+    height: 18,
+    borderRadius: '50%',
+    background: 'rgba(0,0,0,.72)',
+    border: 'none',
+    color: '#fff',
+    fontSize: 12,
+    lineHeight: '18px',
+    textAlign: 'center',
+    cursor: 'pointer',
+    padding: 0,
+    zIndex: 1,
+  },
+  historyToggleBtn: {
+    fontSize: 12,
+    color: 'var(--muted)',
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    cursor: 'pointer',
+    padding: '2px 8px',
+  },
+  lightboxOverlay: {
+    position: 'fixed', inset: 0,
+    background: 'rgba(0,0,0,.82)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    zIndex: 2000,
+  },
+  lightboxBox: {
+    position: 'relative',
+    display: 'flex', flexDirection: 'column',
+    maxWidth: '80vw',
+  },
+  lightboxImg: {
+    maxWidth: '80vw',
+    maxHeight: '78vh',
+    borderRadius: 10,
+    display: 'block',
+    objectFit: 'contain',
+  },
+  lightboxClose: {
+    position: 'absolute',
+    top: -14,
+    right: -14,
+    width: 28,
+    height: 28,
+    borderRadius: '50%',
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    color: 'var(--text)',
+    fontSize: 16,
+    cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    zIndex: 1,
+  },
+  lightboxFooter: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '8px 4px 0',
   },
   badge: {
     fontSize: 11,
@@ -107,6 +223,46 @@ const S = {
   badgeGenerate: { background: '#3a2d5c', color: '#c07ef7' },
   badgeCompose: { background: '#1e3a2d', color: '#7ef7b0' },
   historyMeta: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.3 },
+  gearBtn: {
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 8,
+    color: 'var(--muted)',
+    fontSize: 18,
+    cursor: 'pointer',
+    padding: '5px 9px',
+    lineHeight: 1,
+    transition: 'color .15s, border-color .15s',
+  },
+  modalOverlay: {
+    position: 'fixed', inset: 0,
+    background: 'rgba(0,0,0,.55)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    zIndex: 1000,
+  },
+  modalBox: {
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 14,
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '85vh',
+    display: 'flex', flexDirection: 'column',
+    overflow: 'hidden',
+    boxShadow: '0 24px 60px rgba(0,0,0,.5)',
+  },
+  modalHeader: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '16px 20px',
+    borderBottom: '1px solid var(--border)',
+  },
+  modalTitle: { fontSize: 15, fontWeight: 600, color: 'var(--text)' },
+  modalClose: {
+    background: 'none', border: 'none',
+    color: 'var(--muted)', fontSize: 20, cursor: 'pointer',
+    lineHeight: 1, padding: '2px 6px',
+  },
+  modalBody: { padding: '20px', overflowY: 'auto', flex: 1 },
 }
 
 function formatTime(ts) {
@@ -116,27 +272,142 @@ function formatTime(ts) {
 
 export default function App() {
   const [tab, setTab] = useState(() => localStorage.getItem('craftflow_tab') ?? 'process')
-  const [history, setHistory] = useState([])
+  const [history, setHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(_HISTORY_KEY) || '[]') }
+    catch { return [] }
+  })
+  const [historyVisible, setHistoryVisible] = useState(
+    () => localStorage.getItem('craftflow_history_visible') !== 'false'
+  )
+  const [lightboxItem, setLightboxItem] = useState(null)
   const [checkpoints, setCheckpoints] = useState([])
   const [activeCheckpoint, setActiveCheckpoint] = useState('')
+  const [workflows, setWorkflows] = useState([])
+  const [activeWorkflow, setActiveWorkflow] = useState('text_to_image.json')
+  const [generationMode, setGenerationMode] = useState(
+    () => localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint'
+  )
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [visionModels, setVisionModels] = useState([])
+  const [activeVisionModel, setActiveVisionModel] = useState(
+    () => localStorage.getItem('craftflow_vision_model') ?? ''
+  )
 
   useEffect(() => {
+    const savedCheckpoint   = localStorage.getItem('craftflow_checkpoint')
+    const savedWorkflow     = localStorage.getItem('craftflow_workflow')
+    const savedVisionModel  = localStorage.getItem('craftflow_vision_model')
+
     fetch('/api/v1/settings/checkpoints')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
+        if (!data) {
+          // ComfyUI 離線：仍套用 localStorage 記憶值
+          if (savedCheckpoint) setActiveCheckpoint(savedCheckpoint)
+          return
+        }
+        const list = data.checkpoints ?? []
+        setCheckpoints(list)
+        const target = savedCheckpoint && list.includes(savedCheckpoint)
+          ? savedCheckpoint
+          : (data.active ?? list[0] ?? '')
+        setActiveCheckpoint(target)
+        if (target && target !== data.active) {
+          fetch('/api/v1/settings/checkpoint', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ checkpoint: target }),
+          }).catch(() => {})
+        }
+      })
+      .catch(() => {
+        if (savedCheckpoint) setActiveCheckpoint(savedCheckpoint)
+      })
+
+    fetch('/api/v1/settings/workflows')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
         if (!data) return
-        setCheckpoints(data.checkpoints ?? [])
-        setActiveCheckpoint(data.active ?? '')
+        const list = data.workflows ?? []
+        setWorkflows(list)
+        const target = (savedWorkflow && list.includes(savedWorkflow))
+          ? savedWorkflow
+          : (list.includes(data.active) ? data.active : (list[0] ?? 'text_to_image.json'))
+        setActiveWorkflow(target)
+        // checkpoint 模式永遠讓後端用 text_to_image.json；workflow 模式才套用自訂 workflow
+        const backendWorkflow = (localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint') === 'workflow'
+          ? target
+          : 'text_to_image.json'
+        if (backendWorkflow !== data.active) {
+          fetch('/api/v1/settings/workflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workflow: backendWorkflow }),
+          }).catch(() => {})
+        }
+      })
+      .catch(() => {})
+
+    fetch('/api/v1/settings/vision-models')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return
+        const models = data.models ?? []
+        setVisionModels(models)
+        const target = (savedVisionModel && models.includes(savedVisionModel))
+          ? savedVisionModel
+          : (data.default ?? models[0] ?? '')
+        setActiveVisionModel(target)
+        if (target) {
+          fetch('/api/v1/settings/vision-model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: target }),
+          }).catch(() => {})
+        }
       })
       .catch(() => {})
   }, [])
 
+  const onVisionModelChange = async (model) => {
+    setActiveVisionModel(model)
+    localStorage.setItem('craftflow_vision_model', model)
+    await fetch('/api/v1/settings/vision-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    }).catch(() => {})
+  }
+
   const onCheckpointChange = async (name) => {
     setActiveCheckpoint(name)
+    localStorage.setItem('craftflow_checkpoint', name)
     await fetch('/api/v1/settings/checkpoint', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ checkpoint: name }),
+    }).catch(() => {})
+  }
+
+  const onWorkflowChange = async (name) => {
+    setActiveWorkflow(name)
+    localStorage.setItem('craftflow_workflow', name)
+    await fetch('/api/v1/settings/workflow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow: name }),
+    }).catch(() => {})
+  }
+
+  const onGenerationModeChange = async (mode) => {
+    setGenerationMode(mode)
+    localStorage.setItem('craftflow_gen_mode', mode)
+    // sync workflow to backend: checkpoint mode resets to default system workflow
+    const workflowToSync = mode === 'checkpoint' ? 'text_to_image.json' : activeWorkflow
+    await fetch('/api/v1/settings/workflow', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow: workflowToSync }),
     }).catch(() => {})
   }
 
@@ -145,8 +416,34 @@ export default function App() {
     setTab(id)
   }
 
-  const addHistory = (item) => {
-    setHistory(prev => [{ ...item, id: Date.now(), ts: Date.now() }, ...prev])
+  const addHistory = async (item) => {
+    const thumbnail = await _makeThumbnail(item.url)
+    setHistory(prev => {
+      const newItem = { ...item, id: Date.now(), ts: Date.now(), thumbnail }
+      const updated = [newItem, ...prev].slice(0, _MAX_HISTORY)
+      _saveHistory(updated)
+      return updated
+    })
+  }
+
+  const deleteHistory = (id) => {
+    setHistory(prev => {
+      const updated = prev.filter(h => h.id !== id)
+      _saveHistory(updated)
+      return updated
+    })
+  }
+
+  const clearHistory = () => {
+    setHistory([])
+    localStorage.removeItem(_HISTORY_KEY)
+  }
+
+  const toggleHistoryVisible = () => {
+    setHistoryVisible(v => {
+      localStorage.setItem('craftflow_history_visible', String(!v))
+      return !v
+    })
   }
 
   return (
@@ -154,22 +451,30 @@ export default function App() {
       <div style={S.header}>
         <div style={S.headerLeft}>
           <div style={S.title}>Craftflow 生圖測試台</div>
-          <div style={S.subtitle}>ComfyUI · {activeCheckpoint || '未連線'} · localhost:8188</div>
-        </div>
-        {checkpoints.length > 0 && (
-          <div style={{ textAlign: 'right' }}>
-            <div style={S.modelLabel}>Checkpoint</div>
-            <select
-              style={S.modelSelect}
-              value={activeCheckpoint}
-              onChange={e => onCheckpointChange(e.target.value)}
-            >
-              {checkpoints.map(c => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
+          <div style={S.subtitle}>
+            ComfyUI · {generationMode === 'workflow'
+              ? (activeWorkflow.replace('.json', '') || 'workflow 模式')
+              : (activeCheckpoint || '未設定 checkpoint')
+            } · localhost:8188
           </div>
-        )}
+        </div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={S.modelLabel}>
+              {generationMode === 'workflow' ? 'Workflow 模式' : 'Checkpoint 模式'}
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+              {generationMode === 'workflow'
+                ? (activeWorkflow.replace('.json', '') || '—')
+                : (activeCheckpoint || '未設定')}
+            </div>
+          </div>
+          <button
+            style={S.gearBtn}
+            onClick={() => setSettingsOpen(true)}
+            title="設定"
+          >⚙</button>
+        </div>
       </div>
 
       <div style={S.tabBar}>
@@ -193,7 +498,7 @@ export default function App() {
           <GenerateTab onAddHistory={addHistory} />
         </div>
         <div style={{ display: tab === 'compose' ? 'block' : 'none' }}>
-          <ComposeTab onAddHistory={addHistory} />
+          <ComposeTab onAddHistory={addHistory} activeVisionModel={activeVisionModel} />
         </div>
         <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
           <CharacterTab />
@@ -206,45 +511,107 @@ export default function App() {
         </div>
       </div>
 
-      {/* History panel — 一直顯示在底部 */}
+      {/* Settings modal */}
+      {settingsOpen && (
+        <div style={S.modalOverlay} onClick={e => e.target === e.currentTarget && setSettingsOpen(false)}>
+          <div style={S.modalBox}>
+            <div style={S.modalHeader}>
+              <span style={S.modalTitle}>⚙ 設定</span>
+              <button style={S.modalClose} onClick={() => setSettingsOpen(false)}>×</button>
+            </div>
+            <div style={S.modalBody}>
+              <SettingsTab
+                generationMode={generationMode}
+                setGenerationMode={onGenerationModeChange}
+                checkpoints={checkpoints}
+                activeCheckpoint={activeCheckpoint}
+                onCheckpointChange={onCheckpointChange}
+                workflows={workflows}
+                activeWorkflow={activeWorkflow}
+                onWorkflowChange={onWorkflowChange}
+                visionModels={visionModels}
+                activeVisionModel={activeVisionModel}
+                onVisionModelChange={onVisionModelChange}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* History panel */}
       <div style={S.historyPanel}>
         <div style={S.historyHeader}>
-          <span style={S.historyTitle}>歷史記錄 ({history.length})</span>
-          {history.length > 0 && (
-            <button style={S.clearBtn} onClick={() => setHistory([])}>清除</button>
-          )}
+          <span style={S.historyTitle}>
+            歷史記錄 ({history.length}/{_MAX_HISTORY})
+          </span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {historyVisible && history.length > 0 && (
+              <button style={S.clearBtn} onClick={clearHistory}>清除全部</button>
+            )}
+            <button style={S.historyToggleBtn} onClick={toggleHistoryVisible}>
+              {historyVisible ? '隱藏 ▲' : '顯示 ▼'}
+            </button>
+          </div>
         </div>
-        {history.length === 0
-          ? <span style={S.historyEmpty}>尚無記錄，生成後圖片會保留在此</span>
-          : (
-            <div style={S.historyScroll}>
-              {history.map((item) => (
-                <a
-                  key={item.id}
-                  href={item.url}
-                  download={item.filename}
-                  style={S.historyItem}
-                  title="點擊下載"
-                >
-                  <img src={item.url} style={S.historyThumb} alt="" />
-                  <span style={{
-                    ...S.badge,
-                    ...(item.type === 'process' ? S.badgeProcess
-                      : item.type === 'generate' ? S.badgeGenerate
-                      : S.badgeCompose),
-                  }}>
-                    {item.type === 'process' ? '線稿' : item.type === 'generate' ? '生圖' : '問答'}
-                  </span>
-                  <span style={S.historyMeta}>
-                    {formatTime(item.ts)}<br />
-                    {item.label}
-                  </span>
-                </a>
-              ))}
-            </div>
-          )
-        }
+
+        {historyVisible && (
+          history.length === 0
+            ? <span style={S.historyEmpty}>尚無記錄，生成後圖片會保留在此</span>
+            : (
+              <div style={S.historyScroll}>
+                {history.map((item) => (
+                  <div key={item.id} style={S.historyItemWrap}>
+                    <button
+                      style={S.historyDeleteBtn}
+                      onClick={() => deleteHistory(item.id)}
+                      title="刪除"
+                    >×</button>
+                    <img
+                      src={item.thumbnail ?? item.url}
+                      style={S.historyThumb}
+                      alt=""
+                      onClick={() => setLightboxItem(item)}
+                    />
+                    <span style={{ ...S.badge, ..._badgeStyle(item.type, S) }}>
+                      {_badgeLabel(item.type)}
+                    </span>
+                    <span style={S.historyMeta}>
+                      {formatTime(item.ts)}<br />
+                      {item.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
+        )}
       </div>
+
+      {/* Lightbox */}
+      {lightboxItem && (
+        <div style={S.lightboxOverlay} onClick={() => setLightboxItem(null)}>
+          <div style={S.lightboxBox} onClick={e => e.stopPropagation()}>
+            <button style={S.lightboxClose} onClick={() => setLightboxItem(null)}>×</button>
+            <img
+              src={lightboxItem.thumbnail ?? lightboxItem.url}
+              style={S.lightboxImg}
+              alt=""
+            />
+            <div style={S.lightboxFooter}>
+              <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                {_badgeLabel(lightboxItem.type)} · {formatTime(lightboxItem.ts)}
+                {lightboxItem.label ? ` · ${lightboxItem.label}` : ''}
+              </span>
+              <a
+                href={lightboxItem.url}
+                download={lightboxItem.filename}
+                style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
+              >
+                下載
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

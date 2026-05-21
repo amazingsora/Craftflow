@@ -98,6 +98,14 @@ const S = {
     lineHeight: 1.6,
   },
   sectionLabel: { fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 },
+  modelBadge: {
+    fontSize: 11, color: 'var(--muted)',
+    background: 'var(--bg)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: '4px 8px',
+    display: 'inline-block',
+  },
   loading: {
     display: 'flex', flexDirection: 'column',
     alignItems: 'center', gap: 12,
@@ -120,7 +128,7 @@ const PLACEHOLDER_QUESTIONS = [
   '主角位置太居中，怎麼調整讓畫面更有張力？',
 ]
 
-export default function ComposeTab({ onAddHistory }) {
+export default function ComposeTab({ onAddHistory, activeVisionModel }) {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [question, setQuestion] = useState(() => sessionStorage.getItem('compose_question') ?? '')
@@ -133,6 +141,20 @@ export default function ComposeTab({ onAddHistory }) {
   const inputRef = useRef()
   const progressTimer = useRef()
   const elapsedTimer = useRef()
+
+  // IP-Adapter 角色外觀參考
+  const [ipaEnabled, setIpaEnabled] = useState(false)
+  const [ipaFile, setIpaFile] = useState(null)
+  const [ipaPreview, setIpaPreview] = useState(null)
+  const [ipaWeight, setIpaWeight] = useState(0.6)
+  const [ipaDragging, setIpaDragging] = useState(false)
+  const ipaInputRef = useRef()
+
+  const handleIpaFile = (f) => {
+    if (!f || !f.type.startsWith('image/')) return
+    setIpaFile(f)
+    setIpaPreview(URL.createObjectURL(f))
+  }
 
   const handleFile = (f) => {
     if (!f || !f.type.startsWith('image/')) return
@@ -188,6 +210,12 @@ export default function ComposeTab({ onAddHistory }) {
       const body = new FormData()
       body.append('file', file)
       body.append('question', question.trim())
+      if (ipaEnabled) {
+        body.append('use_sketch_as_ref', 'true')
+        body.append('ipa_weight', String(ipaWeight))
+        // 備用：若未來恢復外部角色參考圖，取消下方注釋
+        // if (ipaFile) body.append('character_ref', ipaFile)
+      }
 
       const resp = await fetch('/api/v1/art/compose', { method: 'POST', body })
       if (!resp.ok) {
@@ -255,6 +283,46 @@ export default function ComposeTab({ onAddHistory }) {
           onChange={(e) => handleFile(e.target.files[0])}
         />
 
+        {/* IP-Adapter 角色外觀參考 */}
+        <div style={{
+          border: '1px solid var(--border)', borderRadius: 10,
+          padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>角色外觀參考</span>
+            <button
+              style={{
+                fontSize: 12, padding: '3px 10px', borderRadius: 6,
+                border: ipaEnabled ? 'none' : '1px solid var(--border)',
+                cursor: 'pointer',
+                background: ipaEnabled ? 'var(--accent)' : 'transparent',
+                color: ipaEnabled ? '#fff' : 'var(--muted)',
+              }}
+              onClick={() => { setIpaEnabled(v => !v); setIpaFile(null); setIpaPreview(null) }}
+            >
+              {ipaEnabled ? '已啟用' : '未啟用'}
+            </button>
+          </div>
+          {ipaEnabled && (
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
+                以草圖本身作為外觀參考，生成有色彩的構圖版本。
+              </div>
+              <label style={{ ...S.label, marginBottom: 4 }}>
+                參考強度：{ipaWeight.toFixed(2)}
+                <span style={{ marginLeft: 6, opacity: 0.6 }}>（0.6 建議起點）</span>
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
+                <input type="range" min={0.1} max={1.5} step={0.05}
+                  value={ipaWeight} style={{ flex: 1, accentColor: 'var(--accent)' }}
+                  onChange={e => setIpaWeight(Number(e.target.value))} />
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div>
           <label style={S.label}>你的問題</label>
           <textarea
@@ -264,6 +332,13 @@ export default function ComposeTab({ onAddHistory }) {
             onChange={(e) => { setQuestion(e.target.value); sessionStorage.setItem('compose_question', e.target.value) }}
           />
         </div>
+
+        {activeVisionModel && (
+          <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+            視覺模型：<span style={S.modelBadge}>{activeVisionModel}</span>
+            <span style={{ marginLeft: 6, opacity: 0.6 }}>（於 ⚙ 設定切換）</span>
+          </div>
+        )}
 
         <button
           style={{ ...S.btn, ...(canSubmit ? {} : S.btnDisabled) }}

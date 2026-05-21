@@ -4,6 +4,7 @@ ComfyUI image generation endpoints:
   POST /api/v1/art/lineart         — upload sketch → lineart PNG (ControlNet)
   POST /api/v1/art/generate        — text prompt → image PNG (SDXL txt2img)
   POST /api/v1/art/compose         — sketch + question → advice text + reference image (JSON)
+  POST /api/v1/art/img-guide       — reference image + prompt → image (i2i / controlnet modes)
 """
 from __future__ import annotations
 
@@ -27,14 +28,14 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.config import UPLOAD_DIR
+from app.core.config import UPLOAD_DIR, CUSTOM_WORKFLOWS_DIR
 from app.core import state
 from app.core.database import get_db
 from app.models.art_style import ArtStyle
 from app.models.character import Character
 from app.services import comfyui_client
 from app.services.ai import art_service, ollama_client as _oc
-from app.services.ai.ollama_client import DEFAULT_VISION_MODEL, DEFAULT_TEXT_MODEL
+from app.services.ai.ollama_client import DEFAULT_TEXT_MODEL
 from app.services.ai.prompt_engine import compile as compile_prompt, PromptStyle
 from app.services.ai.prompt_engine.styles import STYLE_CONFIG
 from app.services.ai.vram_manager import guardian
@@ -45,16 +46,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["art-generate"])
 
-_WORKFLOW_DIR = Path("/app/tools/Craftflow/diffusion/workflows")
-if not _WORKFLOW_DIR.exists():
-    _WORKFLOW_DIR = Path(__file__).resolve().parents[3] / "tools" / "Craftflow" / "diffusion" / "workflows"
+_SYSTEM_WORKFLOW_DIR = Path("/app/tools/Craftflow/diffusion/workflows")
+if not _SYSTEM_WORKFLOW_DIR.exists():
+    _SYSTEM_WORKFLOW_DIR = Path(__file__).resolve().parents[3] / "tools" / "Craftflow" / "diffusion" / "workflows"
 
 # checkpoint_styles.yml — Docker path / local fallback
 _STYLES_YML = Path("/app/backend/checkpoint_styles.yml")
 if not _STYLES_YML.exists():
-    _STYLES_YML = Path(__file__).resolve().parents[3] / "checkpoint_styles.yml"
+    _STYLES_YML = Path(__file__).resolve().parents[2] / "checkpoint_styles.yml"
 
-logger.info("workflow dir: %s", _WORKFLOW_DIR)
+logger.info("system workflow dir: %s", _SYSTEM_WORKFLOW_DIR)
 logger.info("checkpoint styles: %s", _STYLES_YML)
 
 
@@ -138,7 +139,13 @@ def _inject_loras(wf: dict, loras: list) -> None:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _load_workflow(name: str) -> dict:
-    path = _WORKFLOW_DIR / name
+    # 先找使用者自訂目錄，找不到再找系統目錄
+    for base in (CUSTOM_WORKFLOWS_DIR, _SYSTEM_WORKFLOW_DIR):
+        path = base / name
+        if path.exists():
+            break
+    else:
+        raise FileNotFoundError(f"Workflow '{name}' not found in custom or system directories")
     with open(path, encoding="utf-8") as f:
         wf = json.load(f)
     wf.pop("_comment", None)
@@ -291,19 +298,22 @@ async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
     if extra:
         prompt = f"{prompt}, {extra}"
 
-    wf = _load_workflow("text_to_image.json")
-    _inject_loras(wf, art_style.loras if art_style else [])
+    wf = _load_workflow(state.get_workflow())
+    # global LoRA（settings 頁設定）優先注入，art_style LoRA 疊加在後
+    global_lora = state.get_lora()
+    lora_list = []
+    if global_lora.get("name"):
+        lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
+    if art_style and art_style.loras:
+        lora_list.extend(art_style.loras)
+    _inject_loras(wf, lora_list)
+    _inject_prompts(wf, prompt, negative)
     for node in wf.values():
         if not isinstance(node, dict):
             continue
         ct = node.get("class_type")
         inputs = node.get("inputs", {})
-        if ct == "CLIPTextEncode":
-            if inputs.get("text") == "__POSITIVE__":
-                inputs["text"] = prompt
-            elif inputs.get("text") == "__NEGATIVE__":
-                inputs["text"] = negative
-        elif ct == "EmptyLatentImage":
+        if ct == "EmptyLatentImage":
             inputs["width"] = req.width
             inputs["height"] = req.height
         elif ct == "KSampler":
@@ -318,8 +328,57 @@ async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
             "X-Seed": str(seed),
             "X-Style": style.value,
             "X-Steps": str(req.steps),
+            "X-Workflow": state.get_workflow(),
         },
     )
+
+
+def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
+    """Inject positive/negative prompts into CLIPTextEncode nodes.
+
+    Priority:
+      1. __POSITIVE__ / __NEGATIVE__ placeholder text (system workflows)
+      2. _meta.title containing "positive" / "negative" (user workflows with titles)
+      3. First two CLIPTextEncode nodes by node-id order (fallback)
+    """
+    clips = {
+        nid: node for nid, node in wf.items()
+        if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode"
+    }
+    if not clips:
+        return
+
+    # Pass 1: placeholder text
+    pos_injected = neg_injected = False
+    for node in clips.values():
+        text = node["inputs"].get("text", "")
+        if text == "__POSITIVE__":
+            node["inputs"]["text"] = positive
+            pos_injected = True
+        elif text == "__NEGATIVE__":
+            node["inputs"]["text"] = negative
+            neg_injected = True
+    if pos_injected or neg_injected:
+        return
+
+    # Pass 2: _meta.title keywords
+    for node in clips.values():
+        title = (node.get("_meta") or {}).get("title", "").lower()
+        if not pos_injected and "positive" in title:
+            node["inputs"]["text"] = positive
+            pos_injected = True
+        elif not neg_injected and "negative" in title:
+            node["inputs"]["text"] = negative
+            neg_injected = True
+    if pos_injected or neg_injected:
+        return
+
+    # Pass 3: first two nodes by sorted id
+    sorted_ids = sorted(clips.keys(), key=lambda x: int(x) if x.isdigit() else 0)
+    if sorted_ids:
+        clips[sorted_ids[0]]["inputs"]["text"] = positive
+    if len(sorted_ids) > 1:
+        clips[sorted_ids[1]]["inputs"]["text"] = negative
 
 
 def _inject_txt2img(wf: dict, prompt: str, negative: str, seed: int, steps: int = 20) -> None:
@@ -415,24 +474,24 @@ def _is_flat_color_draft(image_bytes: bytes) -> bool:
 async def compose(
     file: Annotated[UploadFile, File(description="草稿圖片")],
     question: str = Form(..., description="針對草圖的構圖問題"),
-    model: str = Form(DEFAULT_VISION_MODEL),
+    model: str = Form(""),
+    character_ref: Optional[UploadFile] = File(None, description="角色外觀參考圖（隱藏備用）"),
+    ipa_weight: float = Form(0.6, ge=0.1, le=1.5, description="IP-Adapter 強度"),
+    use_sketch_as_ref: bool = Form(False, description="以草圖本身作為 IP-Adapter 參考"),
 ):
     image_bytes = await file.read()
     width, height = _image_dimensions(image_bytes)
+    effective_model = model.strip() or state.get_vision_model()
 
     await guardian.request_focus("ollama")
     try:
-        advice, sdxl_prompt = art_service.compose_ask(question, image_bytes, model=model)
+        advice, sdxl_prompt = art_service.compose_ask(question, image_bytes, model=effective_model)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
     seed = random.randint(0, 2**31 - 1)
     style = _detect_style("text_to_image.json")
     negative = STYLE_CONFIG[style].negative
-
-    # Sketch-style suffix: complete the figure, force monochrome lineart for consistent draft look
-    _COMPOSE_SUFFIX = ", full body, complete character, all limbs visible, white background, monochrome, lineart, clean lines, no shading, no color"
-    final_prompt = sdxl_prompt.rstrip(", ") + _COMPOSE_SUFFIX
 
     # Cap generation to 1024px max (preserve aspect ratio from original sketch)
     _MAX_COMPOSE_DIM = 1024
@@ -446,25 +505,55 @@ async def compose(
     gen_w = max(512, gen_w)
     gen_h = max(512, gen_h)
 
-    wf = _load_workflow("text_to_image.json")
-    for node in wf.values():
-        if not isinstance(node, dict):
-            continue
-        ct = node.get("class_type")
-        inputs = node.get("inputs", {})
-        if ct == "CLIPTextEncode":
-            if inputs.get("text") == "__POSITIVE__":
-                inputs["text"] = final_prompt
-            elif inputs.get("text") == "__NEGATIVE__":
-                inputs["text"] = negative
-        elif ct == "EmptyLatentImage":
-            inputs["width"] = gen_w
-            inputs["height"] = gen_h
-        elif ct == "KSampler":
-            inputs["seed"] = seed
     await guardian.request_focus("comfyui")
-    image_data = _run(wf)
 
+    if use_sketch_as_ref or character_ref is not None:
+        # IP-Adapter 模式：以草圖（或外部參考圖）作為外觀基準
+        if character_ref is not None:
+            ref_bytes = await character_ref.read()
+            ref_filename = character_ref.filename or "char_ref.png"
+        else:
+            ref_bytes = image_bytes  # 草圖本身作為參考
+            ref_filename = "sketch_ref.png"
+        uploaded_ref = comfyui_client.upload_image_bytes(ref_bytes, ref_filename)
+        final_prompt = sdxl_prompt.rstrip(", ") + ", full body, complete character, all limbs visible"
+        wf = _load_workflow("ipadapter_txt2img.json")
+        _inject_prompts(wf, final_prompt, negative)
+        for node in wf.values():
+            if not isinstance(node, dict):
+                continue
+            ct = node.get("class_type")
+            inputs = node.get("inputs", {})
+            if ct == "LoadImage":
+                inputs["image"] = uploaded_ref
+            elif ct == "IPAdapterAdvanced":
+                inputs["weight"] = round(ipa_weight, 2)
+            elif ct == "EmptyLatentImage":
+                inputs["width"] = gen_w
+                inputs["height"] = gen_h
+            elif ct == "KSampler":
+                inputs["seed"] = seed
+    else:
+        # 原本的 txt2img 模式（線稿風）
+        final_prompt = sdxl_prompt.rstrip(", ") + ", full body, complete character, all limbs visible, white background, monochrome, lineart, clean lines, no shading, no color"
+        wf = _load_workflow("text_to_image.json")
+        for node in wf.values():
+            if not isinstance(node, dict):
+                continue
+            ct = node.get("class_type")
+            inputs = node.get("inputs", {})
+            if ct == "CLIPTextEncode":
+                if inputs.get("text") == "__POSITIVE__":
+                    inputs["text"] = final_prompt
+                elif inputs.get("text") == "__NEGATIVE__":
+                    inputs["text"] = negative
+            elif ct == "EmptyLatentImage":
+                inputs["width"] = gen_w
+                inputs["height"] = gen_h
+            elif ct == "KSampler":
+                inputs["seed"] = seed
+
+    image_data = _run(wf)
     encoded_image = base64.b64encode(image_data).decode()
 
     return {
@@ -632,7 +721,7 @@ async def generate_character_design(
             await guardian.request_focus("ollama")
             prompt_txt = _visual_extract_prompt(len(valid_images))
             visual = _oc.analyze_multi_images_bytes(
-                valid_images, prompt_txt, model=DEFAULT_VISION_MODEL,
+                valid_images, prompt_txt, model=state.get_vision_model(),
                 options={"num_predict": 160, "temperature": 0.1},
             )
             timings["vision_extract"] = round(time.perf_counter() - t0, 1)
@@ -835,7 +924,7 @@ async def generate_variant_design(
             await guardian.request_focus("ollama")
             prompt_txt = _visual_extract_prompt(len(valid_images))
             visual = _oc.analyze_multi_images_bytes(
-                valid_images, prompt_txt, model=DEFAULT_VISION_MODEL,
+                valid_images, prompt_txt, model=state.get_vision_model(),
                 options={"num_predict": 160, "temperature": 0.1},
             )
             timings["vision_extract"] = round(time.perf_counter() - t0, 1)
@@ -957,5 +1046,147 @@ async def generate_variant_design(
             "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
+        },
+    )
+
+
+# ── Image-Guided Generation ───────────────────────────────────────────────────
+
+_IMG_GUIDE_MODES = ("i2i", "controlnet")
+
+
+@router.post("/art/img-guide", summary="參考圖引導生成 (i2i / controlnet)")
+async def img_guide(
+    file: Annotated[UploadFile, File(description="參考圖片 (JPEG/PNG)")],
+    prompt: str = Form(..., description="正向提示詞（英文，已編譯）"),
+    negative_prompt: str = Form("", description="負向提示詞"),
+    mode: str = Form("i2i", description="生成模式：i2i | controlnet"),
+    denoise: float = Form(0.35, ge=0.05, le=0.95, description="去噪強度（i2i 模式）"),
+    steps: int = Form(20, ge=5, le=60),
+    seed: int = Form(-1),
+    art_style_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    i2i       — 以參考圖為底圖，denoise 0.05~0.95 控制保留程度（低=保留原圖，高=大幅改變）
+    controlnet — 以參考圖約束構圖/姿勢，prompt 決定風格（使用 scribble ControlNet）
+    """
+    if mode not in _IMG_GUIDE_MODES:
+        raise HTTPException(status_code=400, detail=f"mode 必須為 {_IMG_GUIDE_MODES}")
+
+    image_bytes = await file.read()
+    actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
+
+    art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
+    style = _resolve_style(art_style)
+    default_neg = (art_style.negative if art_style and art_style.negative else STYLE_CONFIG[style].negative)
+    neg = negative_prompt.strip() or default_neg
+
+    extra = _extra_tags(art_style)
+    pos = f"{prompt}, {extra}" if extra else prompt
+
+    uploaded_name = comfyui_client.upload_image_bytes(image_bytes, file.filename or "ref.png")
+
+    if mode == "i2i":
+        wf = _load_workflow("image_to_image.json")
+        _inject_loras(wf, art_style.loras if art_style else [])
+        for node in wf.values():
+            if not isinstance(node, dict):
+                continue
+            ct = node.get("class_type")
+            inputs = node.get("inputs", {})
+            if ct == "LoadImage":
+                inputs["image"] = uploaded_name
+            elif ct == "CLIPTextEncode":
+                if inputs.get("text") == "__POSITIVE__":
+                    inputs["text"] = pos
+                elif inputs.get("text") == "__NEGATIVE__":
+                    inputs["text"] = neg
+            elif ct == "KSampler":
+                inputs["seed"] = actual_seed
+                inputs["steps"] = steps
+                inputs["denoise"] = round(denoise, 2)
+
+    else:  # controlnet
+        wf = _load_workflow("sketch_to_reference.json")
+        _inject_loras(wf, art_style.loras if art_style else [])
+        img_w, img_h = _image_dimensions(image_bytes)
+        _inject_controlnet_compose(wf, uploaded_name, pos, neg, actual_seed, img_w, img_h, steps)
+
+    await guardian.request_focus("comfyui")
+    image_out = _run(wf)
+
+    return Response(
+        content=image_out,
+        media_type="image/png",
+        headers={
+            "X-Seed": str(actual_seed),
+            "X-Mode": mode,
+            "X-Style": style.value,
+            "X-Denoise": str(denoise),
+        },
+    )
+
+
+@router.post("/art/ipadapter", summary="IP-Adapter 外觀參考生成")
+async def ipadapter(
+    file: Annotated[UploadFile, File(description="角色外觀參考圖 (JPEG/PNG)")],
+    prompt: str = Form(..., description="正向提示詞（英文，已編譯）"),
+    negative_prompt: str = Form("", description="負向提示詞"),
+    weight: float = Form(0.6, ge=0.1, le=1.5, description="IP-Adapter 強度"),
+    width: int = Form(1024),
+    height: int = Form(1024),
+    steps: int = Form(20, ge=5, le=60),
+    seed: int = Form(-1),
+    art_style_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    以參考圖萃取外觀特徵（角色臉部、髮型、服裝風格），
+    結合文字 prompt 生成風格一致的插畫。
+    weight: 0.1=微影響, 0.6=平衡, 1.0+=強參考
+    """
+    image_bytes = await file.read()
+    actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
+
+    art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
+    style = _resolve_style(art_style, "ipadapter_txt2img.json")
+    default_neg = (art_style.negative if art_style and art_style.negative else STYLE_CONFIG[style].negative)
+    neg = negative_prompt.strip() or default_neg
+
+    extra = _extra_tags(art_style)
+    pos = f"{prompt}, {extra}" if extra else prompt
+
+    uploaded_name = comfyui_client.upload_image_bytes(image_bytes, file.filename or "ref.png")
+
+    wf = _load_workflow("ipadapter_txt2img.json")
+    _inject_prompts(wf, pos, neg)
+
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type")
+        inputs = node.get("inputs", {})
+        if ct == "LoadImage":
+            inputs["image"] = uploaded_name
+        elif ct == "IPAdapterAdvanced":
+            inputs["weight"] = round(weight, 2)
+        elif ct == "EmptyLatentImage":
+            inputs["width"] = width
+            inputs["height"] = height
+        elif ct == "KSampler":
+            inputs["seed"] = actual_seed
+            inputs["steps"] = steps
+
+    await guardian.request_focus("comfyui")
+    image_out = _run(wf)
+
+    return Response(
+        content=image_out,
+        media_type="image/png",
+        headers={
+            "X-Seed": str(actual_seed),
+            "X-Style": style.value,
+            "X-IPAdapter-Weight": str(weight),
         },
     )
