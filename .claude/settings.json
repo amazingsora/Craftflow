@@ -4,7 +4,8 @@
       "Read(//f/AI/**)",
       "Read(//f//**)",
       "Read(//c//**)",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(python -c ' *)"
     ]
   }
 }

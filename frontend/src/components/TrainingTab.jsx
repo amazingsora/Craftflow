@@ -26,7 +26,7 @@ const S = {
   },
   imgThumb: { width: '100%', aspectRatio: '1/1', objectFit: 'cover' },
   imgCaption: {
-    padding: '4px 8px 8px', fontSize: 11, color: 'var(--muted)',
+    padding: '4px 8px 8px', fontSize: 11,
     background: 'none', border: 'none', borderTop: '1px solid var(--border)',
     color: 'var(--text)', outline: 'none', width: '100%', resize: 'none', minHeight: 56,
     fontFamily: 'inherit',

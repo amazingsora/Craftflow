@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(Get-ChildItem -Path \"f:\\\\wk\\\\Craftflow\" -Depth 1)",
-      "Bash(Select-Object -Property Name, PSIsContainer)"
+      "Bash(Select-Object -Property Name, PSIsContainer)",
+      "Bash(dir \"F:\\\\wk\\\\ComfyUI_portable\\\\ComfyUI\\\\user\\\\default\\\\workflows\")"
     ]
   }
 }

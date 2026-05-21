@@ -36,12 +36,11 @@ def submit_workflow(workflow: dict) -> str:
     payload = {"prompt": workflow, "client_id": str(uuid.uuid4())}
     r = requests.post(f"{COMFYUI_BASE}/prompt", json=payload, timeout=30)
     if not r.ok:
-        # Extract ComfyUI's actual validation error instead of the generic HTTPError
         try:
             data = r.json()
             node_errors = data.get("node_errors", {})
+            msgs = []
             if node_errors:
-                msgs = []
                 for node_err in node_errors.values():
                     class_type = node_err.get("class_type", "?")
                     for e in node_err.get("errors", []):
