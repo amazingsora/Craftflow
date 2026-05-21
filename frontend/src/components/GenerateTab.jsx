@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
 
 const DEFAULT_NEGATIVE =
   'low quality, blurry, watermark, text, signature, bad anatomy, extra limbs, deformed, ugly, duplicate, worst quality'
@@ -84,6 +84,34 @@ const S = {
   },
   error: { color: 'var(--danger)', fontSize: 13 },
   seedRow: { display: 'flex', gap: 8, alignItems: 'center' },
+  refSection: {
+    border: '1px solid var(--border)', borderRadius: 10,
+    padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10,
+    background: 'var(--surface)',
+  },
+  refHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  refTitle: { fontSize: 13, fontWeight: 600, color: 'var(--text)' },
+  toggleBtn: {
+    fontSize: 12, padding: '3px 10px', borderRadius: 6,
+    border: '1px solid var(--border)', cursor: 'pointer',
+    background: 'transparent', color: 'var(--muted)',
+  },
+  toggleBtnActive: { background: 'var(--accent)', color: '#fff', border: 'none' },
+  refDropzone: {
+    border: '2px dashed var(--border)', borderRadius: 8, minHeight: 100,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    cursor: 'pointer', overflow: 'hidden', background: 'var(--bg)',
+    transition: 'border-color .15s',
+  },
+  refDropzoneActive: { borderColor: 'var(--accent)' },
+  refThumb: { width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' },
+  modeBtns: { display: 'flex', gap: 8 },
+  modeBtn: {
+    flex: 1, padding: '7px 0', borderRadius: 8, border: '1px solid var(--border)',
+    background: 'transparent', color: 'var(--muted)', fontSize: 12,
+    cursor: 'pointer', textAlign: 'center',
+  },
+  modeBtnActive: { background: 'var(--accent)', color: '#fff', border: 'none', fontWeight: 600 },
   diceBtn: {
     padding: '7px 10px',
     borderRadius: 8,
@@ -96,7 +124,7 @@ const S = {
   },
 }
 
-export default function GenerateTab({ onAddHistory }) {
+export default function GenerateTab({ onAddHistory, artStyleId = '' }) {
   const [promptZh, setPromptZh] = useState(() => sessionStorage.getItem('gen_promptZh') ?? '')
   const [promptEn, setPromptEn] = useState(() => sessionStorage.getItem('gen_promptEn') ?? '')
   const [optimizedEn, setOptimizedEn] = useState(() => sessionStorage.getItem('gen_optimizedEn') ?? '')
@@ -118,6 +146,16 @@ export default function GenerateTab({ onAddHistory }) {
   const progressTimer = useRef()
   const elapsedTimer = useRef()
 
+  // Reference image guide mode
+  const [refEnabled, setRefEnabled] = useState(false)
+  const [refFile, setRefFile] = useState(null)
+  const [refPreview, setRefPreview] = useState(null)
+  const [refMode, setRefMode] = useState('i2i')  // 'i2i' | 'controlnet' | 'ipadapter'
+  const [denoise, setDenoise] = useState(0.35)
+  const [ipaWeight, setIpaWeight] = useState(0.6)
+  const [refDragging, setRefDragging] = useState(false)
+  const refInputRef = useRef()
+
   // 實際發送給 SDXL 的 Prompt：[英文輸入, AI 優化結果]
   const finalPrompt = [promptEn, optimizedEn].filter(Boolean).join(', ')
 
@@ -127,6 +165,12 @@ export default function GenerateTab({ onAddHistory }) {
   const setNegPromptP = (v) => { setNegPrompt(v); sessionStorage.setItem('gen_negPrompt', v) }
 
   const randomSeed = () => setSeed(Math.floor(Math.random() * 2 ** 31))
+
+  const handleRefFile = useCallback((f) => {
+    if (!f || !f.type.startsWith('image/')) return
+    setRefFile(f)
+    setRefPreview(URL.createObjectURL(f))
+  }, [])
 
   const onCopy = () => {
     if (!finalPrompt.trim()) return
@@ -144,7 +188,7 @@ export default function GenerateTab({ onAddHistory }) {
       const resp = await fetch('/api/v1/art/compile-prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptZh }),
+        body: JSON.stringify({ prompt: promptZh, art_style_id: artStyleId ? Number(artStyleId) : null }),
       })
       const data = await resp.json()
       if (data.positive) {
@@ -182,6 +226,7 @@ export default function GenerateTab({ onAddHistory }) {
 
   const onGenerate = async () => {
     if (!finalPrompt.trim() || loading) return
+    if (refEnabled && !refFile) { setError('請上傳參考圖片'); return }
     setLoading(true)
     setError(null)
     setResult(null)
@@ -191,18 +236,45 @@ export default function GenerateTab({ onAddHistory }) {
     const actualSeed = seed < 0 ? Math.floor(Math.random() * 2 ** 31) : seed
     setLastSeed(actualSeed)
     try {
-      const resp = await fetch('/api/v1/art/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: finalPrompt.trim(),
-          negative_prompt: negPrompt.trim() || DEFAULT_NEGATIVE,
-          width,
-          height,
-          steps,
-          seed: actualSeed,
-        }),
-      })
+      let resp
+      if (refEnabled && refFile && refMode === 'ipadapter') {
+        const fd = new FormData()
+        fd.append('file', refFile)
+        fd.append('prompt', finalPrompt.trim())
+        fd.append('negative_prompt', negPrompt.trim() || DEFAULT_NEGATIVE)
+        fd.append('weight', String(ipaWeight))
+        fd.append('width', String(size.split('x')[0]))
+        fd.append('height', String(size.split('x')[1]))
+        fd.append('steps', String(steps))
+        fd.append('seed', String(actualSeed))
+        if (artStyleId) fd.append('art_style_id', artStyleId)
+        resp = await fetch('/api/v1/art/ipadapter', { method: 'POST', body: fd })
+      } else if (refEnabled && refFile) {
+        const fd = new FormData()
+        fd.append('file', refFile)
+        fd.append('prompt', finalPrompt.trim())
+        fd.append('negative_prompt', negPrompt.trim() || DEFAULT_NEGATIVE)
+        fd.append('mode', refMode)
+        fd.append('denoise', String(denoise))
+        fd.append('steps', String(steps))
+        fd.append('seed', String(actualSeed))
+        if (artStyleId) fd.append('art_style_id', artStyleId)
+        resp = await fetch('/api/v1/art/img-guide', { method: 'POST', body: fd })
+      } else {
+        resp = await fetch('/api/v1/art/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: finalPrompt.trim(),
+            negative_prompt: negPrompt.trim() || DEFAULT_NEGATIVE,
+            width,
+            height,
+            steps,
+            seed: actualSeed,
+            art_style_id: artStyleId ? Number(artStyleId) : null,
+          }),
+        })
+      }
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ detail: resp.statusText }))
         throw new Error(err.detail)
@@ -212,7 +284,7 @@ export default function GenerateTab({ onAddHistory }) {
       setResult(url)
       stopProgress()
       onAddHistory?.({
-        type: 'generate',
+        type: refEnabled ? refMode : 'generate',
         url,
         filename: `craftflow_${actualSeed}.png`,
         label: finalPrompt.trim().slice(0, 30),
@@ -233,7 +305,7 @@ export default function GenerateTab({ onAddHistory }) {
     a.click()
   }
 
-  const canGenerate = finalPrompt.trim().length > 0 && !loading
+  const canGenerate = finalPrompt.trim().length > 0 && !loading && (!refEnabled || !!refFile)
 
   return (
     <div style={S.root}>
@@ -338,6 +410,99 @@ export default function GenerateTab({ onAddHistory }) {
             value={negPrompt}
             onChange={(e) => setNegPromptP(e.target.value)}
           />
+        </div>
+
+        {/* ── 參考圖引導模式 ── */}
+        <div style={S.refSection}>
+          <div style={S.refHeader}>
+            <span style={S.refTitle}>參考圖引導</span>
+            <button
+              style={{ ...S.toggleBtn, ...(refEnabled ? S.toggleBtnActive : {}) }}
+              onClick={() => { setRefEnabled(v => !v); setRefFile(null); setRefPreview(null) }}
+            >
+              {refEnabled ? '已啟用' : '未啟用'}
+            </button>
+          </div>
+          {refEnabled && (
+            <>
+              {/* 模式選擇 */}
+              <div style={S.modeBtns}>
+                {[
+                  { key: 'i2i', label: 'Image2Image', desc: '保留原圖結構' },
+                  { key: 'controlnet', label: 'ControlNet', desc: '約束構圖/姿勢' },
+                  { key: 'ipadapter', label: 'IP-Adapter', desc: '外觀/角色參考' },
+                ].map(m => (
+                  <button
+                    key={m.key}
+                    style={{ ...S.modeBtn, ...(refMode === m.key ? S.modeBtnActive : {}) }}
+                    onClick={() => setRefMode(m.key)}
+                    title={m.desc}
+                  >
+                    {m.label}
+                    <div style={{ fontSize: 10, marginTop: 2, opacity: 0.7 }}>{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* 圖片上傳 */}
+              <div
+                style={{ ...S.refDropzone, ...(refDragging ? S.refDropzoneActive : {}) }}
+                onClick={() => refInputRef.current?.click()}
+                onDragOver={e => { e.preventDefault(); setRefDragging(true) }}
+                onDragLeave={() => setRefDragging(false)}
+                onDrop={e => { e.preventDefault(); setRefDragging(false); handleRefFile(e.dataTransfer.files[0]) }}
+              >
+                {refPreview
+                  ? <img src={refPreview} style={S.refThumb} alt="ref" />
+                  : <span style={{ color: 'var(--muted)', fontSize: 13 }}>拖放或點擊上傳參考圖</span>
+                }
+              </div>
+              <input
+                ref={refInputRef} type="file" accept="image/*" style={{ display: 'none' }}
+                onChange={e => handleRefFile(e.target.files[0])}
+              />
+
+              {/* IP-Adapter Weight */}
+              {refMode === 'ipadapter' && (
+                <div>
+                  <label style={S.label}>
+                    參考強度：{ipaWeight.toFixed(2)}
+                    <span style={{ marginLeft: 6, opacity: 0.6 }}>（0.6 = 平衡，越高越接近參考圖外觀）</span>
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
+                    <input
+                      type="range" min={0.1} max={1.5} step={0.05}
+                      value={ipaWeight}
+                      style={{ flex: 1, accentColor: 'var(--accent)' }}
+                      onChange={e => setIpaWeight(Number(e.target.value))}
+                    />
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Denoise（僅 i2i） */}
+              {refMode === 'i2i' && (
+                <div>
+                  <label style={S.label}>
+                    保留強度：{Math.round((1 - denoise) * 100)}%
+                    <span style={{ marginLeft: 6, opacity: 0.6 }}>（越高越接近原圖）</span>
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>大改</span>
+                    <input
+                      type="range" min={0.05} max={0.95} step={0.05}
+                      value={denoise}
+                      style={{ flex: 1, accentColor: 'var(--accent)' }}
+                      onChange={e => setDenoise(Number(e.target.value))}
+                    />
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>微調</span>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <div style={S.row}>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 const BASE_STYLES = ['sdxl', 'pony', 'flux', 'noobai', 'illustrious', 'anythingxl']
 
@@ -78,6 +78,19 @@ const S = {
     borderTop: '2px solid var(--accent)', borderRadius: '50%',
     animation: 'spin 0.9s linear infinite', display: 'inline-block',
   },
+  spinnerLg: {
+    width: 36, height: 36, border: '3px solid var(--border)',
+    borderTop: '3px solid var(--accent)', borderRadius: '50%',
+    animation: 'spin 0.9s linear infinite',
+  },
+  testSection: { display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 4 },
+  testTitle: { fontSize: 13, fontWeight: 600, color: 'var(--muted)' },
+  testImg: { width: '100%', borderRadius: 10, border: '1px solid var(--border)', display: 'block' },
+  testPlaceholder: {
+    minHeight: 180, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: '2px dashed var(--border)', borderRadius: 10, color: 'var(--muted)', fontSize: 13,
+  },
+  testMeta: { fontSize: 11, color: 'var(--muted)', wordBreak: 'break-all' },
 }
 
 const emptyStyle = {
@@ -93,6 +106,11 @@ export default function ArtStyleTab() {
   const [saving, setSaving]   = useState(false)
   const [error, setError]     = useState('')
   const [loraList, setLoraList] = useState([])    // available LoRAs from ComfyUI
+  const [testPrompt, setTestPrompt] = useState('')
+  const [testGenerating, setTestGenerating] = useState(false)
+  const [testResult, setTestResult] = useState(null)  // { image: url, prompt, style, seed }
+  const [testError, setTestError] = useState('')
+  const testImgRef = useRef(null)
 
   useEffect(() => { loadStyles(); loadLoras() }, [])
 
@@ -152,6 +170,50 @@ export default function ArtStyleTab() {
 
   function removeLora(idx) {
     setForm(f => ({ ...f, loras: f.loras.filter((_, i) => i !== idx) }))
+  }
+
+  // ── Test Generation ───────────────────────────────────────────────────────
+
+  async function testGenerate() {
+    if (!testPrompt.trim()) { setTestError('請輸入測試描述'); return }
+    if (!editing) return
+    setTestGenerating(true); setTestError(''); setTestResult(null)
+    try {
+      const compileRes = await fetch('/api/v1/art/compile-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: testPrompt, art_style_id: editing.id }),
+      })
+      if (!compileRes.ok) {
+        const d = await compileRes.json().catch(() => ({}))
+        throw new Error(d.detail ?? `編譯失敗 (${compileRes.status})`)
+      }
+      const compiled = await compileRes.json()
+
+      const genRes = await fetch('/api/v1/art/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: compiled.positive,
+          negative_prompt: compiled.negative ?? '',
+          art_style_id: editing.id,
+        }),
+      })
+      if (!genRes.ok) {
+        const d = await genRes.json().catch(() => ({}))
+        throw new Error(d.detail ?? `生成失敗 (${genRes.status})`)
+      }
+      const seed = genRes.headers.get('X-Seed') ?? '?'
+      const style = genRes.headers.get('X-Style') ?? compiled.style
+      const blob = await genRes.blob()
+      const url = URL.createObjectURL(blob)
+      setTestResult({ url, prompt: compiled.positive, style, seed })
+      setTimeout(() => testImgRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50)
+    } catch (e) {
+      setTestError(e.message)
+    } finally {
+      setTestGenerating(false)
+    }
   }
 
   // ── Save / Delete ─────────────────────────────────────────────────────────
@@ -330,24 +392,31 @@ export default function ArtStyleTab() {
             <span style={S.sectionTitle}>LoRA 模型</span>
             <button style={S.btnSecondary} onClick={addLora}>+ 新增 LoRA</button>
           </div>
-          {loraList.length > 0 && (
-            <datalist id="lora-list">
-              {loraList.map(l => <option key={l} value={l} />)}
-            </datalist>
-          )}
           {form.loras.length === 0
             ? <div style={{ ...S.empty, padding: '10px 0' }}>尚無 LoRA，點擊「新增 LoRA」加入。</div>
             : (
               <div style={S.loraList}>
                 {form.loras.map((l, idx) => (
                   <div key={idx} style={S.loraRow}>
-                    <input
-                      style={S.loraModel}
-                      list="lora-list"
-                      value={l.model}
-                      onChange={e => setLora(idx, 'model', e.target.value)}
-                      placeholder={loraList.length > 0 ? '輸入或選擇 LoRA 檔名' : 'LoRA 檔名，例：style_lora.safetensors'}
-                    />
+                    {loraList.length > 0 ? (
+                      <select
+                        style={S.loraModel}
+                        value={l.model}
+                        onChange={e => setLora(idx, 'model', e.target.value)}
+                      >
+                        <option value="">— 選擇 LoRA —</option>
+                        {loraList.map(name => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        style={S.loraModel}
+                        value={l.model}
+                        onChange={e => setLora(idx, 'model', e.target.value)}
+                        placeholder="LoRA 檔名（ComfyUI 離線，請手動輸入）"
+                      />
+                    )}
                     <input
                       style={S.loraWeight}
                       type="number"
@@ -383,6 +452,50 @@ export default function ArtStyleTab() {
           )}
           <button style={S.btnSecondary} onClick={() => setView('list')}>取消</button>
         </div>
+
+        {/* Test Generation — only for saved styles */}
+        {editing && (
+          <>
+            <div style={S.divider} />
+            <div style={S.testSection}>
+              <span style={S.testTitle}>畫風測試生成</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  style={{ ...S.input, flex: 1 }}
+                  value={testPrompt}
+                  onChange={e => setTestPrompt(e.target.value)}
+                  placeholder="輸入測試描述（中文），例：一位紅髮少女站在森林中"
+                  onKeyDown={e => e.key === 'Enter' && !testGenerating && testGenerate()}
+                />
+                <button
+                  style={{ ...S.btn, padding: '8px 18px', opacity: testGenerating ? 0.5 : 1, whiteSpace: 'nowrap' }}
+                  onClick={testGenerate}
+                  disabled={testGenerating}
+                >
+                  {testGenerating ? <span style={S.spinner} /> : '測試生成'}
+                </button>
+              </div>
+              {testError && <div style={{ color: '#f77', fontSize: 12 }}>{testError}</div>}
+              {testGenerating && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--muted)', fontSize: 13 }}>
+                  <span style={S.spinnerLg} />
+                  生成中，請稍候...
+                </div>
+              )}
+              {testResult ? (
+                <div ref={testImgRef} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <img src={testResult.url} alt="test result" style={S.testImg} />
+                  <div style={S.testMeta}>
+                    style: {testResult.style} · seed: {testResult.seed}
+                  </div>
+                  <div style={{ ...S.testMeta, opacity: 0.7 }}>{testResult.prompt}</div>
+                </div>
+              ) : !testGenerating && (
+                <div style={S.testPlaceholder}>輸入描述後點擊「測試生成」</div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

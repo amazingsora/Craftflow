@@ -29,3 +29,5 @@ KOHYA_PATH = Path(os.getenv("KOHYA_PATH", r"C:\kohya_ss"))
 KOHYA_PYTHON = Path(os.getenv("KOHYA_PYTHON", "python"))
 TRAINING_IMAGES_DIR = Path(os.getenv("TRAINING_IMAGES_DIR", str(BASE_DIR.parent / "data" / "training_images")))
 COMFYUI_LORAS_DIR = Path(os.getenv("COMFYUI_LORAS_DIR", r"C:\ComfyUI\models\loras"))
+
+CUSTOM_WORKFLOWS_DIR = Path(os.getenv("CUSTOM_WORKFLOWS_DIR", str(BASE_DIR.parent / "data" / "custom_workflows")))

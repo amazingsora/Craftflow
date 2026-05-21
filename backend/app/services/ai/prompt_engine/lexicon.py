@@ -44,6 +44,13 @@ HAIR_COLORS = {
 
 HAIR_LENGTHS = {"short hair", "medium hair", "long hair", "very long hair"}
 
+HAIR_STYLE_MAP: dict[str, str] = {
+    "長髮": "long hair",
+    "短髮": "short hair",
+    "捲髮": "wavy hair",
+    "直髮": "straight hair",
+}
+
 EYE_COLORS = {
     "white eyes", "black eyes", "brown eyes", "golden eyes", "silver eyes",
     "red eyes", "blue eyes", "purple eyes", "pink eyes", "green eyes",

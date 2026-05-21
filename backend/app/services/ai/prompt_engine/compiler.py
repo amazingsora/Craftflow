@@ -5,6 +5,7 @@ Prompt Compiler — 中文描述 → 對應模型的最終 prompt
   1. 依 style 選擇 LLM template
   2. Ollama 翻譯生成 raw tags / 描述
   3. Sanitizer：移除 banned_tags
+  3.6 服飾防幻覺與情緒召回過濾器（草稿強化核心）
   4. Anchor Extraction：從原始中文抽取髮色/眼色/長度
   5. Semantic Cleaning：移除與 Anchor 衝突的標籤
   6. Reordering & Weighting：按類別排序標籤，並對 Anchor 加權
@@ -34,97 +35,51 @@ def _extract_color_anchors(text: str, anchor_source: str = "") -> list[str]:
             color_zh = m.group(2)
             style_zh = m.group(3)
             
-            # Extract color if present
-            if color_zh:
-                color_en = lexicon.COLOR_MAP.get(color_zh, color_zh)
-                tag = f"{color_en} hair"
-                if tag not in seen:
-                    seen.add(tag); result.append(tag)
+            eng_color = lexicon.COLOR_MAP.get(color_zh)
+            eng_style = lexicon.HAIR_STYLE_MAP.get(style_zh) if style_zh else None
             
-            # Extract length/style from either prefix or keyword
-            combined_style = (prefix_zh or "") + style_zh
-            if "短" in combined_style:
-                tag = "short hair"
+            if eng_color:
+                tag = f"{eng_color} hair"
                 if tag not in seen:
-                    seen.add(tag); result.append(tag)
-            elif "長" in combined_style:
-                tag = "long hair"
-                if tag not in seen:
-                    seen.add(tag); result.append(tag)
-                    
+                    seen.add(tag)
+                    result.append(tag)
+            if eng_style:
+                if eng_style not in seen:
+                    seen.add(eng_style)
+                    result.append(eng_style)
+
         for m in lexicon.EYE_RE.finditer(src):
             color_zh = m.group(1)
-            color_en = lexicon.COLOR_MAP.get(color_zh, color_zh)
-            tag = f"{color_en} eyes"
-            if tag not in seen:
-                seen.add(tag); result.append(tag)
+            eng_color = lexicon.COLOR_MAP.get(color_zh)
+            if eng_color:
+                tag = f"{eng_color} eyes"
+                if tag not in seen:
+                    seen.add(tag)
+                    result.append(tag)
         return result
 
-    if anchor_source:
-        anchors = _scan(anchor_source)
-        if anchors:
-            return anchors
-    return _scan(text)
+    res = _scan(text)
+    if not res and anchor_source:
+        res = _scan(anchor_source)
+    return res
 
 
-def _remove_conflicting_tags(tags: list[str], anchors: list[str]) -> list[str]:
-    """Remove LLM-generated tags that conflict with our authoritative anchors."""
-    has_hair_color = any(a in lexicon.HAIR_COLORS for a in anchors)
-    has_hair_length = any(a in lexicon.HAIR_LENGTHS for a in anchors)
-    has_eye_color  = any(a in lexicon.EYE_COLORS for a in anchors)
+def _clean_clothing_hallucinations(tags: list[str], text_to_check: str) -> list[str]:
+    """
+    防幻覺過濾器：偵測是否有休閒/背心類關鍵字，若是，自動拔除腦補的正式西裝標籤。
+    """
+    lower_src = text_to_check.lower()
+    casual_signals = ["背心", "連帽", "休閒", "vest", "hoodie", "tank top", "casual", "sleeveless"]
     
-    if not has_hair_color and not has_hair_length and not has_eye_color:
-        return tags
+    if any(sig in lower_src for sig in casual_signals):
+        formal_banned = {
+            "formal suit", "suit", "jacket", "tie", "necktie", "business suit", 
+            "professional attire", "formal background", "formal attire", 
+            "formal setting", "office", "tuxedo", "blazer", "suited"
+        }
+        return [t for t in tags if t.strip().lower().strip("()") not in formal_banned]
+    return tags
 
-    result = []
-    anchor_set = set(anchors)
-    for t in tags:
-        tl = t.lower()
-        # Conflict if our anchors have hair color and LLM outputs a different hair color
-        if has_hair_color and tl in lexicon.HAIR_COLORS and tl not in anchor_set:
-            continue
-        # Conflict if our anchors have hair length and LLM outputs a different hair length
-        if has_hair_length and tl in lexicon.HAIR_LENGTHS and tl not in anchor_set:
-            continue
-        # Conflict if our anchors have eye color and LLM outputs a different eye color
-        if has_eye_color and tl in lexicon.EYE_COLORS and tl not in anchor_set:
-            continue
-        result.append(t)
-    return result
-
-
-def _reorder_tags(tags: list[str], anchors: list[str]) -> str:
-    """
-    Sort tags into logical categories and apply weighting to anchors.
-    Order: Subject > Anchors > Others > Meta
-    """
-    subject_tags = []
-    anchor_tags = []
-    meta_tags = []
-    other_tags = []
-
-    # Weighted anchors (e.g. (short hair:1.1))
-    weighted_anchors = [f"({a}:1.1)" for a in anchors]
-    anchor_set = set(anchors)
-
-    for t in tags:
-        tl = t.lower()
-        if tl in anchor_set:
-            continue  # Already handled by weighted_anchors
-        
-        if tl in lexicon.TAG_CATEGORIES["subject"]:
-            subject_tags.append(t)
-        elif tl in lexicon.TAG_CATEGORIES["meta"]:
-            meta_tags.append(t)
-        else:
-            other_tags.append(t)
-
-    # Combine in specific order
-    final_list = subject_tags + weighted_anchors + other_tags + meta_tags
-    return ", ".join(final_list)
-
-
-# ── Main compile ───────────────────────────────────────────────────────────────
 
 def compile(
     text: str,
@@ -135,40 +90,33 @@ def compile(
     negative_override: str | None = None,
 ) -> tuple[str, str]:
     """
-    Compile Chinese text into (positive_prompt, negative_prompt) for the given style.
-
-    anchor_text: authoritative Chinese text for color anchor extraction (e.g. core_traits).
-                 When set, color anchors are derived from this text rather than the full
-                 compiled input, so the author's explicit colors always win over vision-extract.
-
-    quality_prefix_override / negative_override: when non-empty, replace the style preset.
-        Pass None (or "") to keep the style's built-in value.
-
-    Returns:
-        (positive, negative) — both ready to inject into ComfyUI workflow
+    Main entrypoint to compile Chinese creative text into fine-tuned SD prompts.
     """
     config = STYLE_CONFIG[style]
 
-    # 1. LLM 翻譯
-    llm_prompt = config.llm_template.format(prompt=text)
-    raw = ollama_client.generate(
-        llm_prompt,
+    # 1. 構建 Prompt 並呼叫 LLM
+    prompt = config.llm_template.format(prompt=text)
+    raw_response = ollama_client.generate(
+        prompt,
         model=model,
-        options={
-            "temperature": 0.3,
-            "num_predict": 250,
-            "stop": ["\nInput:", "\n\nInput"],
-        },
+        options={"num_predict": 250, "temperature": 0.3}
     )
 
-    # 2. 提取 LLM 實際回答
-    extracted = _extract_output(raw)
-
-    # 3. Sanitizer — 移除 banned_tags
+    # 2. 擷取輸出與標籤清洗
+    extracted = _extract_output(raw_response)
     cleaned_tags = _sanitize_to_list(extracted, config.banned_tags)
 
-    # 3.5 Processing (tag-based styles only; Flux uses natural language)
+    # 3. 處理防幻覺與特徵修正 (非自然語言的 tag 類模型才執行)
     if style is not PromptStyle.FLUX:
+        # 【新增】服飾防幻覺過濾
+        combined_text = f"{text} {anchor_text} {extracted}"
+        cleaned_tags = _clean_clothing_hallucinations(cleaned_tags, combined_text)
+        
+        # 【新增】情緒/微笑強制召回機制
+        if any(kw in combined_text for kw in ["笑", "微笑", "高興", "smile", "happy"]):
+            if "smile" not in [t.lower().strip() for t in cleaned_tags]:
+                cleaned_tags.insert(0, "smile")
+
         # Extract authoritative anchors
         anchors = _extract_color_anchors(text, anchor_source=anchor_text)
         
@@ -180,29 +128,83 @@ def compile(
     else:
         final_body = extracted
 
-    # 4. 拼接 quality_prefix（art_style 覆寫優先）
+    # 4. 拼接 quality_prefix
     prefix = quality_prefix_override if quality_prefix_override else config.quality_prefix
     positive = f"{prefix}, {final_body}" if prefix and final_body else (prefix or final_body)
 
-    # 5. Negative preset（art_style 覆寫優先）
+    # 5. Negative preset
     negative = negative_override if negative_override else config.negative
 
     return positive.strip(", "), negative
 
 
 def _extract_output(raw: str) -> str:
-    """
-    如果 LLM 把 few-shot 範例一起輸出（例如包含 'Output:' 字樣），
-    只取最後一個 'Output:' 之後的內容作為真正的答案。
-    """
     if "Output:" in raw:
         return raw.split("Output:")[-1].strip()
     return raw.strip()
 
 
-def _sanitize_to_list(prompt: str, banned: set[str]) -> list[str]:
-    """Remove banned tags and return a list of tags."""
-    tags = [t.strip() for t in prompt.split(",")]
-    if not banned:
-        return [t for t in tags if t]
-    return [t for t in tags if t and t.lower() not in banned]
+def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
+    raw_tags = re.split(r'[,\n#]', tag_string)
+    cleaned = []
+    seen = set()
+    for t in raw_tags:
+        t_clean = t.strip().strip('."\'')
+        if not t_clean:
+            continue
+        normalized = t_clean.lower().strip("()")
+        if normalized in banned_set or normalized in seen:
+            continue
+        seen.add(normalized)
+        cleaned.append(t_clean)
+    return cleaned
+
+
+def _remove_conflicting_tags(tags: list[str], anchors: list[str]) -> list[str]:
+    anchor_colors = set()
+    for a in anchors:
+        parts = a.split()
+        if len(parts) == 2 and parts[1] in ("hair", "eyes"):
+            anchor_colors.add((parts[0], parts[1]))
+
+    if not anchor_colors:
+        return tags
+
+    filtered = []
+    for tag in tags:
+        tag_lower = tag.lower()
+        conflict = False
+        for c_eng, category in anchor_colors:
+            if category in tag_lower and c_eng not in tag_lower:
+                conflict = True
+                break
+        if not conflict:
+            filtered.append(tag)
+    return filtered
+
+
+def _reorder_tags(tags: list[str], anchors: list[str]) -> str:
+    subjects = []
+    clothing = []
+    meta = []
+    others = []
+
+    anchor_set = {a.lower() for a in anchors}
+    clothing_keywords = ["suit", "vest", "shirt", "pants", "dress", "skirt", "jacket", "hoodie", "clothes", "attire"]
+
+    for tag in tags:
+        tl = tag.lower()
+        if tl in anchor_set:
+            continue
+        if any(kw in tl for kw in ["1girl", "1boy", "solo", "woman", "man", "character"]):
+            subjects.append(tag)
+        elif any(kw in tl for kw in clothing_keywords):
+            clothing.append(tag)
+        elif any(kw in tl for kw in ["background", "monochrome", "lineart", "clean lines", "shading"]):
+            meta.append(tag)
+        else:
+            others.append(tag)
+
+    weighted_anchors = [f"({a}:1.1)" for a in anchors]
+    final_list = subjects + weighted_anchors + clothing + others + meta
+    return ", ".join(final_list)

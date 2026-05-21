@@ -29,10 +29,7 @@ def list_art_styles(db: DbDep):
 
 @router.post("/art-styles", response_model=ArtStyleResponse, status_code=status.HTTP_201_CREATED)
 def create_art_style(data: ArtStyleCreate, db: DbDep):
-    style = ArtStyle(
-        **{k: (v if k != "loras" else [e.model_dump() for e in (v or [])])
-           for k, v in data.model_dump().items()}
-    )
+    style = ArtStyle(**data.model_dump())
     db.add(style)
     try:
         db.commit()
@@ -57,10 +54,7 @@ def update_art_style(style_id: int, data: ArtStyleUpdate, db: DbDep):
     if not style:
         raise HTTPException(status_code=404, detail="Art style not found")
     for field, value in data.model_dump(exclude_none=True).items():
-        if field == "loras":
-            setattr(style, field, [e.model_dump() for e in (value or [])])
-        else:
-            setattr(style, field, value)
+        setattr(style, field, value)
     try:
         db.commit()
     except IntegrityError:
