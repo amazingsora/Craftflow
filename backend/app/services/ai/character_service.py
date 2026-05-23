@@ -10,6 +10,7 @@ import json
 import re
 
 from app.services.ai import ollama_client
+from app.services.ai.prompt_loader import load_prompt
 
 
 def generate_summary(
@@ -31,32 +32,7 @@ def generate_summary(
         f"補充筆記：{notes}" if notes else None,
     ])) or "（無補充資料）"
 
-    prompt = f"""你是一位專業的角色設定整理師，正在為小說角色「{name}」建立角色檔案。
-
-以下是作者提供的原始筆記：
-{raw_notes}
-
-請將上述資料整理成一份結構清晰的角色設定檔，使用繁體中文，格式如下：
-
-## 角色概述
-（一段話總結這個角色的核心定位與魅力，50字以內）
-
-## 外貌與氣質
-（外貌特徵、穿著風格、整體氣質）
-
-## 性格特質
-（核心個性、優點、缺點或矛盾面）
-
-## 行為模式
-（面對事情的反應方式、習慣、癖好）
-
-## 說話方式
-（語氣、常用詞彙、說話特色）
-
-## 創作備注
-（對作者有用的額外提示、潛在故事線等）
-
-請只輸出格式化內容，不要加入任何前言或說明。"""
+    prompt = load_prompt("character/generate_summary", name=name, raw_notes=raw_notes)
 
     return ollama_client.generate(
         prompt, model=model,
@@ -73,29 +49,7 @@ def extract_from_text(
     Analyse chapter text and extract/suggest character profile fields.
     Returns a dict with keys matching the Character model fields.
     """
-    prompt = f"""[TASK]
-Analyze the provided chapter text and extract character profile information for "{character_name}".
-
-[OUTPUT FORMAT]
-Return ONLY a valid JSON object. No conversational filler, no markdown code blocks (```json).
-Strictly follow this JSON schema:
-{{
-  "core_traits": "personality traits observed (Traditional Chinese string or null)",
-  "behavior_rules": "how this character acts/reacts (Traditional Chinese string or null)",
-  "voice_style": "dialogue style and patterns (Traditional Chinese string or null)",
-  "notes": "other notable observations (Traditional Chinese string or null)",
-  "aliases": ["list of alternative names, nicknames, or titles mentioned"]
-}}
-
-[CONSTRAINTS]
-1. Content Language: Use Traditional Chinese (繁體中文) for all string values.
-2. Objectivity: Only include facts supported by the text. If no info exists for a field, use null.
-3. JSON Integrity: Ensure all quotes are escaped. Do not truncate the JSON.
-
-[CHAPTER TEXT]
-{chapter_text}
-
-[RESULT]"""
+    prompt = load_prompt("character/extract_from_text", character_name=character_name, chapter_text=chapter_text)
 
     raw = ollama_client.generate(prompt, model=model)
     return _parse_json_object(raw) or {}
@@ -117,12 +71,7 @@ def design_chat(
         if parts:
             profile_ctx = "Current profile:\n" + "\n".join(parts) + "\n\n"
 
-    prompt = f"""You are a creative writing assistant helping design a character for a novel.
-Character name: {character_name}
-{profile_ctx}Author's question: {question}
-
-Provide a helpful, specific, and creative answer in Traditional Chinese (繁體中文).
-Focus on the character design question. Keep it concise."""
+    prompt = load_prompt("character/design_chat", character_name=character_name, profile_ctx=profile_ctx, question=question)
 
     return ollama_client.generate(prompt, model=model)
 
@@ -136,23 +85,7 @@ def describe_portrait(
     Given an illustration/portrait, describe the character's visual appearance
     to be used as reference for the character profile.
     """
-    prompt = f"""[TASK]
-Analyze the provided illustration for the character "{character_name}" and create a structured visual profile.
-
-[OUTPUT FORMAT]
-Provide a detailed description in Traditional Chinese (繁體中文) using the following sections:
-
-1. **外貌特徵 (Physical Traits)**: 髮色、髮型、瞳色、膚色、五官特色。
-2. **身形體態 (Body & Posture)**: 體型描述、身高感、當前姿勢、給人的動態感。
-3. **服裝細節 (Outfit & Accessories)**: 衣著層次、材質感、配色方案、特殊配件或武器。
-4. **視覺氣質 (Atmosphere)**: 整體氣氛、光影表現、性格映射到視覺上的感覺。
-
-[CONSTRAINTS]
-- Be precise: Instead of "long hair", use "silver waist-length straight hair" if applicable.
-- Semantic Focus: Focus on details that define the character's identity.
-- Language: Use professional Traditional Chinese creative writing vocabulary.
-
-[RESULT]"""
+    prompt = load_prompt("character/describe_portrait", character_name=character_name)
 
     return ollama_client.analyze_image(image_path, prompt, model=model)
 
@@ -162,23 +95,7 @@ def describe_portrait_bytes(
     character_name: str,
     model: str = ollama_client.DEFAULT_VISION_MODEL,
 ) -> str:
-    prompt = f"""[TASK]
-Analyze the provided illustration for the character "{character_name}" and create a structured visual profile.
-
-[OUTPUT FORMAT]
-Provide a detailed description in Traditional Chinese (繁體中文) using the following sections:
-
-1. **外貌特徵 (Physical Traits)**: 髮色、髮型、瞳色、膚色、五官特色。
-2. **身形體態 (Body & Posture)**: 體型描述、身高感、當前姿勢、給人的動態感。
-3. **服裝細節 (Outfit & Accessories)**: 衣著層次、材質感、配色方案、特殊配件或武器。
-4. **視覺氣質 (Atmosphere)**: 整體氣氛、光影表現、性格映射到視覺上的感覺。
-
-[CONSTRAINTS]
-- Be precise: Instead of "long hair", use "silver waist-length straight hair" if applicable.
-- Semantic Focus: Focus on details that define the character's identity.
-- Language: Use professional Traditional Chinese creative writing vocabulary.
-
-[RESULT]"""
+    prompt = load_prompt("character/describe_portrait", character_name=character_name)
 
     return ollama_client.analyze_image_bytes(image_bytes, prompt, model=model)
 

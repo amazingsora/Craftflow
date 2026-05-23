@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.services.ai import ollama_client
+from app.services.ai.prompt_loader import load_prompt
 
 
 @dataclass
@@ -134,35 +135,7 @@ def _semantic_scan_paragraph(
         f"- {c.name}: behavior_rules={c.behavior_rules!r}, voice_style={c.voice_style!r}"
         for c in characters
     )
-    prompt = f"""[TASK]
-You are a professional fiction consistency checker. Compare the provided character profiles with the chapter paragraph to detect contradictions.
-
-[CHARACTER SETTINGS]
-{char_desc}
-
-[PARAGRAPH TO CHECK]
-{paragraph}
-
-[OUTPUT FORMAT]
-Return ONLY a valid JSON array of issues. If no contradictions are found, return exactly []. 
-Do not include markdown code blocks (```json) or conversational text.
-
-Each issue object must follow this schema:
-{{
-  "type": "character_behavior" | "character_voice",
-  "severity": "high" | "medium" | "low",
-  "target": "Exact name of the character",
-  "reasoning": "Briefly explain the internal logic of why this is a violation in Traditional Chinese",
-  "description": "Short summary of the issue in Traditional Chinese",
-  "evidence": "Direct quote from the paragraph showing the violation"
-}}
-
-[CONSTRAINTS]
-1. Severity Scale: 'high' for direct rule violation, 'medium' for subtle OOC (Out of Character), 'low' for minor style drift.
-2. Accuracy: Do not hallucinate issues. If behavior matches the profile, do not report it.
-3. Language: reasoning and description must be in Traditional Chinese.
-
-[RESULT]"""
+    prompt = load_prompt("consistency/check", char_desc=char_desc, paragraph=paragraph)
 
     raw = ollama_client.generate(prompt, model=model)
     if raw.startswith("["):

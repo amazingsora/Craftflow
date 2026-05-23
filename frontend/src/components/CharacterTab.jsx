@@ -980,17 +980,17 @@ function _initVariant(v = {}) {
     behavior: v.behavior_rules ?? '', voice: v.voice_style ?? '',
     notes: v.notes ?? '', aiPrompt: v.ai_prompt ?? '',
     aiPromptEnabled: !!(v.ai_prompt),
-    age: v.age != null ? String(v.age) : '', birthday: v.birthday ?? '',
+    age: v.age != null ? String(v.age) : '', height: v.height != null ? String(v.height) : '', birthday: v.birthday ?? '',
     gender: v.gender ?? null, aiSummary: v.ai_summary ?? null,
     conceptImages: v.concept_images ?? [], aiImages: v.ai_generated_images ?? [],
     pendingQueue: [], generating: false, savingGen: false, savingFields: false,
     summarizing: false, uploadingConcept: false,
     deletingConceptIdx: null, deletingAiIdx: null,
-    lastDebugPrompt: null, lastRawDesc: null, lastFlatDraft: null, lastTimings: null, showDebugPrompt: false,
+    lastDebugPrompt: null, lastRawDesc: null, lastFlatDraft: null, lastTimings: null, lastAiPromptCompiled: null, showDebugPrompt: false,
   }
 }
 
-function CharacterDetailView({ character: initChar, project, allFactions, onBack, onDeleted }) {
+function CharacterDetailView({ character: initChar, project, allFactions, onBack, onDeleted, onAddHistory }) {
   const [char, setChar] = useState(initChar)
   const [charName, setCharName] = useState(initChar.name)
   const [color, setColor] = useState(initChar.color ?? '')
@@ -999,6 +999,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   const [behavior, setBehavior] = useState(initChar.behavior_rules ?? '')
   const [voice, setVoice] = useState(initChar.voice_style ?? '')
   const [age, setAge] = useState(initChar.age ?? '')
+  const [height, setHeight] = useState(initChar.height ?? '')
   const [birthday, setBirthday] = useState(initChar.birthday ?? '')
   const [gender, setGender] = useState(initChar.gender ?? null)
   const [aiPrompt, setAiPrompt] = useState(initChar.ai_prompt ?? '')
@@ -1025,6 +1026,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   const [lastDebugPrompt, setLastDebugPrompt] = useState(null)
   const [lastRawDesc, setLastRawDesc] = useState(null)
   const [lastFlatDraft, setLastFlatDraft] = useState(null)
+  const [lastAiPromptCompiled, setLastAiPromptCompiled] = useState(null)
   const [lightboxSrc, setLightboxSrc] = useState(null)
   const [lastTimings, setLastTimings] = useState(null)
 
@@ -1070,6 +1072,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           voice_style: voice || null,
           notes: notes || null,
           age: age !== '' ? parseInt(age) : null,
+          height: height !== '' ? parseInt(height) : null,
           birthday: birthday.trim() || null,
           gender: gender || null,
           ai_prompt: aiPromptEnabled ? (aiPrompt.trim() || null) : null,
@@ -1144,8 +1147,16 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         catch (e) { /* silent */ }
       }
 
+      const b64AiCompiled = resp.headers.get('X-AI-Prompt-Compiled')
+      if (b64AiCompiled) {
+        try { setLastAiPromptCompiled(decodeURIComponent(escape(atob(b64AiCompiled)))) }
+        catch (e) { /* silent */ }
+      }
+
       const blob = await resp.blob()
-      setPendingQueue([{ blob, url: URL.createObjectURL(blob), label: '全身人設圖' }])
+      const url = URL.createObjectURL(blob)
+      setPendingQueue([{ blob, url, label: '全身人設圖' }])
+      onAddHistory?.({ type: 'character', url, filename: `${char.name}_design_${Date.now()}.png`, label: `${char.name} 人設圖` })
     } catch (e) { setError(e.message) }
     finally { setGenerating(false) }
   }
@@ -1247,6 +1258,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           voice_style: v.voice || null,
           notes: v.notes || null,
           age: v.age !== '' ? parseInt(v.age) : null,
+          height: v.height !== '' ? parseInt(v.height) : null,
           birthday: v.birthday.trim() || null,
           gender: v.gender || null,
           ai_prompt: v.aiPromptEnabled ? (v.aiPrompt.trim() || null) : null,
@@ -1316,15 +1328,21 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
       let timings = null
       const b64Timings = resp.headers.get('X-Timings')
       if (b64Timings) { try { timings = JSON.parse(decodeURIComponent(escape(atob(b64Timings)))) } catch (e) { /* silent */ } }
+      let aiPromptCompiled = null
+      const b64AiCompiled = resp.headers.get('X-AI-Prompt-Compiled')
+      if (b64AiCompiled) { try { aiPromptCompiled = decodeURIComponent(escape(atob(b64AiCompiled))) } catch (e) { /* silent */ } }
       const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
       setV(slot, {
         generating: false,
         lastDebugPrompt: debugPrompt,
         lastRawDesc: rawDesc,
         lastFlatDraft: flatDraft,
         lastTimings: timings,
-        pendingQueue: [{ blob, url: URL.createObjectURL(blob), label: '全身人設圖' }],
+        lastAiPromptCompiled: aiPromptCompiled,
+        pendingQueue: [{ blob, url, label: '全身人設圖' }],
       })
+      onAddHistory?.({ type: 'character', url, filename: `${char.name}_v${slot}_design_${Date.now()}.png`, label: `${char.name} 人設圖（Tab ${slot}）` })
     } catch (e) { setError(e.message); setV(slot, { generating: false }) }
   }
 
@@ -1605,6 +1623,10 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>年齡</label>
               <input type="number" style={S.input} value={age} onChange={e => setAge(e.target.value)} placeholder="例如：18" min="0" max="9999" />
             </div>
+            <div style={S.fieldGroup}>
+              <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>身高 (cm)</label>
+              <input type="number" style={S.input} value={height} onChange={e => setHeight(e.target.value)} placeholder="例如：162" min="50" max="250" />
+            </div>
             <div style={{ ...S.fieldGroup, flex: 2 }}>
               <label style={S.label}>生日</label>
               <input style={S.input} value={birthday} onChange={e => setBirthday(e.target.value)} placeholder="例如：5月16日 或 1998-05-16" />
@@ -1734,6 +1756,20 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                     <div style={{ fontSize: 11, color: '#7ef7c8', background: '#0e1e2a', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid #1e4a3a', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {lastRawDesc ?? '—'}
                     </div>
+                    {lastAiPromptCompiled !== null && (
+                      <>
+                        <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
+                          color: lastAiPromptCompiled === '[compilation_failed]' ? '#f07070' : '#f7c87e' }}>
+                          AI 提示詞編譯結果{lastAiPromptCompiled === '[compilation_failed]' ? ' ⚠ 失敗' : '（置於 prompt 首位）'}
+                        </div>
+                        <div style={{ fontSize: 11, padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, fontFamily: 'monospace',
+                          color: lastAiPromptCompiled === '[compilation_failed]' ? '#f07070' : '#f7c87e',
+                          background: lastAiPromptCompiled === '[compilation_failed]' ? '#1e0d0d' : '#1e1a0a',
+                          border: `1px solid ${lastAiPromptCompiled === '[compilation_failed]' ? '#5c2020' : '#6a5a1e'}` }}>
+                          {lastAiPromptCompiled === '[compilation_failed]' ? 'AI 提示詞未套用（Ollama 翻譯錯誤）' : lastAiPromptCompiled}
+                        </div>
+                      </>
+                    )}
                     <div style={{ fontSize: 10, color: '#b09ef0', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
                     <div style={{ fontSize: 11, color: '#b09ef0', background: '#1e1a3a', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid #3a2d6a', fontFamily: 'monospace' }}>
                       {lastDebugPrompt}
@@ -1909,6 +1945,10 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>年齡</label>
               <input type="number" style={S.input} value={vState.age} onChange={e => setV(activeTab, { age: e.target.value })} placeholder="例如：18" min="0" max="9999" />
             </div>
+            <div style={S.fieldGroup}>
+              <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>身高 (cm)</label>
+              <input type="number" style={S.input} value={vState.height} onChange={e => setV(activeTab, { height: e.target.value })} placeholder="例如：162" min="50" max="250" />
+            </div>
             <div style={{ ...S.fieldGroup, flex: 2 }}>
               <label style={S.label}>生日</label>
               <input style={S.input} value={vState.birthday} onChange={e => setV(activeTab, { birthday: e.target.value })} placeholder="例如：5月16日" />
@@ -1973,6 +2013,20 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                     <div style={{ fontSize: 11, color: '#7ef7c8', background: '#0e1e2a', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid #1e4a3a', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {vState.lastRawDesc ?? '—'}
                     </div>
+                    {vState.lastAiPromptCompiled !== null && (
+                      <>
+                        <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
+                          color: vState.lastAiPromptCompiled === '[compilation_failed]' ? '#f07070' : '#f7c87e' }}>
+                          AI 提示詞編譯結果{vState.lastAiPromptCompiled === '[compilation_failed]' ? ' ⚠ 失敗' : '（置於 prompt 首位）'}
+                        </div>
+                        <div style={{ fontSize: 11, padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, fontFamily: 'monospace',
+                          color: vState.lastAiPromptCompiled === '[compilation_failed]' ? '#f07070' : '#f7c87e',
+                          background: vState.lastAiPromptCompiled === '[compilation_failed]' ? '#1e0d0d' : '#1e1a0a',
+                          border: `1px solid ${vState.lastAiPromptCompiled === '[compilation_failed]' ? '#5c2020' : '#6a5a1e'}` }}>
+                          {vState.lastAiPromptCompiled === '[compilation_failed]' ? 'AI 提示詞未套用（Ollama 翻譯錯誤）' : vState.lastAiPromptCompiled}
+                        </div>
+                      </>
+                    )}
                     <div style={{ fontSize: 10, color: '#b09ef0', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
                     <div style={{ fontSize: 11, color: '#b09ef0', background: '#1e1a3a', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid #3a2d6a', fontFamily: 'monospace' }}>{vState.lastDebugPrompt}</div>
                   </div>
@@ -1990,7 +2044,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function CharacterTab() {
+export default function CharacterTab({ onAddHistory }) {
   // view: 'projects' | 'project_create' | 'char_list' | 'faction_detail' | 'char_create' | 'char_detail'
   const [view, setView] = useState('projects')
   const [selectedProject, setSelectedProject] = useState(null)
@@ -2044,6 +2098,7 @@ export default function CharacterTab() {
         allFactions={allFactions}
         onBack={() => returnTo === 'faction_detail' ? goFactionDetail() : goCharList()}
         onDeleted={goCharList}
+        onAddHistory={onAddHistory}
       />
     )
   }

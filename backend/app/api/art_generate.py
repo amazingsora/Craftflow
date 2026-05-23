@@ -35,7 +35,6 @@ from app.models.art_style import ArtStyle
 from app.models.character import Character
 from app.services import comfyui_client
 from app.services.ai import art_service, ollama_client as _oc
-from app.services.ai.ollama_client import DEFAULT_TEXT_MODEL
 from app.services.ai.prompt_engine import compile as compile_prompt, PromptStyle
 from app.services.ai.prompt_engine.styles import STYLE_CONFIG
 from app.services.ai.vram_manager import guardian
@@ -220,7 +219,7 @@ def _run(workflow: dict) -> bytes:
 
 class CompilePromptRequest(BaseModel):
     prompt: str
-    model: str = DEFAULT_TEXT_MODEL
+    model: Optional[str] = None
     art_style_id: Optional[int] = None
 
 
@@ -238,7 +237,10 @@ async def compile_prompt_endpoint(req: CompilePromptRequest, db: Session = Depen
     art_style = db.get(ArtStyle, req.art_style_id) if req.art_style_id else None
     style = _resolve_style(art_style)
     await guardian.request_focus("ollama")
-    positive, negative = compile_prompt(req.prompt, style=style, model=req.model, **_compile_overrides(art_style))
+    try:
+        positive, negative = compile_prompt(req.prompt, style=style, model=req.model or state.get_text_model(), **_compile_overrides(art_style))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=f"Ollama 文字模型失敗：{e}")
     extra = _extra_tags(art_style)
     if extra:
         positive = f"{positive}, {extra}"
@@ -613,6 +615,38 @@ def _age_gender_tag(gender: str | None, age: int | None) -> str:
     return ""
 
 
+def _age_body_tags(age: int | None) -> str:
+    """Convert character age to SD body proportion tags."""
+    if age is None:
+        return ""
+    if age <= 6:
+        return "toddler, very young, chubby cheeks, round face"
+    if age <= 11:
+        return "young, childlike features, round face, flat chest, small hands"
+    if age <= 14:
+        return "young, youthful, flat chest"
+    if age <= 17:
+        return "teenage, youthful"
+    return ""
+
+
+def _height_body_tags(height: int | None) -> str:
+    """Convert character height (cm) to SD stature tags."""
+    if height is None:
+        return ""
+    if height < 130:
+        return "very short stature, tiny, small figure"
+    if height < 150:
+        return "short stature, petite"
+    if height < 160:
+        return "petite"
+    if height < 170:
+        return ""
+    if height < 180:
+        return "tall, long legs"
+    return "very tall, long legs"
+
+
 def _visual_extract_prompt(n: int) -> str:
     """Return a vision prompt tuned for single or multi-image analysis."""
     ignore_bg = (
@@ -759,20 +793,31 @@ async def generate_character_design(
     style = _resolve_style(art_style)
     _overrides = _compile_overrides(art_style)
     await guardian.request_focus("ollama")
-    positive, negative = compile_prompt(
-        raw_desc, style=style, model=DEFAULT_TEXT_MODEL,
-        anchor_text=_color_anchor, **_overrides,
-    )
+    try:
+        positive, negative = compile_prompt(
+            raw_desc, style=style, model=state.get_text_model(),
+            anchor_text=_color_anchor, **_overrides,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=f"Ollama 文字模型失敗，請確認 {state.get_text_model()} 已安裝：{e}")
     timings["compile_prompt"] = round(time.perf_counter() - t0, 1)
 
     # ── Compile ai_prompt separately (placed first → higher SD attention weight) ──
     extra_prefix = ""
+    _ai_prompt_compiled = ""
     if character.ai_prompt and character.ai_prompt.strip():
         t0 = time.perf_counter()
         await guardian.request_focus("ollama")
-        extra_compiled, _ = compile_prompt(
-            character.ai_prompt.strip(), style=style, model=DEFAULT_TEXT_MODEL, **_overrides,
-        )
+        try:
+            # quality_prefix_override="" prevents duplicate quality tags in final prompt
+            _ai_overrides = {**_overrides, "quality_prefix_override": ""}
+            extra_compiled, _ = compile_prompt(
+                character.ai_prompt.strip(), style=style, model=state.get_text_model(), **_ai_overrides,
+            )
+            _ai_prompt_compiled = extra_compiled
+        except RuntimeError:
+            extra_compiled = ""
+            _ai_prompt_compiled = "[compilation_failed]"
         timings["compile_ai_prompt"] = round(time.perf_counter() - t0, 1)
         if extra_compiled:
             extra_prefix = extra_compiled + ", "
@@ -799,6 +844,12 @@ async def generate_character_design(
     gender_tag = _age_gender_tag(character.gender, character.age)
     gender_prefix = gender_tag + ", " if gender_tag else ""
 
+    # Age + height body proportion tags (placed right after gender anchor)
+    _age_tags = _age_body_tags(character.age)
+    _ht_tags = _height_body_tags(getattr(character, 'height', None))
+    _body_parts = [t for t in [_age_tags, _ht_tags] if t]
+    body_prefix = ", ".join(_body_parts) + ", " if _body_parts else ""
+
     # Gender-specific prompt reinforcement
     is_male = gender_tag.startswith(("1boy", "1man"))
     is_female = gender_tag.startswith(("1girl", "1woman"))
@@ -818,7 +869,7 @@ async def generate_character_design(
     style_extra_str = f", {style_extra}" if style_extra else ""
 
     # ai_prompt compiled tags lead the prompt for maximum enforcement
-    final_positive = gender_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
+    final_positive = gender_prefix + body_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
 
     extra_neg = "detailed background, complex background, scenery, landscape, buildings, environment"
     final_negative = f"{negative}, {extra_neg}{gender_neg_extra}" if negative else f"{extra_neg}{gender_neg_extra}"
@@ -860,6 +911,7 @@ async def generate_character_design(
             "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
+            "X-AI-Prompt-Compiled": base64.b64encode(_ai_prompt_compiled.encode()).decode() if _ai_prompt_compiled else "",
         },
     )
 
@@ -960,17 +1012,27 @@ async def generate_variant_design(
     v_age = v.get("age")
     v_ai_prompt = v.get("ai_prompt")
 
-    positive, negative = compile_prompt(
-        raw_desc, style=style, model=DEFAULT_TEXT_MODEL,
-        anchor_text=_color_anchor, **_overrides,
-    )
+    try:
+        positive, negative = compile_prompt(
+            raw_desc, style=style, model=state.get_text_model(),
+            anchor_text=_color_anchor, **_overrides,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=f"Ollama 文字模型失敗，請確認 {state.get_text_model()} 已安裝：{e}")
     timings["compile_prompt"] = round(time.perf_counter() - t0, 1)
 
     extra_prefix = ""
+    _ai_prompt_compiled = ""
     if v_ai_prompt and v_ai_prompt.strip():
         t0 = time.perf_counter()
         await guardian.request_focus("ollama")
-        extra_compiled, _ = compile_prompt(v_ai_prompt.strip(), style=style, model=DEFAULT_TEXT_MODEL, **_overrides)
+        try:
+            _ai_overrides = {**_overrides, "quality_prefix_override": ""}
+            extra_compiled, _ = compile_prompt(v_ai_prompt.strip(), style=style, model=state.get_text_model(), **_ai_overrides)
+            _ai_prompt_compiled = extra_compiled
+        except RuntimeError:
+            extra_compiled = ""
+            _ai_prompt_compiled = "[compilation_failed]"
         timings["compile_ai_prompt"] = round(time.perf_counter() - t0, 1)
         if extra_compiled:
             extra_prefix = extra_compiled + ", "
@@ -1002,10 +1064,16 @@ async def generate_variant_design(
         ", male face, masculine features" if is_female else ""
     )
 
+    # Age + height body proportion tags
+    _age_tags = _age_body_tags(v_age)
+    _ht_tags = _height_body_tags(v.get("height"))
+    _body_parts = [t for t in [_age_tags, _ht_tags] if t]
+    body_prefix = ", ".join(_body_parts) + ", " if _body_parts else ""
+
     style_extra = _extra_tags(art_style)
     style_extra_str = f", {style_extra}" if style_extra else ""
 
-    final_positive = gender_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
+    final_positive = gender_prefix + body_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
     extra_neg = "detailed background, complex background, scenery, landscape, buildings, environment"
     final_negative = f"{negative}, {extra_neg}{gender_neg_extra}" if negative else f"{extra_neg}{gender_neg_extra}"
 
@@ -1046,6 +1114,7 @@ async def generate_variant_design(
             "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
+            "X-AI-Prompt-Compiled": base64.b64encode(_ai_prompt_compiled.encode()).decode() if _ai_prompt_compiled else "",
         },
     )
 

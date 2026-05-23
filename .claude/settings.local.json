@@ -3,7 +3,12 @@
     "allow": [
       "Bash(Get-ChildItem -Path \"f:\\\\wk\\\\Craftflow\" -Depth 1)",
       "Bash(Select-Object -Property Name, PSIsContainer)",
-      "Bash(dir \"F:\\\\wk\\\\ComfyUI_portable\\\\ComfyUI\\\\user\\\\default\\\\workflows\")"
+      "Bash(dir \"F:\\\\wk\\\\ComfyUI_portable\\\\ComfyUI\\\\user\\\\default\\\\workflows\")",
+      "Bash(xargs grep -l \"history\\\\|generation_history\\\\|GenerationHistory\")",
+      "Bash(mkdir -p \"f:/wk/Craftflow/backend/app/prompts/art\" \"f:/wk/Craftflow/backend/app/prompts/character\" \"f:/wk/Craftflow/backend/app/prompts/consistency\" \"f:/wk/Craftflow/backend/app/prompts/rewrite\")"
+    ],
+    "additionalDirectories": [
+      "f:\\wk\\Craftflow\\backend\\app\\prompts"
     ]
   }
 }
