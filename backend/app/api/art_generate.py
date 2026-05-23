@@ -130,6 +130,9 @@ def _inject_loras(wf: dict, loras: list) -> None:
         if ct == "KSampler":
             if isinstance(inputs.get("model"), list) and inputs["model"][0] == ckpt_id:
                 inputs["model"] = [prev_id, 0]
+        elif ct == "IPAdapterAdvanced":
+            if isinstance(inputs.get("model"), list) and inputs["model"][0] == ckpt_id:
+                inputs["model"] = [prev_id, 0]
         elif ct == "CLIPTextEncode":
             if isinstance(inputs.get("clip"), list) and inputs["clip"][0] == ckpt_id:
                 inputs["clip"] = [prev_id, 1]
@@ -694,6 +697,8 @@ async def generate_character_design(
     character_id: int,
     expression: Optional[str] = None,  # None=full body; key from _EXPRESSION_MAP = bust shot
     art_style_id: Optional[int] = None,
+    use_ai_prompt: bool = True,
+    use_outfit: bool = True,
     db: Session = Depends(get_db),
 ):
     """
@@ -735,6 +740,8 @@ async def generate_character_design(
     if not concept_imgs and character.portrait_path:
         concept_imgs = [character.portrait_path]
 
+    _ipa_ref_bytes: bytes | None = None  # first non-flat concept image for IP-Adapter
+
     if concept_imgs:
         # Load all available concept images (up to 3) for multi-image analysis
         valid_images: list[bytes] = []
@@ -749,6 +756,13 @@ async def generate_character_design(
         # Detect flat-color drafts before vision analysis
         all_flat = all(_is_flat_color_draft(img) for img in valid_images)
         logger.info("[prompt-log] concept images flat_draft=%s (%d imgs)", all_flat, len(valid_images))
+
+        # Pick first non-flat image as IP-Adapter visual anchor
+        if not all_flat:
+            for _img in valid_images:
+                if not _is_flat_color_draft(_img):
+                    _ipa_ref_bytes = _img
+                    break
 
         if valid_images:
             t0 = time.perf_counter()
@@ -765,6 +779,9 @@ async def generate_character_design(
                 parts.append(f"{label}：{visual}")
     else:
         all_flat = True  # no images → treat as flat, use core_traits for anchors
+
+    if use_outfit and getattr(character, 'outfit', None):
+        parts.append(f"服裝設定：{character.outfit}")
 
     if character.core_traits:
         parts.append(f"外貌與個性（優先採用）：{character.core_traits}")
@@ -805,7 +822,7 @@ async def generate_character_design(
     # ── Compile ai_prompt separately (placed first → higher SD attention weight) ──
     extra_prefix = ""
     _ai_prompt_compiled = ""
-    if character.ai_prompt and character.ai_prompt.strip():
+    if use_ai_prompt and character.ai_prompt and character.ai_prompt.strip():
         t0 = time.perf_counter()
         await guardian.request_focus("ollama")
         try:
@@ -876,7 +893,13 @@ async def generate_character_design(
 
     # ── Generate ──────────────────────────────────────────────────────────
     seed = random.randint(0, 2**31 - 1)
-    wf = _load_workflow("text_to_image.json")
+    ipa_used = False
+    if _ipa_ref_bytes is not None:
+        uploaded_ref = comfyui_client.upload_image_bytes(_ipa_ref_bytes, "char_concept_ref.png")
+        wf = _load_workflow("ipadapter_txt2img.json")
+        ipa_used = True
+    else:
+        wf = _load_workflow("text_to_image.json")
     _inject_loras(wf, art_style.loras if art_style else [])
     for node in wf.values():
         if not isinstance(node, dict):
@@ -894,6 +917,8 @@ async def generate_character_design(
         elif ct == "KSampler":
             inputs["seed"] = seed
             inputs["steps"] = steps
+        elif ct == "LoadImage" and ipa_used:
+            inputs["image"] = uploaded_ref
 
     t0 = time.perf_counter()
     await guardian.request_focus("comfyui")
@@ -908,6 +933,7 @@ async def generate_character_design(
             "X-Seed": str(seed),
             "X-Style": style.value,
             "X-Flat-Draft": "1" if all_flat else "0",
+            "X-IPA-Used": "1" if ipa_used else "0",
             "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
@@ -924,6 +950,8 @@ async def generate_variant_design(
     slot: int,
     expression: Optional[str] = None,
     art_style_id: Optional[int] = None,
+    use_ai_prompt: bool = True,
+    use_outfit: bool = True,
     db: Session = Depends(get_db),
 ):
     """Generate a design sheet using the variant's data instead of the main character fields."""
@@ -960,6 +988,7 @@ async def generate_variant_design(
 
     concept_imgs = list(v.get("concept_images") or [])
     all_flat = True  # default: no images → use core_traits anchors
+    _ipa_ref_bytes: bytes | None = None  # first non-flat concept image for IP-Adapter
     if concept_imgs:
         valid_images: list[bytes] = []
         for img_filename in concept_imgs[:3]:
@@ -972,6 +1001,11 @@ async def generate_variant_design(
         if valid_images:
             all_flat = all(_is_flat_color_draft(img) for img in valid_images)
             logger.info("[prompt-log] variant concept images flat_draft=%s (%d imgs)", all_flat, len(valid_images))
+            if not all_flat:
+                for _img in valid_images:
+                    if not _is_flat_color_draft(_img):
+                        _ipa_ref_bytes = _img
+                        break
             t0 = time.perf_counter()
             await guardian.request_focus("ollama")
             prompt_txt = _visual_extract_prompt(len(valid_images))
@@ -983,6 +1017,10 @@ async def generate_variant_design(
             if visual and not visual.startswith("["):
                 label = "視覺參考特徵（多圖共同特徵）" if len(valid_images) > 1 else "視覺參考特徵（僅供風格參考）"
                 parts.append(f"{label}：{visual}")
+
+    v_outfit = v.get("outfit")
+    if use_outfit and v_outfit:
+        parts.append(f"服裝設定：{v_outfit}")
 
     core_traits = v.get("core_traits")
     if core_traits:
@@ -1023,7 +1061,7 @@ async def generate_variant_design(
 
     extra_prefix = ""
     _ai_prompt_compiled = ""
-    if v_ai_prompt and v_ai_prompt.strip():
+    if use_ai_prompt and v_ai_prompt and v_ai_prompt.strip():
         t0 = time.perf_counter()
         await guardian.request_focus("ollama")
         try:
@@ -1079,7 +1117,13 @@ async def generate_variant_design(
 
     # ── Generate ──────────────────────────────────────────────────────────
     seed = random.randint(0, 2**31 - 1)
-    wf = _load_workflow("text_to_image.json")
+    ipa_used = False
+    if _ipa_ref_bytes is not None:
+        uploaded_ref = comfyui_client.upload_image_bytes(_ipa_ref_bytes, "char_concept_ref.png")
+        wf = _load_workflow("ipadapter_txt2img.json")
+        ipa_used = True
+    else:
+        wf = _load_workflow("text_to_image.json")
     _inject_loras(wf, art_style.loras if art_style else [])
     for node in wf.values():
         if not isinstance(node, dict):
@@ -1097,6 +1141,8 @@ async def generate_variant_design(
         elif ct == "KSampler":
             inputs["seed"] = seed
             inputs["steps"] = steps
+        elif ct == "LoadImage" and ipa_used:
+            inputs["image"] = uploaded_ref
 
     t0 = time.perf_counter()
     await guardian.request_focus("comfyui")
@@ -1111,6 +1157,7 @@ async def generate_variant_design(
             "X-Seed": str(seed),
             "X-Style": style.value,
             "X-Flat-Draft": "1" if all_flat else "0",
+            "X-IPA-Used": "1" if ipa_used else "0",
             "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),

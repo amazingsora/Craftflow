@@ -16,6 +16,7 @@ class CharacterCreate(BaseModel):
     height: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
+    outfit: Optional[str] = None
     gender: Optional[str] = None
     art_style_id: Optional[int] = None
 
@@ -35,6 +36,7 @@ class CharacterUpdate(BaseModel):
     height: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
+    outfit: Optional[str] = None
     gender: Optional[str] = None
     art_style_id: Optional[int] = None
     concept_images: Optional[list[str]] = None
@@ -64,6 +66,7 @@ class CharacterResponse(BaseModel):
     height: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
+    outfit: Optional[str] = None
     gender: Optional[str] = None
     faction_ids: list[int] = []
     art_style_id: Optional[int] = None

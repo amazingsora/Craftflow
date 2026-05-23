@@ -37,6 +37,7 @@ class Character(Base):
     portrait_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     color: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)
     ai_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    outfit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     concept_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
     ai_generated_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
     age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
