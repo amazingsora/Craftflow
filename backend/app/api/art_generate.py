@@ -35,7 +35,12 @@ from app.models.art_style import ArtStyle
 from app.models.character import Character
 from app.services import comfyui_client
 from app.services.ai import art_service, ollama_client as _oc
-from app.services.ai.prompt_engine import compile as compile_prompt, PromptStyle
+from app.services.ai.prompt_engine import (
+    compile as compile_prompt,
+    PromptStyle,
+    CharacterIntent,
+    run_pipeline as run_character_pipeline,
+)
 from app.services.ai.prompt_engine.styles import STYLE_CONFIG
 from app.services.ai.vram_manager import guardian
 
@@ -842,6 +847,37 @@ async def generate_character_design(
         if extra_compiled:
             extra_prefix = extra_compiled + ", "
 
+    # Two-stage pipeline override (source priority + conflict resolver).
+    intent = CharacterIntent(
+        name=character.name,
+        gender=character.gender,
+        age=character.age,
+        height=getattr(character, "height", None),
+        core_traits=character.core_traits,
+        outfit=getattr(character, "outfit", None) if use_outfit else None,
+        color=character.color,
+        expression=expression,
+        ai_prompt=character.ai_prompt if use_ai_prompt else None,
+        visual_traits=visual if "visual" in locals() else None,
+        concept_images_count=len(concept_imgs),
+        all_flat_draft=all_flat,
+        ipa_enabled=use_ipa,
+        vision_confidence=0.35 if all_flat else (0.55 if use_ipa else 0.7),
+    )
+    pipeline = run_character_pipeline(
+        intent=intent,
+        style=style,
+        model=state.get_text_model(),
+        use_ai_prompt=use_ai_prompt,
+        quality_prefix_override=_overrides.get("quality_prefix_override"),
+        negative_override=_overrides.get("negative_override"),
+        compile_prompt_fn=compile_prompt,
+    )
+    positive = pipeline.positive
+    negative = pipeline.negative
+    _ai_prompt_compiled = pipeline.ai_prompt_compiled or _ai_prompt_compiled
+    extra_prefix = ""
+
     # ── Build final prompt based on mode ──────────────────────────────────
     bg_tag = f", {bg_color_name} background" if bg_color_name else ", gradient background"
 
@@ -876,7 +912,7 @@ async def generate_character_design(
     # "clothed, shirt" anchors clothing when core_traits lacks an explicit outfit.
     # If core_traits already specifies clothing (e.g. jacket, robe), those tags carry
     # higher weight and override these soft defaults.
-    gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
+    gender_pos_extra = ""
     gender_neg_extra = (
         ", bare chest, shirtless, topless, naked upper body, no shirt"
         ", skirt, dress, miniskirt, female clothes, feminine clothing, thighhighs, sailor uniform"
@@ -941,6 +977,10 @@ async def generate_character_design(
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
             "X-AI-Prompt-Compiled": base64.b64encode(_ai_prompt_compiled.encode()).decode() if _ai_prompt_compiled else "",
+            "X-Intent": base64.b64encode(json.dumps(intent.__dict__, ensure_ascii=False).encode()).decode() if 'intent' in locals() else "",
+            "X-StageA-JSON": base64.b64encode(json.dumps(pipeline.stage_a_json, ensure_ascii=False).encode()).decode() if 'pipeline' in locals() else "",
+            "X-Conflict-Decisions": base64.b64encode(json.dumps(pipeline.conflict_decisions, ensure_ascii=False).encode()).decode() if 'pipeline' in locals() else "",
+            "X-Removed-Tags": base64.b64encode(json.dumps(pipeline.removed_tags, ensure_ascii=False).encode()).decode() if 'pipeline' in locals() else "",
         },
     )
 
@@ -1077,6 +1117,36 @@ async def generate_variant_design(
         if extra_compiled:
             extra_prefix = extra_compiled + ", "
 
+    intent = CharacterIntent(
+        name=character.name,
+        gender=v_gender,
+        age=v_age,
+        height=v.get("height"),
+        core_traits=core_traits,
+        outfit=v_outfit if use_outfit else None,
+        color=v_color,
+        expression=expression,
+        ai_prompt=v_ai_prompt if use_ai_prompt else None,
+        visual_traits=visual if "visual" in locals() else None,
+        concept_images_count=len(concept_imgs),
+        all_flat_draft=all_flat,
+        ipa_enabled=use_ipa,
+        vision_confidence=0.35 if all_flat else (0.55 if use_ipa else 0.7),
+    )
+    pipeline = run_character_pipeline(
+        intent=intent,
+        style=style,
+        model=state.get_text_model(),
+        use_ai_prompt=use_ai_prompt,
+        quality_prefix_override=_overrides.get("quality_prefix_override"),
+        negative_override=_overrides.get("negative_override"),
+        compile_prompt_fn=compile_prompt,
+    )
+    positive = pipeline.positive
+    negative = pipeline.negative
+    _ai_prompt_compiled = pipeline.ai_prompt_compiled or _ai_prompt_compiled
+    extra_prefix = ""
+
     bg_tag = f", {bg_color_name} background" if bg_color_name else ", gradient background"
 
     if is_expression:
@@ -1096,7 +1166,7 @@ async def generate_variant_design(
     gender_prefix = gender_tag + ", " if gender_tag else ""
     is_male = gender_tag.startswith(("1boy", "1man"))
     is_female = gender_tag.startswith(("1girl", "1woman"))
-    gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
+    gender_pos_extra = ""
     gender_neg_extra = (
         ", bare chest, shirtless, topless, naked upper body, no shirt"
         ", skirt, dress, miniskirt, female clothes, feminine clothing, thighhighs, sailor uniform"
@@ -1164,6 +1234,10 @@ async def generate_variant_design(
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
             "X-AI-Prompt-Compiled": base64.b64encode(_ai_prompt_compiled.encode()).decode() if _ai_prompt_compiled else "",
+            "X-Intent": base64.b64encode(json.dumps(intent.__dict__, ensure_ascii=False).encode()).decode() if 'intent' in locals() else "",
+            "X-StageA-JSON": base64.b64encode(json.dumps(pipeline.stage_a_json, ensure_ascii=False).encode()).decode() if 'pipeline' in locals() else "",
+            "X-Conflict-Decisions": base64.b64encode(json.dumps(pipeline.conflict_decisions, ensure_ascii=False).encode()).decode() if 'pipeline' in locals() else "",
+            "X-Removed-Tags": base64.b64encode(json.dumps(pipeline.removed_tags, ensure_ascii=False).encode()).decode() if 'pipeline' in locals() else "",
         },
     )
 
