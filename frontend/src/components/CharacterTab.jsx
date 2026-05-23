@@ -981,6 +981,7 @@ function _initVariant(v = {}) {
     notes: v.notes ?? '', aiPrompt: v.ai_prompt ?? '',
     aiPromptEnabled: !!(v.ai_prompt),
     outfit: v.outfit ?? '', outfitEnabled: !!(v.outfit),
+    ipaEnabled: true,
     age: v.age != null ? String(v.age) : '', height: v.height != null ? String(v.height) : '', birthday: v.birthday ?? '',
     gender: v.gender ?? null, aiSummary: v.ai_summary ?? null,
     conceptImages: v.concept_images ?? [], aiImages: v.ai_generated_images ?? [],
@@ -1025,6 +1026,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   const [aiPromptEnabled, setAiPromptEnabled] = useState(!!initChar.ai_prompt)
   const [outfit, setOutfit] = useState(initChar.outfit ?? '')
   const [outfitEnabled, setOutfitEnabled] = useState(!!initChar.outfit)
+  const [ipaEnabled, setIpaEnabled] = useState(true)
   const [showDebugPrompt, setShowDebugPrompt] = useState(false)
   const [lastDebugPrompt, setLastDebugPrompt] = useState(null)
   const [lastRawDesc, setLastRawDesc] = useState(null)
@@ -1126,6 +1128,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
       const params = new URLSearchParams({
         use_ai_prompt: aiPromptEnabled ? '1' : '0',
         use_outfit: outfitEnabled ? '1' : '0',
+        use_ipa: ipaEnabled ? '1' : '0',
       })
       const resp = await fetch(`${API}/characters/${char.id}/generate-design?${params}`, { method: 'POST' })
       if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
@@ -1330,6 +1333,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
       const vParams = new URLSearchParams({
         use_ai_prompt: vState.aiPromptEnabled ? '1' : '0',
         use_outfit: vState.outfitEnabled ? '1' : '0',
+        use_ipa: vState.ipaEnabled ? '1' : '0',
       })
       const resp = await fetch(`${API}/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
       if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
@@ -1504,9 +1508,16 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <span style={S.sectionLabel}>AI 人設圖（{aiImages.length}/8）</span>
-              <button style={S.btnSm} disabled={generating} onClick={generateDesignImage}>
-                {generating ? <><Spinner />生成中...</> : '生成人設圖'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: ipaEnabled ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={ipaEnabled} onChange={e => setIpaEnabled(e.target.checked)}
+                    style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
+                  概念圖參考
+                </label>
+                <button style={S.btnSm} disabled={generating} onClick={generateDesignImage}>
+                  {generating ? <><Spinner />生成中...</> : '生成人設圖'}
+                </button>
+              </div>
             </div>
 
             {/* 待確認佇列（一次顯示一張） */}
@@ -1900,9 +1911,16 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <span style={S.sectionLabel}>AI 人設圖（{vState.aiImages.length}/8）</span>
-              <button style={S.btnSm} disabled={vState.generating} onClick={generateVariantDesignImage}>
-                {vState.generating ? <><Spinner />生成中...</> : '生成人設圖'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: vState.ipaEnabled ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={vState.ipaEnabled} onChange={e => setV(activeTab, { ipaEnabled: e.target.checked })}
+                    style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
+                  概念圖參考
+                </label>
+                <button style={S.btnSm} disabled={vState.generating} onClick={generateVariantDesignImage}>
+                  {vState.generating ? <><Spinner />生成中...</> : '生成人設圖'}
+                </button>
+              </div>
             </div>
             {vState.pendingQueue.length > 0 && (
               <div style={{ marginBottom: 10, border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
