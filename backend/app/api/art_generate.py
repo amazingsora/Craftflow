@@ -142,20 +142,25 @@ def _inject_loras(wf: dict, loras: list) -> None:
 
 def _load_workflow(name: str) -> dict:
     # 先找使用者自訂目錄，找不到再找系統目錄
+    found_in_custom = False
     for base in (CUSTOM_WORKFLOWS_DIR, _SYSTEM_WORKFLOW_DIR):
         path = base / name
         if path.exists():
+            found_in_custom = (base == CUSTOM_WORKFLOWS_DIR)
             break
     else:
         raise FileNotFoundError(f"Workflow '{name}' not found in custom or system directories")
     with open(path, encoding="utf-8") as f:
         wf = json.load(f)
     wf.pop("_comment", None)
-    ckpt = state.get_checkpoint()
-    if ckpt:
-        for node in wf.values():
-            if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":
-                node["inputs"]["ckpt_name"] = ckpt
+    # Custom workflows keep their own embedded checkpoint; only system workflows
+    # respect the global checkpoint selection so the UI "checkpoint" picker takes effect.
+    if not found_in_custom:
+        ckpt = state.get_checkpoint()
+        if ckpt:
+            for node in wf.values():
+                if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":
+                    node["inputs"]["ckpt_name"] = ckpt
     return wf
 
 
@@ -624,12 +629,12 @@ def _age_body_tags(age: int | None) -> str:
         return ""
     if age <= 6:
         return "toddler, very young, chubby cheeks, round face"
-    if age <= 11:
-        return "young, childlike features, round face, flat chest, small hands"
+    if age <= 12:
+        return "child, young girl, youthful, childlike features, round face, flat chest, small hands"
     if age <= 14:
-        return "young, youthful, flat chest"
+        return "young girl, youthful, flat chest"
     if age <= 17:
-        return "teenage, youthful"
+        return "teenage girl, youthful"
     return ""
 
 
@@ -699,6 +704,7 @@ async def generate_character_design(
     art_style_id: Optional[int] = None,
     use_ai_prompt: bool = True,
     use_outfit: bool = True,
+    use_ipa: bool = True,
     db: Session = Depends(get_db),
 ):
     """
@@ -740,7 +746,7 @@ async def generate_character_design(
     if not concept_imgs and character.portrait_path:
         concept_imgs = [character.portrait_path]
 
-    _ipa_ref_bytes: bytes | None = None  # first non-flat concept image for IP-Adapter
+    _ipa_ref_bytes: bytes | None = None  # concept image for IP-Adapter
 
     if concept_imgs:
         # Load all available concept images (up to 3) for multi-image analysis
@@ -757,12 +763,9 @@ async def generate_character_design(
         all_flat = all(_is_flat_color_draft(img) for img in valid_images)
         logger.info("[prompt-log] concept images flat_draft=%s (%d imgs)", all_flat, len(valid_images))
 
-        # Pick first non-flat image as IP-Adapter visual anchor
-        if not all_flat:
-            for _img in valid_images:
-                if not _is_flat_color_draft(_img):
-                    _ipa_ref_bytes = _img
-                    break
+        # IP-Adapter: use first available image when enabled (flat drafts included)
+        if use_ipa and valid_images:
+            _ipa_ref_bytes = valid_images[0]
 
         if valid_images:
             t0 = time.perf_counter()
@@ -952,6 +955,7 @@ async def generate_variant_design(
     art_style_id: Optional[int] = None,
     use_ai_prompt: bool = True,
     use_outfit: bool = True,
+    use_ipa: bool = True,
     db: Session = Depends(get_db),
 ):
     """Generate a design sheet using the variant's data instead of the main character fields."""
@@ -988,7 +992,7 @@ async def generate_variant_design(
 
     concept_imgs = list(v.get("concept_images") or [])
     all_flat = True  # default: no images → use core_traits anchors
-    _ipa_ref_bytes: bytes | None = None  # first non-flat concept image for IP-Adapter
+    _ipa_ref_bytes: bytes | None = None  # concept image for IP-Adapter
     if concept_imgs:
         valid_images: list[bytes] = []
         for img_filename in concept_imgs[:3]:
@@ -1001,11 +1005,9 @@ async def generate_variant_design(
         if valid_images:
             all_flat = all(_is_flat_color_draft(img) for img in valid_images)
             logger.info("[prompt-log] variant concept images flat_draft=%s (%d imgs)", all_flat, len(valid_images))
-            if not all_flat:
-                for _img in valid_images:
-                    if not _is_flat_color_draft(_img):
-                        _ipa_ref_bytes = _img
-                        break
+            # IP-Adapter: use first available image when enabled (flat drafts included)
+            if use_ipa:
+                _ipa_ref_bytes = valid_images[0]
             t0 = time.perf_counter()
             await guardian.request_focus("ollama")
             prompt_txt = _visual_extract_prompt(len(valid_images))
