@@ -64,6 +64,46 @@ def _extract_color_anchors(text: str, anchor_source: str = "") -> list[str]:
     return res
 
 
+_COLOR_ALT_RE = re.compile(
+    "|".join(re.escape(k) for k in sorted(lexicon.COLOR_MAP, key=len, reverse=True))
+)
+_HETERO_DETECT_RE = re.compile(r'異色瞳|異色眼')
+_LEFT_EYE_RE  = re.compile(rf'左眼(?:為|是|呈)?({_COLOR_ALT_RE.pattern})')
+_RIGHT_EYE_RE = re.compile(rf'右眼(?:為|是|呈)?({_COLOR_ALT_RE.pattern})')
+
+
+def _inject_heterochromia(tags: list[str], text: str, anchor_source: str = "") -> list[str]:
+    """
+    Detect 異色瞳 in source text and guarantee correct heterochromia tags are present.
+    Runs after LLM translation so it's model-agnostic.
+    """
+    combined = f"{text} {anchor_source}"
+    if not _HETERO_DETECT_RE.search(combined):
+        return tags
+
+    tag_lowers = {t.lower().strip("() ") for t in tags}
+    to_prepend: list[str] = []
+
+    if "heterochromia" not in tag_lowers:
+        to_prepend.append("heterochromia")
+
+    for side, side_re in (("left", _LEFT_EYE_RE), ("right", _RIGHT_EYE_RE)):
+        m = side_re.search(combined)
+        if m:
+            eng = lexicon.COLOR_MAP.get(m.group(1))
+            if eng:
+                tag = f"{eng} eye ({side})"
+                if tag not in tag_lowers:
+                    to_prepend.append(tag)
+
+    # Remove any single-color eye tag that would conflict (e.g. LLM picked one color)
+    if to_prepend:
+        eye_color_tags = {f"{c} eyes" for c in lexicon.COLOR_MAP.values()}
+        tags = [t for t in tags if t.lower().strip("() ") not in eye_color_tags]
+
+    return to_prepend + tags
+
+
 def _clean_clothing_hallucinations(tags: list[str], text_to_check: str) -> list[str]:
     """
     防幻覺過濾器：偵測是否有休閒/背心類關鍵字，若是，自動拔除腦補的正式西裝標籤。
@@ -101,6 +141,8 @@ def compile(
         model=model,
         options={"num_predict": 250, "temperature": 0.3}
     )
+    if raw_response.startswith("["):
+        raise RuntimeError(raw_response)
 
     # 2. 擷取輸出與標籤清洗
     extracted = _extract_output(raw_response)
@@ -116,6 +158,9 @@ def compile(
         if any(kw in combined_text for kw in ["笑", "微笑", "高興", "smile", "happy"]):
             if "smile" not in [t.lower().strip() for t in cleaned_tags]:
                 cleaned_tags.insert(0, "smile")
+
+        # 【新增】異色瞳強制注入（model-agnostic，不依賴 LLM 能否正確翻譯）
+        cleaned_tags = _inject_heterochromia(cleaned_tags, text, anchor_source=anchor_text)
 
         # Extract authoritative anchors
         anchors = _extract_color_anchors(text, anchor_source=anchor_text)

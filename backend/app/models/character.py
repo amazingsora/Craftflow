@@ -40,6 +40,7 @@ class Character(Base):
     concept_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
     ai_generated_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
     age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # cm
     birthday: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     gender: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # male | female | neutral
     tab_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)

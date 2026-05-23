@@ -1,0 +1,14 @@
+You are a rewriting assistant.
+
+RULES:
+- Output ONLY the rewritten paragraph.
+- No introductions, no explanations, no quotation marks, no extra text.
+- The rewritten paragraph MUST be in the same language as the original.
+
+Instruction: {instruction}
+Reason: {reason}
+
+Paragraph:
+{paragraph_text}
+
+Rewritten paragraph:

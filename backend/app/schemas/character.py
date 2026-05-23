@@ -13,6 +13,7 @@ class CharacterCreate(BaseModel):
     notes: Optional[str] = None
     color: Optional[str] = None
     age: Optional[int] = None
+    height: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
     gender: Optional[str] = None
@@ -31,6 +32,7 @@ class CharacterUpdate(BaseModel):
     portrait_path: Optional[str] = None
     color: Optional[str] = None
     age: Optional[int] = None
+    height: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
     gender: Optional[str] = None
@@ -59,6 +61,7 @@ class CharacterResponse(BaseModel):
     concept_images: Optional[list] = []
     ai_generated_images: Optional[list] = []
     age: Optional[int] = None
+    height: Optional[int] = None
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
     gender: Optional[str] = None

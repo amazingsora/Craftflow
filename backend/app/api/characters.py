@@ -14,6 +14,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import UPLOAD_DIR
 from app.core.database import get_db
+from app.core import state
 from app.models.character import Character
 from app.models.project import Project
 from app.schemas.character import CharacterCreate, CharacterUpdate, CharacterResponse
@@ -86,19 +87,25 @@ def delete_character(character_id: int, db: DbDep):
 
 
 @router.post("/characters/{character_id}/summarize", response_model=CharacterResponse)
-def summarize_character(character_id: int, db: DbDep, model: str = "dolphin-llama3"):
+def summarize_character(character_id: int, db: DbDep, model: Optional[str] = None):
     """AI organises the character's raw notes into a structured profile summary."""
     character = db.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
+    used_model = model or state.get_text_model()
     summary = character_service.generate_summary(
         name=character.name,
         core_traits=character.core_traits,
         behavior_rules=character.behavior_rules,
         voice_style=character.voice_style,
         notes=character.notes,
-        model=model,
+        model=used_model,
     )
+    if not summary or summary.startswith("["):
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ollama 回傳錯誤（模型：{used_model}）：{summary or '空回應'}",
+        )
     character.ai_summary = summary
     db.commit()
     db.refresh(character)
@@ -287,7 +294,7 @@ _MAX_VARIANT_SLOTS = 2  # slots 1 and 2 (Tab 2 and Tab 3)
 _EMPTY_VARIANT: dict = {
     "color": None, "core_traits": None, "behavior_rules": None,
     "voice_style": None, "notes": None, "ai_prompt": None, "ai_summary": None,
-    "age": None, "birthday": None, "gender": None,
+    "age": None, "height": None, "birthday": None, "gender": None,
     "concept_images": [], "ai_generated_images": [],
 }
 
@@ -317,6 +324,7 @@ class VariantUpdate(BaseModel):
     ai_prompt: Optional[str] = None
     ai_summary: Optional[str] = None
     age: Optional[int] = None
+    height: Optional[int] = None
     birthday: Optional[str] = None
     gender: Optional[str] = None
 
@@ -480,21 +488,27 @@ def get_variant_ai_image(character_id: int, slot: int, index: int, db: DbDep):
 # ── Variant summarize ─────────────────────────────────────────────────────────
 
 @router.post("/characters/{character_id}/variants/{slot}/summarize", response_model=CharacterResponse)
-def summarize_variant(character_id: int, slot: int, db: DbDep, model: str = "dolphin-llama3"):
+def summarize_variant(character_id: int, slot: int, db: DbDep, model: Optional[str] = None):
     character = db.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
     idx = _slot_index(slot)
     variants = _get_variants(character)
     v = variants[idx]
+    used_model = model or state.get_text_model()
     summary = character_service.generate_summary(
         name=character.name,
         core_traits=v.get("core_traits"),
         behavior_rules=v.get("behavior_rules"),
         voice_style=v.get("voice_style"),
         notes=v.get("notes"),
-        model=model,
+        model=used_model,
     )
+    if not summary or summary.startswith("["):
+        raise HTTPException(
+            status_code=503,
+            detail=f"Ollama 回傳錯誤（模型：{used_model}）：{summary or '空回應'}",
+        )
     variants[idx]["ai_summary"] = summary
     character.variants = variants
     flag_modified(character, 'variants')

@@ -1,0 +1,17 @@
+[TASK]
+Analyze the provided illustration for the character "{character_name}" and create a structured visual profile.
+
+[OUTPUT FORMAT]
+Provide a detailed description in Traditional Chinese (繁體中文) using the following sections:
+
+1. **外貌特徵 (Physical Traits)**: 髮色、髮型、瞳色、膚色、五官特色。
+2. **身形體態 (Body & Posture)**: 體型描述、身高感、當前姿勢、給人的動態感。
+3. **服裝細節 (Outfit & Accessories)**: 衣著層次、材質感、配色方案、特殊配件或武器。
+4. **視覺氣質 (Atmosphere)**: 整體氣氛、光影表現、性格映射到視覺上的感覺。
+
+[CONSTRAINTS]
+- Be precise: Instead of "long hair", use "silver waist-length straight hair" if applicable.
+- Semantic Focus: Focus on details that define the character's identity.
+- Language: Use professional Traditional Chinese creative writing vocabulary.
+
+[RESULT]
