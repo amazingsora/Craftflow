@@ -293,7 +293,7 @@ _MAX_VARIANT_SLOTS = 2  # slots 1 and 2 (Tab 2 and Tab 3)
 
 _EMPTY_VARIANT: dict = {
     "color": None, "core_traits": None, "behavior_rules": None,
-    "voice_style": None, "notes": None, "ai_prompt": None, "ai_summary": None,
+    "voice_style": None, "notes": None, "ai_prompt": None, "outfit": None, "ai_summary": None,
     "age": None, "height": None, "birthday": None, "gender": None,
     "concept_images": [], "ai_generated_images": [],
 }
@@ -322,6 +322,7 @@ class VariantUpdate(BaseModel):
     voice_style: Optional[str] = None
     notes: Optional[str] = None
     ai_prompt: Optional[str] = None
+    outfit: Optional[str] = None
     ai_summary: Optional[str] = None
     age: Optional[int] = None
     height: Optional[int] = None
