@@ -121,6 +121,46 @@ def _clean_clothing_hallucinations(tags: list[str], text_to_check: str) -> list[
     return tags
 
 
+_CONTEXT_BLOCKERS: list[tuple[set[str], set[str], str]] = [
+    # (trigger_tags_in_positive, positive_tags_to_remove, extra_negative_to_inject)
+    (
+        {"noble female", "ojou-sama", "princess"},
+        {"maid", "maid outfit", "maid headdress", "waitress", "nurse", "apron", "police"},
+        "maid, maid outfit, maid headdress, apron, waitress",
+    ),
+]
+
+
+def _inject_traits(tags: list[str], text: str, anchor_source: str = "") -> tuple[list[str], str]:
+    """
+    Detect semantic traits in source text, guarantee correct positive tags,
+    and return extra negative tags for hallucination suppression.
+
+    Returns: (updated_positive_tags, extra_negative_str)
+    """
+    combined = f"{text} {anchor_source}"
+    tag_lowers = {t.lower().strip("() ") for t in tags}
+    to_prepend: list[str] = []
+
+    for m in lexicon.TRAIT_RE.finditer(combined):
+        trait_zh = m.group(1)
+        eng = lexicon.TRAIT_MAP.get(trait_zh)
+        if eng:
+            for t in eng.split(","):
+                t_clean = t.strip()
+                if t_clean not in tag_lowers:
+                    to_prepend.append(t_clean)
+                    tag_lowers.add(t_clean)
+
+    extra_negative_parts: list[str] = []
+    for trigger_set, remove_set, neg_injection in _CONTEXT_BLOCKERS:
+        if any(k in tag_lowers for k in trigger_set):
+            tags = [t for t in tags if t.lower().strip("() ") not in remove_set]
+            extra_negative_parts.append(neg_injection)
+
+    return to_prepend + tags, ", ".join(extra_negative_parts)
+
+
 def compile(
     text: str,
     style: PromptStyle = PromptStyle.SDXL,
@@ -149,17 +189,22 @@ def compile(
     cleaned_tags = _sanitize_to_list(extracted, config.banned_tags)
 
     # 3. 處理防幻覺與特徵修正 (非自然語言的 tag 類模型才執行)
+    _extra_neg = ""
     if style is not PromptStyle.FLUX:
-        # 【新增】服飾防幻覺過濾
         combined_text = f"{text} {anchor_text} {extracted}"
+        
+        # 【新增】服飾防幻覺過濾
         cleaned_tags = _clean_clothing_hallucinations(cleaned_tags, combined_text)
         
+        # 【新增】語義特徵強制注入（處理下垂眼、大小姐等神韻詞，並阻斷女僕幻覺）
+        cleaned_tags, _extra_neg = _inject_traits(cleaned_tags, text, anchor_source=anchor_text)
+
         # 【新增】情緒/微笑強制召回機制
         if any(kw in combined_text for kw in ["笑", "微笑", "高興", "smile", "happy"]):
             if "smile" not in [t.lower().strip() for t in cleaned_tags]:
                 cleaned_tags.insert(0, "smile")
 
-        # 【新增】異色瞳強制注入（model-agnostic，不依賴 LLM 能否正確翻譯）
+        # 【新增】異色瞳強制注入
         cleaned_tags = _inject_heterochromia(cleaned_tags, text, anchor_source=anchor_text)
 
         # Extract authoritative anchors
@@ -177,8 +222,10 @@ def compile(
     prefix = quality_prefix_override if quality_prefix_override else config.quality_prefix
     positive = f"{prefix}, {final_body}" if prefix and final_body else (prefix or final_body)
 
-    # 5. Negative preset
+    # 5. Negative preset + context-aware suppression
     negative = negative_override if negative_override else config.negative
+    if _extra_neg:
+        negative = f"{negative}, {_extra_neg}" if negative else _extra_neg
 
     return positive.strip(", "), negative
 

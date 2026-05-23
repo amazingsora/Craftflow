@@ -34,6 +34,22 @@ _COLOR_ALTS = "|".join(re.escape(k) for k in sorted(COLOR_MAP, key=len, reverse=
 HAIR_RE = re.compile(rf"([長短])?({_COLOR_ALTS})?(長髮|短髮|頭髮|髮|毛髮|捲髮|直髮)")
 EYE_RE  = re.compile(rf"({_COLOR_ALTS})(眼睛|瞳孔|眼|瞳)")
 
+# ── Trait Mapping ─────────────────────────────────────────────────────────────
+
+TRAIT_MAP: dict[str, str] = {
+    "下垂眼": "drooping eyes, tareme",
+    "垂眼": "drooping eyes, tareme",
+    "貓眼": "cat eyes",
+    "大小姐": "noble female, ojou-sama",
+    "窄裙": "tight skirt",
+    "溫柔": "gentle expression",
+    "黑絲": "black thighhighs",
+    "黑絲襪": "black thighhighs",
+}
+
+_TRAIT_ALTS = "|".join(re.escape(k) for k in sorted(TRAIT_MAP, key=len, reverse=True))
+TRAIT_RE = re.compile(rf"({_TRAIT_ALTS})")
+
 # ── Trait Sets for Cleaning & Conflict Removal ─────────────────────────────────
 
 HAIR_COLORS = {
