@@ -191,13 +191,14 @@ export default function GenerateTab({ onAddHistory, artStyleId = '' }) {
         body: JSON.stringify({ prompt: promptZh, art_style_id: artStyleId ? Number(artStyleId) : null }),
       })
       const data = await resp.json()
+      if (!resp.ok) throw new Error(data.detail ?? `HTTP ${resp.status}`)
       if (data.positive) {
         setOptimizedEnP(data.positive.trim())
         setNegPromptP(data.negative || DEFAULT_NEGATIVE)
         setDetectedStyle(data.style || null)
       }
     } catch (e) {
-      console.error('Compile failed:', e)
+      setError(e.message)
     } finally {
       clearInterval(optimizeTimer.current)
       setOptimizing(false)

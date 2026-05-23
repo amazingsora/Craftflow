@@ -85,6 +85,7 @@ export default function SettingsTab({
   checkpoints, activeCheckpoint, onCheckpointChange,
   workflows, activeWorkflow, onWorkflowChange,
   visionModels, activeVisionModel, onVisionModelChange,
+  activeTextModel, onTextModelChange,
 }) {
   const [comfyStatus, setComfyStatus] = useState(null)
   const [manualCheckpoint, setManualCheckpoint] = useState(activeCheckpoint)
@@ -185,6 +186,29 @@ export default function SettingsTab({
                 style={S.select}
                 value={activeVisionModel}
                 onChange={e => onVisionModelChange(e.target.value)}
+              >
+                {visionModels.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          ) : (
+            <div style={S.infoBox}>
+              無法連接 Ollama，模型清單不可用。請確認 Ollama 正在執行。
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 翻譯文字模型 */}
+      <div style={S.section}>
+        <div style={S.sectionTitle}>翻譯文字模型（Ollama）</div>
+        <div style={S.configArea}>
+          {visionModels && visionModels.length > 0 ? (
+            <div>
+              <span style={S.fieldLabel}>選擇模型（中文描述 → SD 英文 tag）</span>
+              <select
+                style={S.select}
+                value={activeTextModel}
+                onChange={e => onTextModelChange(e.target.value)}
               >
                 {visionModels.map(m => <option key={m} value={m}>{m}</option>)}
               </select>

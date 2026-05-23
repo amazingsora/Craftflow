@@ -92,6 +92,7 @@ _DANBOORU_COMMON_RULES = f"""- FORMAT: Output ONLY comma-separated tags. NO key-
 - NO-GO: No "Output:" prefix, No "Tags:" prefix, No explanations, No capital letters.
 - CONFLICT: If "視覺參考特徵" (Visual Traits) conflicts with "外貌與個性" (Priority Traits), the Priority Traits ALWAYS win. For example, if Visual says "pink hair" but Priority says "brown hair", use "brown hair".
 - MODIFIERS: Pay extreme attention to hair length and style modifiers. "短雙馬尾" = "short hair, short twin tails" or "short hair, short ponytail".
+- HETEROCHROMIA: If "異色瞳" is present, always output "heterochromia" plus each eye's color with direction. Example: 左眼紅右眼綠 → heterochromia, red eye (left), green eye (right).
 - STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
 - QUALITY: Do NOT add quality tags (e.g., masterpiece, best quality). They are handled elsewhere.
 {_COLOR_RULES}"""
@@ -115,6 +116,9 @@ Output: 1girl, solo, white hair, long hair, curly hair, golden eyes, angel, ange
 
 Input: 銀髮紫瞳的魔法師少年
 Output: 1boy, solo, silver hair, purple eyes, mage, magic, robe, serious expression
+
+Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮
+Output: 1girl, solo, heterochromia, red eye (left), green eye (right), brown hair, short hair
 
 [INPUT]
 {{prompt}}

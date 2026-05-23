@@ -267,7 +267,13 @@ const S = {
 
 function formatTime(ts) {
   const d = new Date(ts)
-  return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
+  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`
+}
+
+function _shortModel(model) {
+  if (!model) return ''
+  const base = model.replace(/\.[^.]+$/, '')
+  return base.length > 14 ? base.slice(0, 13) + '…' : base
 }
 
 export default function App() {
@@ -292,11 +298,15 @@ export default function App() {
   const [activeVisionModel, setActiveVisionModel] = useState(
     () => localStorage.getItem('craftflow_vision_model') ?? ''
   )
+  const [activeTextModel, setActiveTextModel] = useState(
+    () => localStorage.getItem('craftflow_text_model') ?? ''
+  )
 
   useEffect(() => {
     const savedCheckpoint   = localStorage.getItem('craftflow_checkpoint')
     const savedWorkflow     = localStorage.getItem('craftflow_workflow')
     const savedVisionModel  = localStorage.getItem('craftflow_vision_model')
+    const savedTextModel    = localStorage.getItem('craftflow_text_model')
 
     fetch('/api/v1/settings/checkpoints')
       .then(r => r.ok ? r.json() : null)
@@ -367,12 +377,41 @@ export default function App() {
         }
       })
       .catch(() => {})
+
+    fetch('/api/v1/settings/vision-models')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return
+        const models = data.models ?? []
+        const target = (savedTextModel && models.includes(savedTextModel))
+          ? savedTextModel
+          : (data.default ?? models[0] ?? '')
+        setActiveTextModel(target)
+        if (target) {
+          fetch('/api/v1/settings/text-model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: target }),
+          }).catch(() => {})
+        }
+      })
+      .catch(() => {})
   }, [])
 
   const onVisionModelChange = async (model) => {
     setActiveVisionModel(model)
     localStorage.setItem('craftflow_vision_model', model)
     await fetch('/api/v1/settings/vision-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    }).catch(() => {})
+  }
+
+  const onTextModelChange = async (model) => {
+    setActiveTextModel(model)
+    localStorage.setItem('craftflow_text_model', model)
+    await fetch('/api/v1/settings/text-model', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model }),
@@ -419,7 +458,10 @@ export default function App() {
   const addHistory = async (item) => {
     const thumbnail = await _makeThumbnail(item.url)
     setHistory(prev => {
-      const newItem = { ...item, id: Date.now(), ts: Date.now(), thumbnail }
+      const model = generationMode === 'workflow'
+        ? activeWorkflow.replace('.json', '')
+        : activeCheckpoint
+      const newItem = { ...item, id: Date.now(), ts: Date.now(), thumbnail, model: model || undefined }
       const updated = [newItem, ...prev].slice(0, _MAX_HISTORY)
       _saveHistory(updated)
       return updated
@@ -501,7 +543,7 @@ export default function App() {
           <ComposeTab onAddHistory={addHistory} activeVisionModel={activeVisionModel} />
         </div>
         <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
-          <CharacterTab />
+          <CharacterTab onAddHistory={addHistory} />
         </div>
         <div style={{ display: tab === 'artstyle' ? 'block' : 'none' }}>
           <ArtStyleTab />
@@ -532,6 +574,8 @@ export default function App() {
                 visionModels={visionModels}
                 activeVisionModel={activeVisionModel}
                 onVisionModelChange={onVisionModelChange}
+                activeTextModel={activeTextModel}
+                onTextModelChange={onTextModelChange}
               />
             </div>
           </div>
@@ -578,6 +622,7 @@ export default function App() {
                     <span style={S.historyMeta}>
                       {formatTime(item.ts)}<br />
                       {item.label}
+                      {item.model && <><br /><span title={item.model} style={{ fontSize: 10, opacity: 0.65 }}>{_shortModel(item.model)}</span></>}
                     </span>
                   </div>
                 ))}
@@ -600,6 +645,7 @@ export default function App() {
               <span style={{ fontSize: 12, color: 'var(--muted)' }}>
                 {_badgeLabel(lightboxItem.type)} · {formatTime(lightboxItem.ts)}
                 {lightboxItem.label ? ` · ${lightboxItem.label}` : ''}
+                {lightboxItem.model ? <><br /><span title={lightboxItem.model}>{_shortModel(lightboxItem.model)}</span></> : ''}
               </span>
               <a
                 href={lightboxItem.url}

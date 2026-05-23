@@ -18,7 +18,7 @@ import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.core.config import COMFYUI_BASE, OLLAMA_BASE, CUSTOM_WORKFLOWS_DIR, DEFAULT_VISION_MODEL
+from app.core.config import COMFYUI_BASE, OLLAMA_BASE, CUSTOM_WORKFLOWS_DIR, DEFAULT_VISION_MODEL, DEFAULT_TEXT_MODEL
 from app.core import state
 
 _CUSTOM_DIR = CUSTOM_WORKFLOWS_DIR
@@ -116,6 +116,23 @@ def set_vision_model(req: SetVisionModelRequest):
         raise HTTPException(status_code=400, detail="model 不可為空")
     state.set_vision_model(req.model.strip())
     return {"model": state.get_vision_model()}
+
+
+@router.get("/text-model", summary="取得目前全域翻譯文字模型")
+def get_text_model():
+    return {"model": state.get_text_model(), "default": DEFAULT_TEXT_MODEL}
+
+
+class SetTextModelRequest(BaseModel):
+    model: str
+
+
+@router.post("/text-model", summary="切換全域翻譯文字模型（執行期，重啟後回到 .env 設定）")
+def set_text_model(req: SetTextModelRequest):
+    if not req.model.strip():
+        raise HTTPException(status_code=400, detail="model 不可為空")
+    state.set_text_model(req.model.strip())
+    return {"model": state.get_text_model()}
 
 
 @router.get("/loras", summary="列出 ComfyUI 可用 LoRA 模型")

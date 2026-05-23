@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.services.ai import ollama_client
+from app.services.ai.prompt_loader import load_prompt
 
 
 @dataclass
@@ -24,32 +25,8 @@ def rewrite(
     mode: str = "gentle",
     model: str = ollama_client.DEFAULT_TEXT_MODEL,
 ) -> str:
-    if mode == "gentle":
-        instruction = (
-            "Lightly revise the paragraph to improve rhythm and clarity. "
-            "Preserve the author's voice and structure. Avoid major restructuring."
-        )
-    else:
-        instruction = (
-            "Rewrite the paragraph to significantly improve rhythm, flow, and impact. "
-            "You may restructure sentences and enhance stylistic expression "
-            "while preserving original meaning."
-        )
-
-    prompt = f"""You are a rewriting assistant.
-
-RULES:
-- Output ONLY the rewritten paragraph.
-- No introductions, no explanations, no quotation marks, no extra text.
-- The rewritten paragraph MUST be in the same language as the original.
-
-Instruction: {instruction}
-Reason: {reason}
-
-Paragraph:
-{paragraph_text}
-
-Rewritten paragraph:"""
+    instruction = load_prompt(f"rewrite/instruction_{mode}").strip()
+    prompt = load_prompt("rewrite/rewrite", instruction=instruction, reason=reason, paragraph_text=paragraph_text)
 
     return ollama_client.generate(prompt, model=model).strip()
 

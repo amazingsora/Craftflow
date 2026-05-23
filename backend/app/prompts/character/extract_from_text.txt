@@ -1,0 +1,23 @@
+[TASK]
+Analyze the provided chapter text and extract character profile information for "{character_name}".
+
+[OUTPUT FORMAT]
+Return ONLY a valid JSON object. No conversational filler, no markdown code blocks (```json).
+Strictly follow this JSON schema:
+{{
+  "core_traits": "personality traits observed (Traditional Chinese string or null)",
+  "behavior_rules": "how this character acts/reacts (Traditional Chinese string or null)",
+  "voice_style": "dialogue style and patterns (Traditional Chinese string or null)",
+  "notes": "other notable observations (Traditional Chinese string or null)",
+  "aliases": ["list of alternative names, nicknames, or titles mentioned"]
+}}
+
+[CONSTRAINTS]
+1. Content Language: Use Traditional Chinese (繁體中文) for all string values.
+2. Objectivity: Only include facts supported by the text. If no info exists for a field, use null.
+3. JSON Integrity: Ensure all quotes are escaped. Do not truncate the JSON.
+
+[CHAPTER TEXT]
+{chapter_text}
+
+[RESULT]

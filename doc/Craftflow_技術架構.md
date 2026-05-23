@@ -1,7 +1,7 @@
 # Craftflow — 技術架構文件
 
 **專案**：Craftflow 個人創作輔助平台
-**版本**：v2.0（截至 2026-05-21）
+**版本**：v2.1（截至 2026-05-22）
 
 ---
 
@@ -78,6 +78,7 @@ Craftflow/
 │       └── services/
 │           ├── ai/
 │           │   ├── ollama_client.py        ← Ollama HTTP 封裝（text / vision / multi-image）
+│           │   ├── prompt_loader.py        ← Prompt 檔案讀取器（含 hardcoded 預設值回退）
 │           │   ├── art_service.py          ← 草圖分析、完稿批評、配色建議、草圖問答
 │           │   ├── character_service.py    ← 角色摘要、特性提取、視覺描述、Q&A
 │           │   ├── consistency_service.py  ← 一致性掃描（表面 + 語義）
@@ -94,6 +95,11 @@ Craftflow/
 │           │   ├── remote_runner.py        ← RemoteAgentRunner（Docker 備用）
 │           │   └── config_writer.py        ← 生成 kohya_ss TOML config
 │           └── comfyui_client.py           ← ComfyUI WebSocket 封裝
+│       └── prompts/                        ← AI Prompt 實體文字檔（可直接編輯）
+│           ├── art/                        ← 草稿分析、完稿評審、配色、構圖、描述
+│           ├── character/                  ← 角色摘要、特性提取、設計問答、視覺描述
+│           ├── consistency/                ← 一致性檢查
+│           └── rewrite/                   ← 改寫主模板、gentle / aggressive 指令
 │
 ├── frontend/
 │   ├── src/
@@ -350,7 +356,75 @@ TrainingJob ──> ArtStyle (FK, optional, 訓練完成後自動掛載)
 
 ---
 
-## 10. ComfyUI Workflow 管理
+## 10. AI Prompt 管理
+
+位置：`backend/app/prompts/` + `backend/app/services/ai/prompt_loader.py`
+
+### 設計原則
+
+所有 AI Prompt 以實體 `.txt` 文字檔存放，可在不改動 Python 程式碼的情況下修改提示詞。
+`prompt_loader.py` 提供統一讀取介面，並在檔案不存在時自動回退至 hardcoded 預設值。
+
+### 使用方式
+
+```python
+from app.services.ai.prompt_loader import load_prompt
+
+# 無變數 prompt（直接回傳文字檔內容）
+prompt = load_prompt("art/sketch_critique")
+
+# 含變數 prompt（format_map 替換）
+prompt = load_prompt("character/generate_summary", name="Alice", raw_notes="...")
+```
+
+### 變數替換規則
+
+| 語法 | 作用 |
+|---|---|
+| `{variable_name}` | 執行期替換為傳入值 |
+| `{{` / `}}` | 輸出 literal `{` / `}`（用於 prompt 內 JSON schema 範例） |
+
+### 目錄結構
+
+```
+backend/app/prompts/
+├── art/
+│   ├── sketch_critique.txt         ← 草稿線條分析
+│   ├── finished_critique.txt       ← 完稿全方位評審
+│   ├── line_color.txt              ← 線稿配色方案
+│   ├── composition_analysis.txt    ← 草稿轉 SDXL Prompt（含 {user_question}）
+│   ├── describe_illustration.txt   ← 插畫簡短描述
+│   └── composition_advisor.txt     ← 插畫創作顧問（含 {question}）
+├── character/
+│   ├── generate_summary.txt        ← 角色設定整理（含 {name}, {raw_notes}）
+│   ├── extract_from_text.txt       ← 從章節提取角色特徵（含 {character_name}, {chapter_text}）
+│   ├── design_chat.txt             ← 角色設計問答（含 {character_name}, {profile_ctx}, {question}）
+│   └── describe_portrait.txt       ← 插圖描述角色外貌（含 {character_name}）
+├── consistency/
+│   └── check.txt                   ← 一致性檢查（含 {char_desc}, {paragraph}）
+└── rewrite/
+    ├── rewrite.txt                 ← 改寫主模板（含 {instruction}, {reason}, {paragraph_text}）
+    ├── instruction_gentle.txt      ← 輕度改寫指令
+    └── instruction_aggressive.txt  ← 強力改寫指令
+```
+
+### 回退機制
+
+```
+load_prompt("art/sketch_critique")
+    ↓
+檔案存在？
+  ├── 是 → 讀取 .txt 內容
+  └── 否 → 使用 prompt_loader._DEFAULTS["art/sketch_critique"]
+    ↓
+有 kwargs？
+  ├── 是 → str.format_map(kwargs) 替換變數
+  └── 否 → 直接回傳原始字串
+```
+
+---
+
+## 11. ComfyUI Workflow 管理
 
 ### 系統內建 Workflow
 
@@ -384,7 +458,7 @@ CheckpointLoaderSimple → LoraLoader_0 → LoraLoader_1 → ...
 
 ---
 
-## 11. LoRA 訓練 Pipeline
+## 12. LoRA 訓練 Pipeline
 
 ```
 Frontend TrainingTab
@@ -422,7 +496,7 @@ TrainingRunner（get_runner() factory）
 
 ---
 
-## 12. VRAM 協調機制（VRAMGuardian）
+## 13. VRAM 協調機制（VRAMGuardian）
 
 Ollama 與 ComfyUI 共用 GPU（RTX 5070 Ti · 16 GB），不能同時載入。
 
@@ -441,7 +515,7 @@ guardian.request_focus("comfyui")
 
 ---
 
-## 13. 六大功能詳解
+## 14. 六大功能詳解
 
 ### 功能 1：草稿 → 線稿（ProcessTab）
 
@@ -527,7 +601,7 @@ guardian.request_focus("comfyui")
 
 ---
 
-## 14. 環境設定（.env）
+## 15. 環境設定（.env）
 
 ```env
 # AI 服務
@@ -549,7 +623,7 @@ COMFYUI_LORAS_DIR=F:\wk\ComfyUI_portable\ComfyUI\models\loras
 
 ---
 
-## 15. 啟動方式
+## 16. 啟動方式
 
 ### 快速啟動
 
@@ -568,7 +642,7 @@ npm run dev
 
 ---
 
-## 16. 外部服務依賴
+## 17. 外部服務依賴
 
 | 服務 | 位址 | 用途 | 必要性 |
 |---|---|---|---|

@@ -55,7 +55,9 @@ def generate(
 
     keep_alive: seconds to keep model in VRAM after request (0 = unload immediately).
     """
-    payload: dict = {"model": model, "prompt": prompt, "stream": False}
+    # think=false: disable Qwen3 thinking mode so response is never empty.
+    # Non-Qwen3 models ignore this field.
+    payload: dict = {"model": model, "prompt": prompt, "stream": False, "think": False}
     if options:
         payload["options"] = options
     if keep_alive is not None:
