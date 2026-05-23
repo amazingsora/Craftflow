@@ -980,13 +980,14 @@ function _initVariant(v = {}) {
     behavior: v.behavior_rules ?? '', voice: v.voice_style ?? '',
     notes: v.notes ?? '', aiPrompt: v.ai_prompt ?? '',
     aiPromptEnabled: !!(v.ai_prompt),
+    outfit: v.outfit ?? '', outfitEnabled: !!(v.outfit),
     age: v.age != null ? String(v.age) : '', height: v.height != null ? String(v.height) : '', birthday: v.birthday ?? '',
     gender: v.gender ?? null, aiSummary: v.ai_summary ?? null,
     conceptImages: v.concept_images ?? [], aiImages: v.ai_generated_images ?? [],
     pendingQueue: [], generating: false, savingGen: false, savingFields: false,
     summarizing: false, uploadingConcept: false,
     deletingConceptIdx: null, deletingAiIdx: null,
-    lastDebugPrompt: null, lastRawDesc: null, lastFlatDraft: null, lastTimings: null, lastAiPromptCompiled: null, showDebugPrompt: false,
+    lastDebugPrompt: null, lastRawDesc: null, lastFlatDraft: null, lastTimings: null, lastAiPromptCompiled: null, lastIpaUsed: null, showDebugPrompt: false,
   }
 }
 
@@ -1022,11 +1023,14 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   const [artStyleId, setArtStyleId] = useState(initChar.art_style_id ?? null)
   const [artStyles, setArtStyles] = useState([])
   const [aiPromptEnabled, setAiPromptEnabled] = useState(!!initChar.ai_prompt)
+  const [outfit, setOutfit] = useState(initChar.outfit ?? '')
+  const [outfitEnabled, setOutfitEnabled] = useState(!!initChar.outfit)
   const [showDebugPrompt, setShowDebugPrompt] = useState(false)
   const [lastDebugPrompt, setLastDebugPrompt] = useState(null)
   const [lastRawDesc, setLastRawDesc] = useState(null)
   const [lastFlatDraft, setLastFlatDraft] = useState(null)
   const [lastAiPromptCompiled, setLastAiPromptCompiled] = useState(null)
+  const [lastIpaUsed, setLastIpaUsed] = useState(null)
   const [lightboxSrc, setLightboxSrc] = useState(null)
   const [lastTimings, setLastTimings] = useState(null)
 
@@ -1075,7 +1079,8 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           height: height !== '' ? parseInt(height) : null,
           birthday: birthday.trim() || null,
           gender: gender || null,
-          ai_prompt: aiPromptEnabled ? (aiPrompt.trim() || null) : null,
+          ai_prompt: aiPrompt.trim() || null,
+          outfit: outfit.trim() || null,
           art_style_id: artStyleId || null,
         }),
       })
@@ -1118,7 +1123,11 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   const generateDesignImage = async () => {
     setGenerating(true); setError(null); setPendingQueue([])
     try {
-      const resp = await fetch(`${API}/characters/${char.id}/generate-design`, { method: 'POST' })
+      const params = new URLSearchParams({
+        use_ai_prompt: aiPromptEnabled ? '1' : '0',
+        use_outfit: outfitEnabled ? '1' : '0',
+      })
+      const resp = await fetch(`${API}/characters/${char.id}/generate-design?${params}`, { method: 'POST' })
       if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
       
       // Retrieve debug prompt from header
@@ -1152,6 +1161,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         try { setLastAiPromptCompiled(decodeURIComponent(escape(atob(b64AiCompiled)))) }
         catch (e) { /* silent */ }
       }
+      setLastIpaUsed(resp.headers.get('X-IPA-Used') === '1')
 
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
@@ -1261,7 +1271,8 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           height: v.height !== '' ? parseInt(v.height) : null,
           birthday: v.birthday.trim() || null,
           gender: v.gender || null,
-          ai_prompt: v.aiPromptEnabled ? (v.aiPrompt.trim() || null) : null,
+          ai_prompt: v.aiPrompt.trim() || null,
+          outfit: v.outfit.trim() || null,
         }),
       })
       // Sync variant data back from server response
@@ -1316,7 +1327,11 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
     const slot = activeTab
     setV(slot, { generating: true, pendingQueue: [] })
     try {
-      const resp = await fetch(`${API}/characters/${char.id}/variants/${slot}/generate-design`, { method: 'POST' })
+      const vParams = new URLSearchParams({
+        use_ai_prompt: vState.aiPromptEnabled ? '1' : '0',
+        use_outfit: vState.outfitEnabled ? '1' : '0',
+      })
+      const resp = await fetch(`${API}/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
       if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
       let debugPrompt = null
       const b64Prompt = resp.headers.get('X-Prompt')
@@ -1331,6 +1346,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
       let aiPromptCompiled = null
       const b64AiCompiled = resp.headers.get('X-AI-Prompt-Compiled')
       if (b64AiCompiled) { try { aiPromptCompiled = decodeURIComponent(escape(atob(b64AiCompiled))) } catch (e) { /* silent */ } }
+      const ipaUsed = resp.headers.get('X-IPA-Used') === '1'
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
       setV(slot, {
@@ -1340,6 +1356,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         lastFlatDraft: flatDraft,
         lastTimings: timings,
         lastAiPromptCompiled: aiPromptCompiled,
+        lastIpaUsed: ipaUsed,
         pendingQueue: [{ blob, url, label: '全身人設圖' }],
       })
       onAddHistory?.({ type: 'character', url, filename: `${char.name}_v${slot}_design_${Date.now()}.png`, label: `${char.name} 人設圖（Tab ${slot}）` })
@@ -1704,6 +1721,29 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
             <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input
                 type="checkbox"
+                checked={outfitEnabled}
+                onChange={e => setOutfitEnabled(e.target.checked)}
+                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+              />
+              <span style={{ color: 'var(--accent)' }}>✦ </span>服裝設定
+            </label>
+            {outfitEnabled && (
+              <>
+                <textarea
+                  style={{ ...S.textarea, minHeight: 60 }}
+                  value={outfit}
+                  onChange={e => setOutfit(e.target.value)}
+                  placeholder="例如：白色禮服、黑色窄裙、學生制服、和服..."
+                />
+                <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>服裝描述會加入生成提示詞，影響圖片中的穿著</p>
+              </>
+            )}
+          </div>
+
+          <div>
+            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
                 checked={aiPromptEnabled}
                 onChange={e => setAiPromptEnabled(e.target.checked)}
                 style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
@@ -1750,6 +1790,14 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                           color: lastFlatDraft ? '#f7c87e' : '#7ef7c8',
                           border: `1px solid ${lastFlatDraft ? '#6a4a1e' : '#1e6a4a'}` }}>
                           {lastFlatDraft ? '單色稿 → 文字優先' : '正式上色 → 視覺優先'}
+                        </div>
+                      )}
+                      {lastIpaUsed != null && (
+                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                          background: lastIpaUsed ? '#0e1a2a' : '#1e1e1e',
+                          color: lastIpaUsed ? '#7eb8f7' : '#666',
+                          border: `1px solid ${lastIpaUsed ? '#2a5080' : '#444'}` }}>
+                          {lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
                         </div>
                       )}
                     </div>
@@ -1972,6 +2020,22 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           </div>
           <div>
             <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={vState.outfitEnabled} onChange={e => setV(activeTab, { outfitEnabled: e.target.checked })}
+                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
+              <span style={{ color: 'var(--accent)' }}>✦ </span>服裝設定
+            </label>
+            {vState.outfitEnabled && (
+              <>
+                <textarea style={{ ...S.textarea, minHeight: 60 }}
+                  value={vState.outfit} onChange={e => setV(activeTab, { outfit: e.target.value })}
+                  placeholder="例如：白色禮服、黑色窄裙、學生制服、和服..." />
+                <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>服裝描述會加入生成提示詞，影響圖片中的穿著</p>
+              </>
+            )}
+          </div>
+
+          <div>
+            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={vState.aiPromptEnabled} onChange={e => setV(activeTab, { aiPromptEnabled: e.target.checked })}
                 style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
               <span style={{ color: 'var(--accent)' }}>✦ </span>AI 提示詞
@@ -2007,6 +2071,14 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                           color: vState.lastFlatDraft ? '#f7c87e' : '#7ef7c8',
                           border: `1px solid ${vState.lastFlatDraft ? '#6a4a1e' : '#1e6a4a'}` }}>
                           {vState.lastFlatDraft ? '單色稿 → 文字優先' : '正式上色 → 視覺優先'}
+                        </div>
+                      )}
+                      {vState.lastIpaUsed != null && (
+                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                          background: vState.lastIpaUsed ? '#0e1a2a' : '#1e1e1e',
+                          color: vState.lastIpaUsed ? '#7eb8f7' : '#666',
+                          border: `1px solid ${vState.lastIpaUsed ? '#2a5080' : '#444'}` }}>
+                          {vState.lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
                         </div>
                       )}
                     </div>

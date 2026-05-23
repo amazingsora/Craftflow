@@ -47,6 +47,7 @@ def _migrate() -> None:
     _add_columns("characters", [
         ("art_style_id", "INTEGER"),
         ("height", "INTEGER"),
+        ("outfit", "TEXT"),
     ])
 
 
