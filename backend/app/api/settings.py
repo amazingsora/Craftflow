@@ -12,6 +12,7 @@ Runtime settings endpoints (in-memory, reset on restart):
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import requests
@@ -62,16 +63,42 @@ def set_checkpoint(req: SetCheckpointRequest):
     return {"checkpoint": state.get_checkpoint()}
 
 
+_IPA_NODE_TYPES = {"IPAdapterAdvanced", "IPAdapter", "IPAdapterModelLoader"}
+
+
+def _wf_has_ipa(name: str) -> bool:
+    """Return True if the workflow JSON contains any IP-Adapter node."""
+    for base in (_CUSTOM_DIR, _SYSTEM_DIR):
+        path = base / name
+        if path.exists():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    wf = json.load(f)
+                return any(
+                    isinstance(n, dict) and n.get("class_type") in _IPA_NODE_TYPES
+                    for n in wf.values()
+                )
+            except Exception:
+                return False
+    return False
+
+
 @router.get("/workflows", summary="列出使用者自訂 workflow JSON 檔案")
 def list_workflows():
     _CUSTOM_DIR.mkdir(parents=True, exist_ok=True)
     workflows = sorted(p.name for p in _CUSTOM_DIR.glob("*.json"))
-    return {"workflows": workflows, "active": state.get_workflow(), "dir": str(_CUSTOM_DIR)}
+    return {
+        "workflows": workflows,
+        "active": state.get_workflow(),
+        "dir": str(_CUSTOM_DIR),
+        "ipa_support": {w: _wf_has_ipa(w) for w in workflows},
+    }
 
 
 @router.get("/workflow", summary="取得目前使用的 workflow")
 def get_workflow():
-    return {"workflow": state.get_workflow()}
+    wf = state.get_workflow()
+    return {"workflow": wf, "ipa_supported": _wf_has_ipa(wf)}
 
 
 class SetWorkflowRequest(BaseModel):
@@ -87,7 +114,7 @@ def set_workflow(req: SetWorkflowRequest):
     if not exists:
         raise HTTPException(status_code=404, detail=f"Workflow '{name}' 不存在")
     state.set_workflow(name)
-    return {"workflow": state.get_workflow()}
+    return {"workflow": state.get_workflow(), "ipa_supported": _wf_has_ipa(name)}
 
 
 @router.get("/vision-models", summary="列出 Ollama 已安裝的模型")

@@ -5,7 +5,11 @@
       "Read(//f//**)",
       "Read(//c//**)",
       "Bash(grep -v \"^$\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "PowerShell(Get-ChildItem \"F:\\\\wk\\\\ComfyUI_portable\\\\ComfyUI\\\\models\\\\controlnet\\\\\" | Select-Object Name, @{N='Size\\(MB\\)';E={[math]::Round\\($_.Length/1MB,1\\)}})",
+      "Read(//f/wk/ComfyUI_portable/ComfyUI/**)",
+      "Read(//f/wk/ComfyUI_portable/ComfyUI/comfy_extras/**)",
+      "Read(//f/wk/ComfyUI_portable/ComfyUI/custom_nodes/comfyui_controlnet_aux/src/**)"
     ]
   }
 }

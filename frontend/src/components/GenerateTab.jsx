@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 
 const DEFAULT_NEGATIVE =
   'low quality, blurry, watermark, text, signature, bad anatomy, extra limbs, deformed, ugly, duplicate, worst quality'
@@ -124,7 +124,7 @@ const S = {
   },
 }
 
-export default function GenerateTab({ onAddHistory, artStyleId = '' }) {
+export default function GenerateTab({ onAddHistory, artStyleId = '', pendingPrompt = '', onPromptConsumed }) {
   const [promptZh, setPromptZh] = useState(() => sessionStorage.getItem('gen_promptZh') ?? '')
   const [promptEn, setPromptEn] = useState(() => sessionStorage.getItem('gen_promptEn') ?? '')
   const [optimizedEn, setOptimizedEn] = useState(() => sessionStorage.getItem('gen_optimizedEn') ?? '')
@@ -139,12 +139,17 @@ export default function GenerateTab({ onAddHistory, artStyleId = '' }) {
   const [optimizeElapsed, setOptimizeElapsed] = useState(0)
   const optimizeTimer = useRef()
   const [copied, setCopied] = useState(false)
-  const [progress, setProgress] = useState(0)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState(null)
   const [lastSeed, setLastSeed] = useState(null)
-  const progressTimer = useRef()
   const elapsedTimer = useRef()
+
+  useEffect(() => {
+    if (!pendingPrompt) return
+    setPromptZhP(pendingPrompt)
+    setOptimizedEnP('')
+    onPromptConsumed?.()
+  }, [pendingPrompt])
 
   // Reference image guide mode
   const [refEnabled, setRefEnabled] = useState(false)
@@ -206,23 +211,13 @@ export default function GenerateTab({ onAddHistory, artStyleId = '' }) {
   }
 
   const startProgress = () => {
-    setProgress(0)
     setElapsed(0)
-    clearInterval(progressTimer.current)
     clearInterval(elapsedTimer.current)
-    progressTimer.current = setInterval(() => {
-      setProgress(old => {
-        if (old >= 95) return old
-        return old + (old < 80 ? 1.5 : 0.5)
-      })
-    }, 200)
     elapsedTimer.current = setInterval(() => setElapsed(old => old + 1), 1000)
   }
 
   const stopProgress = () => {
-    clearInterval(progressTimer.current)
     clearInterval(elapsedTimer.current)
-    setProgress(100)
   }
 
   const onGenerate = async () => {
@@ -292,7 +287,6 @@ export default function GenerateTab({ onAddHistory, artStyleId = '' }) {
       })
     } catch (e) {
       setError(e.message)
-      clearInterval(progressTimer.current)
       clearInterval(elapsedTimer.current)
     } finally {
       setLoading(false)
@@ -559,16 +553,11 @@ export default function GenerateTab({ onAddHistory, artStyleId = '' }) {
         {loading && (
           <div style={S.loading}>
             <div style={S.spinner} />
-            <div style={{ width: '100%', maxWidth: 300, background: 'var(--border)', height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 12 }}>
-              <div style={{ width: `${progress}%`, background: 'var(--accent)', height: '100%', transition: 'width 0.4s ease-out' }} />
+            <div style={{ width: '100%', maxWidth: 300, background: 'var(--border)', height: 6, borderRadius: 3, overflow: 'hidden', position: 'relative', marginTop: 12 }}>
+              <div style={{ position: 'absolute', height: '100%', background: 'var(--accent)', borderRadius: 3, animation: 'indeterminate 1.6s ease-in-out infinite' }} />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: 300, marginTop: 4 }}>
-               <span style={{ fontSize: 12, fontWeight: 600 }}>ComfyUI 正在繪圖中...</span>
-               <span style={{ fontSize: 12 }}>{Math.round(progress)}%</span>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>
-               已耗時: {elapsed}s | 預計總需: 10-20s
-            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4 }}>ComfyUI 正在繪圖中...</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>已耗時：{elapsed}s</div>
           </div>
         )}
         {!loading && result && (
