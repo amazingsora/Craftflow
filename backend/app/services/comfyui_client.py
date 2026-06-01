@@ -33,7 +33,29 @@ def upload_image_bytes(image_bytes: bytes, filename: str) -> str:
 
 def submit_workflow(workflow: dict) -> str:
     """Submit a workflow dict and return its prompt_id."""
-    payload = {"prompt": workflow, "client_id": str(uuid.uuid4())}
+    # Build a synthetic UI-format workflow so that custom nodes which call
+    # extra_pnginfo["workflow"]["nodes"] (e.g. KJNodes GetWidgetValue,
+    # comfyui-easy-use EasyLog, Impact Pack util nodes) don't crash.
+    # UI format: nodes is a list; each node has integer "id" and
+    # "inputs" as a list of slot dicts {name, type?, link?} — NOT a dict.
+    synthetic_nodes = []
+    for nid, node in workflow.items():
+        if not isinstance(node, dict) or "class_type" not in node:
+            continue
+        api_inputs = node.get("inputs", {})
+        ui_inputs = [{"name": k} for k in api_inputs]
+        synthetic_nodes.append({
+            "id": int(nid) if str(nid).isdigit() else nid,
+            "type": node["class_type"],
+            "class_type": node["class_type"],
+            "inputs": ui_inputs,
+            "_meta": node.get("_meta", {}),
+        })
+    payload = {
+        "prompt": workflow,
+        "client_id": str(uuid.uuid4()),
+        "extra_data": {"extra_pnginfo": {"workflow": {"nodes": synthetic_nodes}}},
+    }
     r = requests.post(f"{COMFYUI_BASE}/prompt", json=payload, timeout=30)
     if not r.ok:
         try:
@@ -79,3 +101,50 @@ def download_image(filename: str) -> bytes:
     )
     r.raise_for_status()
     return r.content
+
+
+# ── WD14 Tagger support ───────────────────────────────────────────────────────
+
+_WD14_CANDIDATES = [
+    "WD14Tagger|pysssss",   # pythongosssss/ComfyUI-Custom-Scripts
+    "WDTagger",             # various forks
+    "WD14Tagger",           # generic
+]
+
+
+def detect_wd14_node() -> str | None:
+    """Return the class_type of an available WD14 tagger node, or None."""
+    try:
+        r = requests.get(f"{COMFYUI_BASE}/object_info", timeout=8)
+        if not r.ok:
+            return None
+        available = set(r.json().keys())
+        for candidate in _WD14_CANDIDATES:
+            if candidate in available:
+                return candidate
+    except Exception:
+        pass
+    return None
+
+
+def wait_for_text_result(prompt_id: str, timeout: int = 90) -> list[str]:
+    """Poll until job completes; return all text/tags outputs from any node."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = requests.get(f"{COMFYUI_BASE}/history/{prompt_id}", timeout=10)
+        data = r.json()
+        if prompt_id in data:
+            outputs = data[prompt_id].get("outputs", {})
+            texts: list[str] = []
+            for node_out in outputs.values():
+                for key in ("text", "tags", "result", "string"):
+                    raw = node_out.get(key)
+                    if raw is None:
+                        continue
+                    if isinstance(raw, list):
+                        texts.extend(str(t) for t in raw if t)
+                    elif isinstance(raw, str) and raw:
+                        texts.append(raw)
+            return texts
+        time.sleep(2)
+    raise TimeoutError(f"ComfyUI job {prompt_id} timed out after {timeout}s")

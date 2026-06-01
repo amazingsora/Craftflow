@@ -63,7 +63,6 @@ const TABS = [
   { id: 'compose', label: '草圖問答' },
   { id: 'character', label: '角色管理' },
   { id: 'artstyle', label: '畫風' },
-  { id: 'training', label: 'LoRA 訓練' },
 ]
 
 const S = {
@@ -126,24 +125,24 @@ const S = {
   },
   historyScroll: {
     display: 'flex',
-    gap: 10,
+    gap: 14,
     overflowX: 'auto',
-    paddingBottom: 4,
+    paddingBottom: 6,
   },
   historyEmpty: { color: 'var(--muted)', fontSize: 13 },
   historyItemWrap: {
     flex: '0 0 auto',
-    width: 100,
+    width: 150,
     display: 'flex',
     flexDirection: 'column',
-    gap: 4,
+    gap: 6,
     position: 'relative',
   },
   historyThumb: {
-    width: 100,
-    height: 100,
+    width: 150,
+    height: 150,
     objectFit: 'cover',
-    borderRadius: 8,
+    borderRadius: 10,
     border: '1px solid var(--border)',
     cursor: 'zoom-in',
     transition: 'border-color .15s',
@@ -151,16 +150,16 @@ const S = {
   },
   historyDeleteBtn: {
     position: 'absolute',
-    top: 3,
-    left: 3,
-    width: 18,
-    height: 18,
+    top: 5,
+    left: 5,
+    width: 20,
+    height: 20,
     borderRadius: '50%',
-    background: 'rgba(0,0,0,.72)',
+    background: 'rgba(0,0,0,.75)',
     border: 'none',
     color: '#fff',
-    fontSize: 12,
-    lineHeight: '18px',
+    fontSize: 13,
+    lineHeight: '20px',
     textAlign: 'center',
     cursor: 'pointer',
     padding: 0,
@@ -215,14 +214,18 @@ const S = {
   badge: {
     fontSize: 11,
     borderRadius: 4,
-    padding: '1px 6px',
-    fontWeight: 600,
-    alignSelf: 'flex-start',
+    padding: '2px 7px',
+    fontWeight: 700,
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    zIndex: 1,
   },
   badgeProcess: { background: '#2d3a5c', color: '#7eb8f7' },
   badgeGenerate: { background: '#3a2d5c', color: '#c07ef7' },
   badgeCompose: { background: '#1e3a2d', color: '#7ef7b0' },
-  historyMeta: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.3 },
+  historyMeta: { fontSize: 12, color: 'var(--text)', lineHeight: 1.5 },
+  historyMetaSub: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 1 },
   gearBtn: {
     background: 'none',
     border: '1px solid var(--border)',
@@ -290,10 +293,13 @@ export default function App() {
   const [activeCheckpoint, setActiveCheckpoint] = useState('')
   const [workflows, setWorkflows] = useState([])
   const [activeWorkflow, setActiveWorkflow] = useState('text_to_image.json')
+  const [workflowIpaSupported, setWorkflowIpaSupported] = useState(false)
   const [generationMode, setGenerationMode] = useState(
     () => localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint'
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pendingGenPrompt, setPendingGenPrompt] = useState('')
+  const [historyFilter, setHistoryFilter] = useState('all')
   const [visionModels, setVisionModels] = useState([])
   const [activeVisionModel, setActiveVisionModel] = useState(
     () => localStorage.getItem('craftflow_vision_model') ?? ''
@@ -344,6 +350,7 @@ export default function App() {
           ? savedWorkflow
           : (list.includes(data.active) ? data.active : (list[0] ?? 'text_to_image.json'))
         setActiveWorkflow(target)
+        setWorkflowIpaSupported(!!(data.ipa_support?.[target]))
         // checkpoint 模式永遠讓後端用 text_to_image.json；workflow 模式才套用自訂 workflow
         const backendWorkflow = (localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint') === 'workflow'
           ? target
@@ -378,14 +385,16 @@ export default function App() {
       })
       .catch(() => {})
 
-    fetch('/api/v1/settings/vision-models')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (!data) return
-        const models = data.models ?? []
+    Promise.all([
+      fetch('/api/v1/settings/vision-models').then(r => r.ok ? r.json() : {}),
+      fetch('/api/v1/settings/text-model').then(r => r.ok ? r.json() : {}),
+    ])
+      .then(([vData, tData]) => {
+        const models = vData.models ?? []
+        const textDefault = tData.default ?? tData.model ?? models[0] ?? ''
         const target = (savedTextModel && models.includes(savedTextModel))
           ? savedTextModel
-          : (data.default ?? models[0] ?? '')
+          : textDefault
         setActiveTextModel(target)
         if (target) {
           fetch('/api/v1/settings/text-model', {
@@ -431,11 +440,15 @@ export default function App() {
   const onWorkflowChange = async (name) => {
     setActiveWorkflow(name)
     localStorage.setItem('craftflow_workflow', name)
-    await fetch('/api/v1/settings/workflow', {
+    const res = await fetch('/api/v1/settings/workflow', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workflow: name }),
-    }).catch(() => {})
+    }).catch(() => null)
+    if (res?.ok) {
+      const data = await res.json().catch(() => null)
+      if (data) setWorkflowIpaSupported(!!data.ipa_supported)
+    }
   }
 
   const onGenerationModeChange = async (mode) => {
@@ -453,6 +466,11 @@ export default function App() {
   const switchTab = (id) => {
     localStorage.setItem('craftflow_tab', id)
     setTab(id)
+  }
+
+  const onSendToGenerate = (promptZh) => {
+    setPendingGenPrompt(promptZh)
+    switchTab('generate')
   }
 
   const addHistory = async (item) => {
@@ -492,7 +510,7 @@ export default function App() {
     <div style={S.page}>
       <div style={S.header}>
         <div style={S.headerLeft}>
-          <div style={S.title}>Craftflow 生圖測試台</div>
+          <div style={S.title}>Craftflow</div>
           <div style={S.subtitle}>
             ComfyUI · {generationMode === 'workflow'
               ? (activeWorkflow.replace('.json', '') || 'workflow 模式')
@@ -537,26 +555,32 @@ export default function App() {
           <ProcessTab onAddHistory={addHistory} />
         </div>
         <div style={{ display: tab === 'generate' ? 'block' : 'none' }}>
-          <GenerateTab onAddHistory={addHistory} />
+          <GenerateTab
+            onAddHistory={addHistory}
+            pendingPrompt={pendingGenPrompt}
+            onPromptConsumed={() => setPendingGenPrompt('')}
+          />
         </div>
         <div style={{ display: tab === 'compose' ? 'block' : 'none' }}>
-          <ComposeTab onAddHistory={addHistory} activeVisionModel={activeVisionModel} />
+          <ComposeTab
+            onAddHistory={addHistory}
+            activeVisionModel={activeVisionModel}
+            ipaSupported={generationMode === 'checkpoint' || workflowIpaSupported}
+            onSendToGenerate={onSendToGenerate}
+          />
         </div>
         <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
-          <CharacterTab onAddHistory={addHistory} />
+          <CharacterTab onAddHistory={addHistory} onSendToGenerate={onSendToGenerate} />
         </div>
         <div style={{ display: tab === 'artstyle' ? 'block' : 'none' }}>
           <ArtStyleTab />
-        </div>
-        <div style={{ display: tab === 'training' ? 'block' : 'none' }}>
-          <TrainingTab />
         </div>
       </div>
 
       {/* Settings modal */}
       {settingsOpen && (
         <div style={S.modalOverlay} onClick={e => e.target === e.currentTarget && setSettingsOpen(false)}>
-          <div style={S.modalBox}>
+          <div style={{ ...S.modalBox, maxWidth: 560 }}>
             <div style={S.modalHeader}>
               <span style={S.modalTitle}>⚙ 設定</span>
               <button style={S.modalClose} onClick={() => setSettingsOpen(false)}>×</button>
@@ -577,6 +601,10 @@ export default function App() {
                 activeTextModel={activeTextModel}
                 onTextModelChange={onTextModelChange}
               />
+              <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)', marginBottom: 12 }}>LoRA 訓練</div>
+                <TrainingTab />
+              </div>
             </div>
           </div>
         </div>
@@ -598,36 +626,81 @@ export default function App() {
           </div>
         </div>
 
+        {historyVisible && history.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+            {[
+              { key: 'all', label: '全部' },
+              { key: 'process', label: '線稿' },
+              { key: 'generate', label: '生圖' },
+              { key: 'compose', label: '問答' },
+              { key: 'character', label: '角色' },
+            ].map(f => (
+              <button
+                key={f.key}
+                onClick={() => setHistoryFilter(f.key)}
+                style={{
+                  fontSize: 11, padding: '2px 10px', borderRadius: 20, cursor: 'pointer',
+                  border: historyFilter === f.key ? 'none' : '1px solid var(--border)',
+                  background: historyFilter === f.key ? 'var(--accent)' : 'transparent',
+                  color: historyFilter === f.key ? '#fff' : 'var(--muted)',
+                  fontWeight: historyFilter === f.key ? 600 : 400,
+                }}
+              >{f.label}</button>
+            ))}
+          </div>
+        )}
+
         {historyVisible && (
-          history.length === 0
-            ? <span style={S.historyEmpty}>尚無記錄，生成後圖片會保留在此</span>
-            : (
+          (() => {
+            const filtered = historyFilter === 'all' ? history
+              : historyFilter === 'generate' ? history.filter(h => ['generate', 'i2i', 'controlnet', 'ipadapter'].includes(h.type))
+              : history.filter(h => h.type === historyFilter)
+            return filtered.length === 0
+              ? <span style={S.historyEmpty}>{history.length === 0 ? '尚無記錄，生成後圖片會保留在此' : '此類型無記錄'}</span>
+              : (
               <div style={S.historyScroll}>
-                {history.map((item) => (
+                {filtered.map((item) => (
                   <div key={item.id} style={S.historyItemWrap}>
                     <button
                       style={S.historyDeleteBtn}
                       onClick={() => deleteHistory(item.id)}
                       title="刪除"
                     >×</button>
+                    <span style={{ ...S.badge, ..._badgeStyle(item.type, S) }}>
+                      {_badgeLabel(item.type)}
+                    </span>
                     <img
                       src={item.thumbnail ?? item.url}
                       style={S.historyThumb}
                       alt=""
                       onClick={() => setLightboxItem(item)}
                     />
-                    <span style={{ ...S.badge, ..._badgeStyle(item.type, S) }}>
-                      {_badgeLabel(item.type)}
-                    </span>
-                    <span style={S.historyMeta}>
-                      {formatTime(item.ts)}<br />
-                      {item.label}
-                      {item.model && <><br /><span title={item.model} style={{ fontSize: 10, opacity: 0.65 }}>{_shortModel(item.model)}</span></>}
-                    </span>
+                    <div>
+                      <div style={S.historyMeta}>{formatTime(item.ts)}</div>
+                      {item.label && (
+                        <div style={S.historyMeta} title={item.label}>
+                          {item.label.length > 22 ? item.label.slice(0, 21) + '…' : item.label}
+                        </div>
+                      )}
+                      {item.model && (
+                        <div style={S.historyMetaSub} title={item.model}>
+                          {_shortModel(item.model)}
+                        </div>
+                      )}
+                      {item.params && (item.params.ipa != null || item.params.cn != null || item.params.cnMode) && (
+                        <div style={S.historyMetaSub}>
+                          {item.params.ipa != null ? `IPA ${Number(item.params.ipa).toFixed(2)}` : 'IPA off'}
+                          {' · '}
+                          {item.params.cn != null ? `CN ${Number(item.params.cn).toFixed(2)}` : 'CN off'}
+                          {item.params.cnMode ? ` (${item.params.cnMode})` : ''}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             )
+          })()
         )}
       </div>
 
@@ -642,15 +715,36 @@ export default function App() {
               alt=""
             />
             <div style={S.lightboxFooter}>
-              <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                {_badgeLabel(lightboxItem.type)} · {formatTime(lightboxItem.ts)}
-                {lightboxItem.label ? ` · ${lightboxItem.label}` : ''}
-                {lightboxItem.model ? <><br /><span title={lightboxItem.model}>{_shortModel(lightboxItem.model)}</span></> : ''}
-              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ ...S.badge, position: 'static', ..._badgeStyle(lightboxItem.type, S) }}>
+                    {_badgeLabel(lightboxItem.type)}
+                  </span>
+                  <span style={{ fontSize: 13, color: 'var(--text)' }}>{formatTime(lightboxItem.ts)}</span>
+                  {lightboxItem.model && (
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }} title={lightboxItem.model}>
+                      {_shortModel(lightboxItem.model)}
+                    </span>
+                  )}
+                </div>
+                {lightboxItem.label && (
+                  <div style={{ fontSize: 13, color: 'var(--muted)', maxWidth: '60vw' }}>
+                    {lightboxItem.label}
+                  </div>
+                )}
+                {lightboxItem.params && (lightboxItem.params.ipa != null || lightboxItem.params.cn != null || lightboxItem.params.cnMode) && (
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    {lightboxItem.params.ipa != null ? `IPA ${Number(lightboxItem.params.ipa).toFixed(2)}` : 'IPA off'}
+                    {' · '}
+                    {lightboxItem.params.cn != null ? `CN ${Number(lightboxItem.params.cn).toFixed(2)}` : 'CN off'}
+                    {lightboxItem.params.cnMode ? ` (${lightboxItem.params.cnMode})` : ''}
+                  </div>
+                )}
+              </div>
               <a
                 href={lightboxItem.url}
                 download={lightboxItem.filename}
-                style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
+                style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600, flexShrink: 0 }}
               >
                 下載
               </a>
