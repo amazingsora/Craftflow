@@ -974,14 +974,46 @@ function CharacterCreateView({ project, onBack, onCreate }) {
 
 const DEFAULT_TAB_NAMES = ['主版本', 'Tab 2', 'Tab 3']
 
-function _initVariant(v = {}) {
+// Persist generate-checkbox prefs in localStorage so they survive page reload.
+// Key: "craftflow_genprefs_<charId>" for main char, "craftflow_genprefs_<charId>_v<slot>" for variants.
+const _genPrefsKey = (charId, slot) =>
+  slot != null ? `craftflow_genprefs_${charId}_v${slot}` : `craftflow_genprefs_${charId}`
+
+const _loadGenPrefs = (charId, slot, defaults) => {
+  try {
+    const raw = localStorage.getItem(_genPrefsKey(charId, slot))
+    if (raw) return { ...defaults, ...JSON.parse(raw) }
+  } catch {}
+  return defaults
+}
+
+const _saveGenPref = (charId, slot, key, value) => {
+  try {
+    const k = _genPrefsKey(charId, slot)
+    const prev = JSON.parse(localStorage.getItem(k) || '{}')
+    localStorage.setItem(k, JSON.stringify({ ...prev, [key]: value }))
+  } catch {}
+}
+
+function _initVariant(v = {}, charId = null, slot = null) {
+  const prefs = _loadGenPrefs(charId, slot, {
+    aiPromptEnabled: !!(v.ai_prompt),
+    outfitEnabled: !!(v.outfit),
+    ipaEnabled: true,
+    ipaWeight: 0.6,
+    cnEnabled: true,
+    cnWeight: 0.85,
+  })
   return {
     color: v.color ?? '', traits: v.core_traits ?? '',
     behavior: v.behavior_rules ?? '', voice: v.voice_style ?? '',
     notes: v.notes ?? '', aiPrompt: v.ai_prompt ?? '',
-    aiPromptEnabled: !!(v.ai_prompt),
-    outfit: v.outfit ?? '', outfitEnabled: !!(v.outfit),
-    ipaEnabled: true,
+    aiPromptEnabled: prefs.aiPromptEnabled,
+    outfit: v.outfit ?? '', outfitEnabled: prefs.outfitEnabled,
+    ipaEnabled: prefs.ipaEnabled,
+    ipaWeight: prefs.ipaWeight,
+    cnEnabled: prefs.cnEnabled,
+    cnWeight: prefs.cnWeight,
     age: v.age != null ? String(v.age) : '', height: v.height != null ? String(v.height) : '', birthday: v.birthday ?? '',
     gender: v.gender ?? null, aiSummary: v.ai_summary ?? null,
     conceptImages: v.concept_images ?? [], aiImages: v.ai_generated_images ?? [],
@@ -992,7 +1024,7 @@ function _initVariant(v = {}) {
   }
 }
 
-function CharacterDetailView({ character: initChar, project, allFactions, onBack, onDeleted, onAddHistory }) {
+function CharacterDetailView({ character: initChar, project, allFactions, onBack, onDeleted, onAddHistory, onSendToGenerate }) {
   const [char, setChar] = useState(initChar)
   const [charName, setCharName] = useState(initChar.name)
   const [color, setColor] = useState(initChar.color ?? '')
@@ -1023,10 +1055,26 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   const [deletingAiIdx, setDeletingAiIdx] = useState(null)
   const [artStyleId, setArtStyleId] = useState(initChar.art_style_id ?? null)
   const [artStyles, setArtStyles] = useState([])
-  const [aiPromptEnabled, setAiPromptEnabled] = useState(!!initChar.ai_prompt)
+  const [aiPromptEnabled, setAiPromptEnabled] = useState(
+    () => _loadGenPrefs(initChar.id, null, { aiPromptEnabled: !!initChar.ai_prompt }).aiPromptEnabled
+  )
   const [outfit, setOutfit] = useState(initChar.outfit ?? '')
-  const [outfitEnabled, setOutfitEnabled] = useState(!!initChar.outfit)
-  const [ipaEnabled, setIpaEnabled] = useState(true)
+  const [outfitEnabled, setOutfitEnabled] = useState(
+    () => _loadGenPrefs(initChar.id, null, { outfitEnabled: !!initChar.outfit }).outfitEnabled
+  )
+  const [ipaEnabled, setIpaEnabled] = useState(
+    () => _loadGenPrefs(initChar.id, null, { ipaEnabled: true }).ipaEnabled
+  )
+  const [ipaWeight, setIpaWeight] = useState(
+    () => _loadGenPrefs(initChar.id, null, { ipaWeight: 0.6 }).ipaWeight
+  )
+  // ControlNet 與 IPA 為兩個獨立後端參數，UI 拆開避免「一個開關控制兩者」的誤解
+  const [cnEnabled, setCnEnabled] = useState(
+    () => _loadGenPrefs(initChar.id, null, { cnEnabled: true }).cnEnabled
+  )
+  const [cnWeight, setCnWeight] = useState(
+    () => _loadGenPrefs(initChar.id, null, { cnWeight: 0.85 }).cnWeight
+  )
   const [showDebugPrompt, setShowDebugPrompt] = useState(false)
   const [lastDebugPrompt, setLastDebugPrompt] = useState(null)
   const [lastRawDesc, setLastRawDesc] = useState(null)
@@ -1049,7 +1097,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   // Variant state: 2 slots (Tab 2 = index 0, Tab 3 = index 1)
   const [vs, setVs] = useState(() => {
     const vars = initChar.variants || []
-    return [_initVariant(vars[0] || {}), _initVariant(vars[1] || {})]
+    return [_initVariant(vars[0] || {}, initChar.id, 1), _initVariant(vars[1] || {}, initChar.id, 2)]
   })
   const setV = (slot, upd) =>
     setVs(prev => prev.map((v, i) => i === slot - 1 ? { ...v, ...upd } : v))
@@ -1129,6 +1177,9 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         use_ai_prompt: aiPromptEnabled ? '1' : '0',
         use_outfit: outfitEnabled ? '1' : '0',
         use_ipa: ipaEnabled ? '1' : '0',
+        ipa_weight: String(ipaWeight),
+        use_controlnet: cnEnabled ? '1' : '0',
+        cn_weight: String(cnWeight),
       })
       const resp = await fetch(`${API}/characters/${char.id}/generate-design?${params}`, { method: 'POST' })
       if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
@@ -1169,7 +1220,15 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
       setPendingQueue([{ blob, url, label: '全身人設圖' }])
-      onAddHistory?.({ type: 'character', url, filename: `${char.name}_design_${Date.now()}.png`, label: `${char.name} 人設圖` })
+      onAddHistory?.({
+        type: 'character', url, filename: `${char.name}_design_${Date.now()}.png`, label: `${char.name} 人設圖`,
+        model: resp.headers.get('X-Style') || null,
+        params: {
+          ipa: ipaEnabled ? Number(ipaWeight) : null,
+          cn: cnEnabled ? Number(cnWeight) : null,
+          cnMode: resp.headers.get('X-CN-Mode') || null,
+        },
+      })
     } catch (e) { setError(e.message) }
     finally { setGenerating(false) }
   }
@@ -1334,6 +1393,9 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         use_ai_prompt: vState.aiPromptEnabled ? '1' : '0',
         use_outfit: vState.outfitEnabled ? '1' : '0',
         use_ipa: vState.ipaEnabled ? '1' : '0',
+        ipa_weight: String(vState.ipaWeight ?? 0.6),
+        use_controlnet: (vState.cnEnabled ?? true) ? '1' : '0',
+        cn_weight: String(vState.cnWeight ?? 0.85),
       })
       const resp = await fetch(`${API}/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
       if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
@@ -1363,7 +1425,15 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         lastIpaUsed: ipaUsed,
         pendingQueue: [{ blob, url, label: '全身人設圖' }],
       })
-      onAddHistory?.({ type: 'character', url, filename: `${char.name}_v${slot}_design_${Date.now()}.png`, label: `${char.name} 人設圖（Tab ${slot}）` })
+      onAddHistory?.({
+        type: 'character', url, filename: `${char.name}_v${slot}_design_${Date.now()}.png`, label: `${char.name} 人設圖（Tab ${slot}）`,
+        model: resp.headers.get('X-Style') || null,
+        params: {
+          ipa: vState.ipaEnabled ? Number(vState.ipaWeight ?? 0.6) : null,
+          cn: (vState.cnEnabled ?? true) ? Number(vState.cnWeight ?? 0.85) : null,
+          cnMode: resp.headers.get('X-CN-Mode') || null,
+        },
+      })
     } catch (e) { setError(e.message); setV(slot, { generating: false }) }
   }
 
@@ -1405,6 +1475,18 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           {char.color && <span style={{ ...S.colorDot, background: char.color }} />}
           <span style={{ color: 'var(--text)', fontWeight: 600 }}>{char.name}</span>
         </div>
+        {onSendToGenerate && (
+          <button
+            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+            onClick={() => {
+              const parts = [char.name]
+              if (char.core_traits) parts.push(char.core_traits)
+              if (char.outfit) parts.push(`服裝：${char.outfit}`)
+              onSendToGenerate(parts.join('，'))
+            }}
+            title="將角色特徵帶入文字→生圖 Tab"
+          >→ 以此角色生圖</button>
+        )}
       </div>
 
       {/* ── Tab bar ── */}
@@ -1506,19 +1588,46 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
           {/* AI 人設圖 */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: ipaEnabled ? 8 : 6 }}>
               <span style={S.sectionLabel}>AI 人設圖（{aiImages.length}/8）</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: ipaEnabled ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
-                  <input type="checkbox" checked={ipaEnabled} onChange={e => setIpaEnabled(e.target.checked)}
+                  <input type="checkbox" checked={ipaEnabled} onChange={e => { setIpaEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'ipaEnabled', e.target.checked) }}
                     style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
                   概念圖參考
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: cnEnabled ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={cnEnabled} onChange={e => { setCnEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'cnEnabled', e.target.checked) }}
+                    style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
+                  ControlNet
                 </label>
                 <button style={S.btnSm} disabled={generating} onClick={generateDesignImage}>
                   {generating ? <><Spinner />生成中...</> : '生成人設圖'}
                 </button>
               </div>
             </div>
+            {ipaEnabled && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>IPA 強度</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
+                <input type="range" min={0.1} max={1.5} step={0.05} value={ipaWeight}
+                  style={{ flex: 1, accentColor: '#7eb8f7' }}
+                  onChange={e => { const v = Number(e.target.value); setIpaWeight(v); _saveGenPref(initChar.id, null, 'ipaWeight', v) }} />
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
+                <span style={{ fontSize: 12, color: '#7eb8f7', minWidth: 30, textAlign: 'right' }}>{ipaWeight.toFixed(2)}</span>
+              </div>
+            )}
+            {cnEnabled && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>CN 強度</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
+                <input type="range" min={0.1} max={1.5} step={0.05} value={cnWeight}
+                  style={{ flex: 1, accentColor: '#7eb8f7' }}
+                  onChange={e => { const v = Number(e.target.value); setCnWeight(v); _saveGenPref(initChar.id, null, 'cnWeight', v) }} />
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
+                <span style={{ fontSize: 12, color: '#7eb8f7', minWidth: 30, textAlign: 'right' }}>{cnWeight.toFixed(2)}</span>
+              </div>
+            )}
 
             {/* 待確認佇列（一次顯示一張） */}
             {pendingQueue.length > 0 && (
@@ -1733,7 +1842,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               <input
                 type="checkbox"
                 checked={outfitEnabled}
-                onChange={e => setOutfitEnabled(e.target.checked)}
+                onChange={e => { setOutfitEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'outfitEnabled', e.target.checked) }}
                 style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
               />
               <span style={{ color: 'var(--accent)' }}>✦ </span>服裝設定
@@ -1756,7 +1865,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               <input
                 type="checkbox"
                 checked={aiPromptEnabled}
-                onChange={e => setAiPromptEnabled(e.target.checked)}
+                onChange={e => { setAiPromptEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'aiPromptEnabled', e.target.checked) }}
                 style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
               />
               <span style={{ color: 'var(--accent)' }}>✦ </span>AI 提示詞
@@ -1909,19 +2018,46 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
           {/* Variant AI images */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: vState.ipaEnabled ? 8 : 6 }}>
               <span style={S.sectionLabel}>AI 人設圖（{vState.aiImages.length}/8）</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: vState.ipaEnabled ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
-                  <input type="checkbox" checked={vState.ipaEnabled} onChange={e => setV(activeTab, { ipaEnabled: e.target.checked })}
+                  <input type="checkbox" checked={vState.ipaEnabled} onChange={e => { setV(activeTab, { ipaEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'ipaEnabled', e.target.checked) }}
                     style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
                   概念圖參考
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: (vState.cnEnabled ?? true) ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={vState.cnEnabled ?? true} onChange={e => { setV(activeTab, { cnEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'cnEnabled', e.target.checked) }}
+                    style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
+                  ControlNet
                 </label>
                 <button style={S.btnSm} disabled={vState.generating} onClick={generateVariantDesignImage}>
                   {vState.generating ? <><Spinner />生成中...</> : '生成人設圖'}
                 </button>
               </div>
             </div>
+            {vState.ipaEnabled && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>IPA 強度</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
+                <input type="range" min={0.1} max={1.5} step={0.05} value={vState.ipaWeight ?? 0.6}
+                  style={{ flex: 1, accentColor: '#7eb8f7' }}
+                  onChange={e => { const v = Number(e.target.value); setV(activeTab, { ipaWeight: v }); _saveGenPref(initChar.id, activeTab, 'ipaWeight', v) }} />
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
+                <span style={{ fontSize: 12, color: '#7eb8f7', minWidth: 30, textAlign: 'right' }}>{(vState.ipaWeight ?? 0.6).toFixed(2)}</span>
+              </div>
+            )}
+            {(vState.cnEnabled ?? true) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>CN 強度</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
+                <input type="range" min={0.1} max={1.5} step={0.05} value={vState.cnWeight ?? 0.85}
+                  style={{ flex: 1, accentColor: '#7eb8f7' }}
+                  onChange={e => { const v = Number(e.target.value); setV(activeTab, { cnWeight: v }); _saveGenPref(initChar.id, activeTab, 'cnWeight', v) }} />
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
+                <span style={{ fontSize: 12, color: '#7eb8f7', minWidth: 30, textAlign: 'right' }}>{(vState.cnWeight ?? 0.85).toFixed(2)}</span>
+              </div>
+            )}
             {vState.pendingQueue.length > 0 && (
               <div style={{ marginBottom: 10, border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -2038,7 +2174,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           </div>
           <div>
             <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="checkbox" checked={vState.outfitEnabled} onChange={e => setV(activeTab, { outfitEnabled: e.target.checked })}
+              <input type="checkbox" checked={vState.outfitEnabled} onChange={e => { setV(activeTab, { outfitEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'outfitEnabled', e.target.checked) }}
                 style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
               <span style={{ color: 'var(--accent)' }}>✦ </span>服裝設定
             </label>
@@ -2054,7 +2190,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
           <div>
             <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="checkbox" checked={vState.aiPromptEnabled} onChange={e => setV(activeTab, { aiPromptEnabled: e.target.checked })}
+              <input type="checkbox" checked={vState.aiPromptEnabled} onChange={e => { setV(activeTab, { aiPromptEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'aiPromptEnabled', e.target.checked) }}
                 style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
               <span style={{ color: 'var(--accent)' }}>✦ </span>AI 提示詞
             </label>
@@ -2134,7 +2270,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function CharacterTab({ onAddHistory }) {
+export default function CharacterTab({ onAddHistory, onSendToGenerate }) {
   // view: 'projects' | 'project_create' | 'char_list' | 'faction_detail' | 'char_create' | 'char_detail'
   const [view, setView] = useState('projects')
   const [selectedProject, setSelectedProject] = useState(null)
@@ -2189,6 +2325,7 @@ export default function CharacterTab({ onAddHistory }) {
         onBack={() => returnTo === 'faction_detail' ? goFactionDetail() : goCharList()}
         onDeleted={goCharList}
         onAddHistory={onAddHistory}
+        onSendToGenerate={onSendToGenerate}
       />
     )
   }

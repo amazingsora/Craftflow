@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 const S = {
   root: { display: 'flex', gap: 24, alignItems: 'flex-start' },
@@ -128,22 +128,23 @@ const PLACEHOLDER_QUESTIONS = [
   '主角位置太居中，怎麼調整讓畫面更有張力？',
 ]
 
-export default function ComposeTab({ onAddHistory, activeVisionModel }) {
+export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupported = true, onSendToGenerate }) {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [question, setQuestion] = useState(() => sessionStorage.getItem('compose_question') ?? '')
   const [result, setResult] = useState(null)   // { advice, suggested_prompt, image (b64), seed }
   const [loading, setLoading] = useState(false)
-  const [progress, setProgress] = useState(0)
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState(null)
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef()
-  const progressTimer = useRef()
   const elapsedTimer = useRef()
 
   // IP-Adapter 角色外觀參考
   const [ipaEnabled, setIpaEnabled] = useState(false)
+  useEffect(() => {
+    if (!ipaSupported) setIpaEnabled(false)
+  }, [ipaSupported])
   const [ipaFile, setIpaFile] = useState(null)
   const [ipaPreview, setIpaPreview] = useState(null)
   const [ipaWeight, setIpaWeight] = useState(0.6)
@@ -171,32 +172,13 @@ export default function ComposeTab({ onAddHistory, activeVisionModel }) {
   }
 
   const startProgress = () => {
-    setProgress(0)
     setElapsed(0)
-    clearInterval(progressTimer.current)
     clearInterval(elapsedTimer.current)
-    
-    // 進度條計時器
-    progressTimer.current = setInterval(() => {
-      setProgress(old => {
-        if (old >= 95) return old
-        // 7b 模型通常在 10-15 秒內完成分析，ComfyUI 4 秒
-        // 我們讓進度在前 15 秒走到 80% (Ollama)，之後 5 秒走到 95% (ComfyUI)
-        const step = old < 80 ? 1 : 0.5
-        return old + step
-      })
-    }, 200)
-
-    // 總時間計時器
-    elapsedTimer.current = setInterval(() => {
-      setElapsed(old => old + 1)
-    }, 1000)
+    elapsedTimer.current = setInterval(() => setElapsed(old => old + 1), 1000)
   }
 
   const stopProgress = () => {
-    clearInterval(progressTimer.current)
     clearInterval(elapsedTimer.current)
-    setProgress(100)
   }
 
   const onSubmit = async () => {
@@ -237,7 +219,6 @@ export default function ComposeTab({ onAddHistory, activeVisionModel }) {
       })
     } catch (e) {
       setError(e.message)
-      clearInterval(progressTimer.current)
       clearInterval(elapsedTimer.current)
     } finally {
       setLoading(false)
@@ -289,16 +270,25 @@ export default function ComposeTab({ onAddHistory, activeVisionModel }) {
           padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10,
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>角色外觀參考</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+              角色外觀參考
+              {!ipaSupported && (
+                <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400, marginLeft: 6 }}>
+                  （目前 workflow 不支援 IP-Adapter）
+                </span>
+              )}
+            </span>
             <button
+              disabled={!ipaSupported}
               style={{
                 fontSize: 12, padding: '3px 10px', borderRadius: 6,
                 border: ipaEnabled ? 'none' : '1px solid var(--border)',
-                cursor: 'pointer',
+                cursor: ipaSupported ? 'pointer' : 'not-allowed',
+                opacity: ipaSupported ? 1 : 0.4,
                 background: ipaEnabled ? 'var(--accent)' : 'transparent',
                 color: ipaEnabled ? '#fff' : 'var(--muted)',
               }}
-              onClick={() => { setIpaEnabled(v => !v); setIpaFile(null); setIpaPreview(null) }}
+              onClick={() => { if (ipaSupported) { setIpaEnabled(v => !v); setIpaFile(null); setIpaPreview(null) } }}
             >
               {ipaEnabled ? '已啟用' : '未啟用'}
             </button>
@@ -355,21 +345,11 @@ export default function ComposeTab({ onAddHistory, activeVisionModel }) {
         {loading && (
           <div style={S.loading}>
             <div style={S.spinner} />
-            <div style={{ width: '100%', maxWidth: 300, background: 'var(--border)', height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 12 }}>
-              <div style={{ width: `${progress}%`, background: 'var(--accent)', height: '100%', transition: 'width 0.4s ease-out' }} />
+            <div style={{ width: '100%', maxWidth: 300, background: 'var(--border)', height: 6, borderRadius: 3, overflow: 'hidden', position: 'relative', marginTop: 12 }}>
+              <div style={{ position: 'absolute', height: '100%', background: 'var(--accent)', borderRadius: 3, animation: 'indeterminate 1.6s ease-in-out infinite' }} />
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: 300, marginTop: 4 }}>
-               <span style={{ fontWeight: 600 }}>
-                 {progress < 80 ? 'Step 1: AI 正在讀取並分析草圖內容...' : 
-                  progress < 95 ? 'Step 2: AI 正在畫出參考圖 (ComfyUI)...' : 
-                  'Step 3: 正在整理最後建議...'}
-               </span>
-               <span>{Math.round(progress)}%</span>
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8, display: 'flex', gap: 12 }}>
-               <span>已耗時: {elapsed}s</span>
-               <span>預計總需: 15-25s (7b 模型)</span>
-            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4 }}>AI 分析草圖 + ComfyUI 生成參考圖...</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>已耗時：{elapsed}s（通常 15-25s）</div>
           </div>
         )}
 
@@ -397,7 +377,16 @@ export default function ComposeTab({ onAddHistory, activeVisionModel }) {
 
             {/* SDXL prompt */}
             <div>
-              <p style={S.sectionLabel}>Ollama 生成的 SDXL Prompt</p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <p style={{ ...S.sectionLabel, marginBottom: 0 }}>Ollama 生成的 SDXL Prompt</p>
+                {onSendToGenerate && (
+                  <button
+                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+                    onClick={() => onSendToGenerate(question.trim())}
+                    title="將此次問題描述帶入文字→生圖 Tab"
+                  >→ 送到生圖</button>
+                )}
+              </div>
               <div style={S.promptPill}>{result.suggested_prompt}</div>
             </div>
 
