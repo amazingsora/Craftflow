@@ -1161,6 +1161,77 @@ def _hex_to_sd_color(hex_color: str) -> str:
         return "colored"
 
 
+def _detect_body_coverage(image_bytes: bytes) -> str:
+    """
+    Use the configured vision model to classify how much of the body is shown.
+    Returns: "full" | "partial" | "bust"
+    - full:    legs and feet visible
+    - partial: torso visible but legs cut off (upper body / three-quarter)
+    - bust:    face / shoulders only
+    Falls back to "partial" on any error.
+    """
+    prompt = (
+        "Look at this character illustration. How much of the body is shown?\n"
+        "Reply with exactly one word:\n"
+        "- 'full' if legs and feet are visible\n"
+        "- 'partial' if the torso is shown but legs are cut off\n"
+        "- 'bust' if only the face or shoulders are shown\n"
+        "One word only."
+    )
+    try:
+        result = _oc.analyze_image_bytes(image_bytes, prompt, model=state.get_vision_model())
+        result = result.strip().lower().split()[0] if result.strip() else ""
+        if result in ("full", "partial", "bust"):
+            return result
+        # fuzzy match
+        if any(k in result for k in ("full", "whole", "entire", "feet", "leg")):
+            return "full"
+        if any(k in result for k in ("bust", "face", "head", "shoulder")):
+            return "bust"
+        return "partial"
+    except Exception as e:
+        logger.warning("[body-coverage] detection failed: %s — defaulting to partial", e)
+        return "partial"
+
+
+_BODY_FILL_RATIO = {"full": 1.0, "partial": 0.72, "bust": 0.55}
+_BODY_TOP_OFFSET = {"full": 0.0, "partial": 0.04, "bust": 0.05}
+
+
+def _shrink_for_full_body(image_bytes: bytes, target_w: int, target_h: int, coverage: str) -> bytes:
+    """
+    Scale down the CN reference image so the character occupies only part of the canvas,
+    leaving room at the bottom for SD to generate the missing lower body.
+    coverage: "full" → no change (returns original for normal letterbox path)
+              "partial" → ~72 % canvas height, 4 % top offset
+              "bust"    → ~55 % canvas height, 5 % top offset
+    """
+    fill = _BODY_FILL_RATIO.get(coverage, 0.72)
+    if fill >= 1.0:
+        return image_bytes
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        w, h = img.size
+        max_h = int(target_h * fill)
+        max_w = target_w
+        scale = min(max_w / w, max_h / h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+
+        bg = _border_color(img)
+        canvas = Image.new("RGB", (target_w, target_h), bg)
+        top = int(target_h * _BODY_TOP_OFFSET.get(coverage, 0.04))
+        left = (target_w - new_w) // 2
+        canvas.paste(img, (left, top))
+
+        out = io.BytesIO()
+        canvas.save(out, format="PNG")
+        return out.getvalue()
+    except Exception as e:
+        logger.error("[shrink-full-body] error: %s", e)
+        return image_bytes
+
+
 def _age_gender_tag(gender: str | None, age: int | None) -> str:
     """
     Return the primary SD subject tag(s) based on gender + age.
@@ -1272,7 +1343,7 @@ async def generate_character_design(
     expression=<key> → bust/face close-up with that expression (512×640)
     Returns PNG bytes.
     """
-    print(f"[CRAFTFLOW-DEBUG] generate_character_design called: char={character_id} use_ipa={use_ipa} use_controlnet={use_controlnet} active_wf={state.get_workflow()}", flush=True)
+    print(f"[CRAFTFLOW-DEBUG] generate_character_design called: char={character_id} use_ipa={use_ipa} use_controlnet={use_controlnet}", flush=True)
     character = db.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -1332,6 +1403,14 @@ async def generate_character_design(
         # ControlNet: same concept image drives pose/structure guidance
         if use_controlnet and valid_images:
             _cn_ref_bytes = valid_images[0]
+            if not is_expression:
+                # Full-body mode: detect how much body the reference shows and shrink
+                # the CN hint so SD has canvas space to generate missing lower body.
+                await guardian.request_focus("ollama")
+                coverage = _detect_body_coverage(_cn_ref_bytes)
+                _exp_w, _exp_h = _fullbody_canvas(getattr(character, 'height', None))
+                _cn_ref_bytes = _shrink_for_full_body(_cn_ref_bytes, _exp_w, _exp_h, coverage)
+                logger.info("[char-gen] body_coverage=%s → CN reference adjusted", coverage)
 
         if valid_images:
             t0 = time.perf_counter()
@@ -1641,6 +1720,12 @@ async def generate_variant_design(
                 _ipa_ref_bytes = valid_images[0]
             if use_controlnet:
                 _cn_ref_bytes = valid_images[0]
+                if not is_expression:
+                    await guardian.request_focus("ollama")
+                    coverage = _detect_body_coverage(_cn_ref_bytes)
+                    _exp_w, _exp_h = _fullbody_canvas(v.get("height"))
+                    _cn_ref_bytes = _shrink_for_full_body(_cn_ref_bytes, _exp_w, _exp_h, coverage)
+                    logger.info("[variant-gen] body_coverage=%s → CN reference adjusted", coverage)
             t0 = time.perf_counter()
             await guardian.request_focus("ollama")
             prompt_txt = _visual_extract_prompt(len(valid_images))
