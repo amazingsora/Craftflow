@@ -1,4 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { apiPostForm, apiPostJson, request } from '../api/client'
+import { EP } from '../api/endpoints'
+import { useAsync } from '../api/useAsync'
 
 const DEFAULT_NEGATIVE =
   'low quality, blurry, watermark, text, signature, bad anatomy, extra limbs, deformed, ugly, duplicate, worst quality'
@@ -134,13 +137,19 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
   const [seed, setSeed] = useState(-1)
   const [size, setSize] = useState('1024x1024')
   const [result, setResult] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [optimizing, setOptimizing] = useState(false)
+  const generateTask = useAsync()
+  const optimizeTask = useAsync()
+  const loading = generateTask.loading
+  const optimizing = optimizeTask.loading
   const [optimizeElapsed, setOptimizeElapsed] = useState(0)
   const optimizeTimer = useRef()
   const [copied, setCopied] = useState(false)
   const [elapsed, setElapsed] = useState(0)
-  const [error, setError] = useState(null)
+  const error = generateTask.error || optimizeTask.error
+  const setError = (message) => {
+    generateTask.setError(message)
+    optimizeTask.setError(null)
+  }
   const [lastSeed, setLastSeed] = useState(null)
   const elapsedTimer = useRef()
 
@@ -186,27 +195,21 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
 
   const onOptimize = async () => {
     if (!promptZh.trim() || optimizing) return
-    setOptimizing(true)
+    setError(null)
     setOptimizeElapsed(0)
     optimizeTimer.current = setInterval(() => setOptimizeElapsed(s => s + 1), 1000)
     try {
-      const resp = await fetch('/api/v1/art/compile-prompt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptZh, art_style_id: artStyleId ? Number(artStyleId) : null }),
-      })
-      const data = await resp.json()
-      if (!resp.ok) throw new Error(data.detail ?? `HTTP ${resp.status}`)
+      const data = await optimizeTask.run(() => apiPostJson(EP.compilePrompt, {
+        prompt: promptZh,
+        art_style_id: artStyleId ? Number(artStyleId) : null,
+      }))
       if (data.positive) {
         setOptimizedEnP(data.positive.trim())
         setNegPromptP(data.negative || DEFAULT_NEGATIVE)
         setDetectedStyle(data.style || null)
       }
-    } catch (e) {
-      setError(e.message)
     } finally {
       clearInterval(optimizeTimer.current)
-      setOptimizing(false)
     }
   }
 
@@ -223,7 +226,6 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
   const onGenerate = async () => {
     if (!finalPrompt.trim() || loading) return
     if (refEnabled && !refFile) { setError('請上傳參考圖片'); return }
-    setLoading(true)
     setError(null)
     setResult(null)
     startProgress()
@@ -244,7 +246,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
         fd.append('steps', String(steps))
         fd.append('seed', String(actualSeed))
         if (artStyleId) fd.append('art_style_id', artStyleId)
-        resp = await fetch('/api/v1/art/ipadapter', { method: 'POST', body: fd })
+        resp = await generateTask.run(() => apiPostForm(EP.ipadapter, fd))
       } else if (refEnabled && refFile) {
         const fd = new FormData()
         fd.append('file', refFile)
@@ -255,9 +257,9 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
         fd.append('steps', String(steps))
         fd.append('seed', String(actualSeed))
         if (artStyleId) fd.append('art_style_id', artStyleId)
-        resp = await fetch('/api/v1/art/img-guide', { method: 'POST', body: fd })
+        resp = await generateTask.run(() => apiPostForm(EP.imgGuide, fd))
       } else {
-        resp = await fetch('/api/v1/art/generate', {
+        resp = await generateTask.run(() => request(EP.generate, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -269,11 +271,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
             seed: actualSeed,
             art_style_id: artStyleId ? Number(artStyleId) : null,
           }),
-        })
-      }
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ detail: resp.statusText }))
-        throw new Error(err.detail)
+        }))
       }
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
@@ -286,10 +284,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
         label: finalPrompt.trim().slice(0, 30),
       })
     } catch (e) {
-      setError(e.message)
       clearInterval(elapsedTimer.current)
-    } finally {
-      setLoading(false)
     }
   }
 
