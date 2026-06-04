@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import (
     UPLOAD_DIR, CUSTOM_WORKFLOWS_DIR,
@@ -157,7 +158,6 @@ def _load_workflow(name: str) -> dict:
     logger.info("[wf-load] name=%s  path=%s  custom=%s", name, path, found_in_custom)
     with open(path, encoding="utf-8") as f:
         wf = json.load(f)
-    print(f"[CRAFTFLOW-DEBUG-FILE] loaded {path} → {len(wf)} top-level keys, is_ui={'nodes' in wf}", flush=True)
     wf.pop("_comment", None)
 
     # Detect ComfyUI UI-format workflows (exported via "Save", not "Save (API format)")
@@ -298,6 +298,10 @@ def _run(workflow: dict) -> bytes:
     return comfyui_client.download_image(filenames[0])
 
 
+async def _run_comfyui(workflow: dict) -> bytes:
+    return await run_in_threadpool(_run, workflow)
+
+
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 class CompilePromptRequest(BaseModel):
@@ -354,7 +358,7 @@ async def lineart(file: Annotated[UploadFile, File(description="草稿圖片 (JP
             node["inputs"]["image"] = uploaded_name
 
     await guardian.request_focus("comfyui")
-    return Response(content=_run(wf), media_type="image/png")
+    return Response(content=await _run_comfyui(wf), media_type="image/png")
 
 
 class GenerateRequest(BaseModel):
@@ -408,7 +412,7 @@ async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
     _replace_negative_seeds(wf, seed)
     await guardian.request_focus("comfyui")
     return Response(
-        content=_run(wf),
+        content=await _run_comfyui(wf),
         media_type="image/png",
         headers={
             "X-Seed": str(seed),
@@ -517,8 +521,21 @@ def _bypass_ipa_nodes(wf: dict) -> None:
                 node["inputs"][key] = ipa_upstream_model
                 logger.info("[ipa-bypass] rewired %s.%s → %s", nid, key, ipa_upstream_model)
 
-    for nid in to_remove:
-        ct = (wf[nid].get("class_type", "?") if nid in wf else "?")
+    # Safety: never delete a node still referenced by a surviving node outside the IPA chain.
+    for nid in sorted(to_remove, key=lambda x: int(x) if x.isdigit() else 0):
+        referenced_outside = any(
+            isinstance(node, dict)
+            and oid not in to_remove
+            and any(
+                isinstance(v, list) and v and str(v[0]) == nid
+                for v in node.get("inputs", {}).values()
+            )
+            for oid, node in wf.items()
+        )
+        if referenced_outside:
+            logger.debug("[ipa-bypass] keep node %s (still referenced outside IPA chain)", nid)
+            continue
+        ct = wf[nid].get("class_type", "?") if nid in wf else "?"
         wf.pop(nid, None)
         logger.debug("[ipa-bypass] removed node %s (%s)", nid, ct)
 
@@ -845,12 +862,50 @@ def _letterbox_to_aspect(image_bytes: bytes, target_w: int, target_h: int) -> by
     return out.getvalue()
 
 
+def _resolve_conditioning(
+    wf: dict, node_id: str, out_slot: int, clips: dict, _seen: frozenset = frozenset()
+) -> str | None:
+    """Recursively follow a conditioning edge back to a CLIPTextEncode node.
+
+    Handles intermediate conditioning nodes by mapping their output slot to the
+    corresponding input edge:
+    - ControlNetApplyAdvanced: slot 0 → positive input, slot 1 → negative input
+    - Generic passthrough nodes: follow conditioning/positive/negative inputs in order
+
+    Returns the CLIPTextEncode node_id, or None if unreachable.
+    """
+    if node_id in _seen:
+        return None
+    _seen = _seen | {node_id}
+    if node_id in clips:
+        return node_id
+    node = wf.get(node_id)
+    if not isinstance(node, dict):
+        return None
+    ct = node.get("class_type", "")
+    inp = node.get("inputs", {})
+    if ct in _CN_APPLY_TYPES:
+        # ControlNetApplyAdvanced: slot 0 = conditioned positive, slot 1 = conditioned negative
+        follow_key = "positive" if out_slot == 0 else "negative"
+        ref = inp.get(follow_key)
+        if isinstance(ref, list) and ref:
+            return _resolve_conditioning(wf, str(ref[0]), int(ref[1]) if len(ref) > 1 else 0, clips, _seen)
+    else:
+        for key in ("positive", "negative", "conditioning"):
+            ref = inp.get(key)
+            if isinstance(ref, list) and ref:
+                result = _resolve_conditioning(wf, str(ref[0]), int(ref[1]) if len(ref) > 1 else 0, clips, _seen)
+                if result:
+                    return result
+    return None
+
+
 def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
     """Inject positive/negative prompts into CLIPTextEncode nodes.
 
     Strategy (in order, stops as soon as both are resolved):
-      1. Trace KSampler.positive / KSampler.negative graph edges back to CLIPTextEncode nodes.
-         This is reliable for any workflow structure regardless of node titles or content.
+      1. Trace KSampler.positive / KSampler.negative graph edges back to CLIPTextEncode nodes,
+         recursively passing through intermediate conditioning nodes (e.g. ControlNetApplyAdvanced).
       2. _meta.title containing "positive" / "negative" (fallback for unusual topologies)
       3. First two CLIPTextEncode nodes by node-id order (last resort)
 
@@ -865,25 +920,24 @@ def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
 
     pos_injected = neg_injected = False
 
-    # Pass 1: follow KSampler edges — most reliable, works for any workflow
+    # Pass 1: follow KSampler edges with recursive conditioning passthrough
     for node in wf.values():
         if not isinstance(node, dict) or node.get("class_type") != "KSampler":
             continue
         inp = node.get("inputs", {})
-        for slot, flag, text in (
-            ("positive", "pos", positive),
-            ("negative", "neg", negative),
-        ):
+        for slot, text in (("positive", positive), ("negative", negative)):
             ref = inp.get(slot)
             if isinstance(ref, list) and ref:
-                target_id = str(ref[0])
-                if target_id in clips:
-                    clips[target_id]["inputs"]["text"] = text
+                clip_id = _resolve_conditioning(
+                    wf, str(ref[0]), int(ref[1]) if len(ref) > 1 else 0, clips
+                )
+                if clip_id:
+                    clips[clip_id]["inputs"]["text"] = text
                     if slot == "positive":
                         pos_injected = True
                     else:
                         neg_injected = True
-                    logger.debug("[inject-prompts] KSampler.%s → node %s", slot, target_id)
+                    logger.debug("[inject-prompts] KSampler.%s → (resolved) node %s", slot, clip_id)
 
     if pos_injected and neg_injected:
         return
@@ -1120,7 +1174,7 @@ async def compose(
                 inputs["seed"] = seed
 
     _replace_negative_seeds(wf, seed)
-    image_data = _run(wf)
+    image_data = await _run_comfyui(wf)
     encoded_image = base64.b64encode(image_data).decode()
 
     return {
@@ -1343,7 +1397,6 @@ async def generate_character_design(
     expression=<key> → bust/face close-up with that expression (512×640)
     Returns PNG bytes.
     """
-    print(f"[CRAFTFLOW-DEBUG] generate_character_design called: char={character_id} use_ipa={use_ipa} use_controlnet={use_controlnet}", flush=True)
     character = db.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -1407,7 +1460,9 @@ async def generate_character_design(
                 # Full-body mode: detect how much body the reference shows and shrink
                 # the CN hint so SD has canvas space to generate missing lower body.
                 await guardian.request_focus("ollama")
-                coverage = _detect_body_coverage(_cn_ref_bytes)
+                t0 = time.perf_counter()
+                coverage = await run_in_threadpool(_detect_body_coverage, _cn_ref_bytes)
+                timings["body_coverage"] = round(time.perf_counter() - t0, 1)
                 _exp_w, _exp_h = _fullbody_canvas(getattr(character, 'height', None))
                 _cn_ref_bytes = _shrink_for_full_body(_cn_ref_bytes, _exp_w, _exp_h, coverage)
                 logger.info("[char-gen] body_coverage=%s → CN reference adjusted", coverage)
@@ -1416,8 +1471,10 @@ async def generate_character_design(
             t0 = time.perf_counter()
             await guardian.request_focus("ollama")
             prompt_txt = _visual_extract_prompt(len(valid_images))
-            visual = _oc.analyze_multi_images_bytes(
-                valid_images, prompt_txt, model=state.get_vision_model(),
+            visual = await run_in_threadpool(
+                _oc.analyze_multi_images_bytes,
+                valid_images, prompt_txt,
+                model=state.get_vision_model(),
                 options={"num_predict": 160, "temperature": 0.1},
             )
             timings["vision_extract"] = round(time.perf_counter() - t0, 1)
@@ -1573,7 +1630,9 @@ async def generate_character_design(
 
     # IPA：有參考圖則啟用（含剛注入的節點）；否則既有 IPA 節點 bypass
     if _ipa_ref_bytes is not None:
+        _t = time.perf_counter()
         uploaded_ref = comfyui_client.upload_image_bytes(_ipa_ref_bytes, "char_concept_ref.png")
+        timings["upload"] = round(time.perf_counter() - _t, 1)
         ipa_used = True
         logger.info("[char-gen] IP-Adapter 啟用（active workflow '%s'）", active_wf)
     elif _wf_has_ipa(wf):
@@ -1585,7 +1644,13 @@ async def generate_character_design(
     if _cn_ref_bytes is None and _wf_has_controlnet(wf):
         _bypass_controlnet_nodes(wf)
         logger.info("[char-gen] ControlNet 停用/無參考圖 → 既有節點 bypass")
-    _inject_loras(wf, art_style.loras if art_style else [])
+    global_lora = state.get_lora()
+    lora_list = []
+    if global_lora.get("name"):
+        lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
+    if art_style and art_style.loras:
+        lora_list.extend(art_style.loras)
+    _inject_loras(wf, lora_list)
     _inject_prompts(wf, final_positive, final_negative)
     for node in wf.values():
         if not isinstance(node, dict):
@@ -1617,21 +1682,25 @@ async def generate_character_design(
             cn_mode = "canny_fit"
         else:
             cn_mode = "canny"
+        _t = time.perf_counter()
         uploaded_cn_ref = comfyui_client.upload_image_bytes(cn_bytes, "char_cn_ref.png")
+        timings["upload"] = round(timings.get("upload", 0.0) + (time.perf_counter() - _t), 1)
         _inject_controlnet_image(wf, uploaded_cn_ref)
         cn_used = True
         logger.info("[char-gen] ControlNet (%s) injected, weight=%.2f", cn_mode, cn_weight)
 
     _replace_negative_seeds(wf, seed)
     _log_wf_snapshot(wf, label="char-gen")
-    # TEMP DEBUG
-    print(f"[CRAFTFLOW-DEBUG2] ipa_used={ipa_used} cn_used={cn_used} cn_ref={'yes' if _cn_ref_bytes else 'no'}", flush=True)
-    print(f"[CRAFTFLOW-DEBUG3] wf_nodes={[v.get('class_type') for v in wf.values() if isinstance(v,dict)]}", flush=True)
     t0 = time.perf_counter()
     await guardian.request_focus("comfyui")
-    image_bytes = _run(wf)
+    image_bytes = await _run_comfyui(wf)
     timings["comfyui"] = round(time.perf_counter() - t0, 1)
     timings["total"] = round(time.perf_counter() - t_total, 1)
+    timings["models"] = {
+        "vision": state.get_vision_model(),
+        "text": state.get_text_model(),
+        "workflow": active_wf,
+    }
 
     return Response(
         content=image_bytes,
@@ -1722,15 +1791,19 @@ async def generate_variant_design(
                 _cn_ref_bytes = valid_images[0]
                 if not is_expression:
                     await guardian.request_focus("ollama")
-                    coverage = _detect_body_coverage(_cn_ref_bytes)
+                    t0 = time.perf_counter()
+                    coverage = await run_in_threadpool(_detect_body_coverage, _cn_ref_bytes)
+                    timings["body_coverage"] = round(time.perf_counter() - t0, 1)
                     _exp_w, _exp_h = _fullbody_canvas(v.get("height"))
                     _cn_ref_bytes = _shrink_for_full_body(_cn_ref_bytes, _exp_w, _exp_h, coverage)
                     logger.info("[variant-gen] body_coverage=%s → CN reference adjusted", coverage)
             t0 = time.perf_counter()
             await guardian.request_focus("ollama")
             prompt_txt = _visual_extract_prompt(len(valid_images))
-            visual = _oc.analyze_multi_images_bytes(
-                valid_images, prompt_txt, model=state.get_vision_model(),
+            visual = await run_in_threadpool(
+                _oc.analyze_multi_images_bytes,
+                valid_images, prompt_txt,
+                model=state.get_vision_model(),
                 options={"num_predict": 160, "temperature": 0.1},
             )
             timings["vision_extract"] = round(time.perf_counter() - t0, 1)
@@ -1864,7 +1937,9 @@ async def generate_variant_design(
                     need_ipa_inject, need_cn_inject, active_wf)
 
     if _ipa_ref_bytes is not None:
+        _t = time.perf_counter()
         uploaded_ref = comfyui_client.upload_image_bytes(_ipa_ref_bytes, "char_concept_ref.png")
+        timings["upload"] = round(time.perf_counter() - _t, 1)
         ipa_used = True
         logger.info("[variant-gen] IP-Adapter 啟用（active workflow '%s'）", active_wf)
     elif _wf_has_ipa(wf):
@@ -1875,7 +1950,13 @@ async def generate_variant_design(
     if _cn_ref_bytes is None and _wf_has_controlnet(wf):
         _bypass_controlnet_nodes(wf)
         logger.info("[variant-gen] ControlNet 停用/無參考圖 → 既有節點 bypass")
-    _inject_loras(wf, art_style.loras if art_style else [])
+    global_lora = state.get_lora()
+    lora_list = []
+    if global_lora.get("name"):
+        lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
+    if art_style and art_style.loras:
+        lora_list.extend(art_style.loras)
+    _inject_loras(wf, lora_list)
     _inject_prompts(wf, final_positive, final_negative)
     for node in wf.values():
         if not isinstance(node, dict):
@@ -1904,7 +1985,9 @@ async def generate_variant_design(
             cn_mode = "canny_fit"
         else:
             cn_mode = "canny"
+        _t = time.perf_counter()
         uploaded_cn_ref = comfyui_client.upload_image_bytes(cn_bytes, "char_cn_ref.png")
+        timings["upload"] = round(timings.get("upload", 0.0) + (time.perf_counter() - _t), 1)
         _inject_controlnet_image(wf, uploaded_cn_ref)
         cn_used = True
         logger.info("[variant-gen] ControlNet (%s) injected, weight=%.2f", cn_mode, cn_weight)
@@ -1913,9 +1996,14 @@ async def generate_variant_design(
     _log_wf_snapshot(wf, label="variant-gen")
     t0 = time.perf_counter()
     await guardian.request_focus("comfyui")
-    image_bytes = _run(wf)
+    image_bytes = await _run_comfyui(wf)
     timings["comfyui"] = round(time.perf_counter() - t0, 1)
     timings["total"] = round(time.perf_counter() - t_total, 1)
+    timings["models"] = {
+        "vision": state.get_vision_model(),
+        "text": state.get_text_model(),
+        "workflow": active_wf,
+    }
 
     return Response(
         content=image_bytes,
@@ -1986,7 +2074,7 @@ async def wd14_tags(
         raise HTTPException(status_code=422, detail=f"WD14 workflow 提交失敗：{e}")
 
     try:
-        texts = comfyui_client.wait_for_text_result(prompt_id, timeout=90)
+        texts = await run_in_threadpool(comfyui_client.wait_for_text_result, prompt_id, 90)
     except TimeoutError as e:
         raise HTTPException(status_code=504, detail=str(e))
 
@@ -2070,7 +2158,7 @@ async def img_guide(
 
     _replace_negative_seeds(wf, actual_seed)
     await guardian.request_focus("comfyui")
-    image_out = _run(wf)
+    image_out = await _run_comfyui(wf)
 
     return Response(
         content=image_out,
@@ -2136,7 +2224,7 @@ async def ipadapter(
 
     _replace_negative_seeds(wf, actual_seed)
     await guardian.request_focus("comfyui")
-    image_out = _run(wf)
+    image_out = await _run_comfyui(wf)
 
     return Response(
         content=image_out,

@@ -78,19 +78,7 @@ def submit_workflow(workflow: dict) -> str:
 
 def wait_for_result(prompt_id: str, timeout: int = 300) -> list[str]:
     """Poll until the job completes; return output image filenames."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        r = requests.get(f"{COMFYUI_BASE}/history/{prompt_id}", timeout=10)
-        data = r.json()
-        if prompt_id in data:
-            outputs = data[prompt_id].get("outputs", {})
-            images = []
-            for node_out in outputs.values():
-                for img in node_out.get("images", []):
-                    images.append(img["filename"])
-            return images
-        time.sleep(2)
-    raise TimeoutError(f"ComfyUI job {prompt_id} timed out after {timeout}s")
+    return _poll_history(prompt_id, timeout, _extract_images)
 
 
 def download_image(filename: str) -> bytes:
@@ -129,22 +117,40 @@ def detect_wd14_node() -> str | None:
 
 def wait_for_text_result(prompt_id: str, timeout: int = 90) -> list[str]:
     """Poll until job completes; return all text/tags outputs from any node."""
+    return _poll_history(prompt_id, timeout, _extract_texts)
+
+
+def _poll_history(prompt_id: str, timeout: int, extract) -> list[str]:
     deadline = time.time() + timeout
+    interval = 0.5
     while time.time() < deadline:
         r = requests.get(f"{COMFYUI_BASE}/history/{prompt_id}", timeout=10)
         data = r.json()
         if prompt_id in data:
             outputs = data[prompt_id].get("outputs", {})
-            texts: list[str] = []
-            for node_out in outputs.values():
-                for key in ("text", "tags", "result", "string"):
-                    raw = node_out.get(key)
-                    if raw is None:
-                        continue
-                    if isinstance(raw, list):
-                        texts.extend(str(t) for t in raw if t)
-                    elif isinstance(raw, str) and raw:
-                        texts.append(raw)
-            return texts
-        time.sleep(2)
+            return extract(outputs)
+        time.sleep(interval)
+        interval = min(interval * 1.5, 3)
     raise TimeoutError(f"ComfyUI job {prompt_id} timed out after {timeout}s")
+
+
+def _extract_images(outputs: dict) -> list[str]:
+    images: list[str] = []
+    for node_out in outputs.values():
+        for img in node_out.get("images", []):
+            images.append(img["filename"])
+    return images
+
+
+def _extract_texts(outputs: dict) -> list[str]:
+    texts: list[str] = []
+    for node_out in outputs.values():
+        for key in ("text", "tags", "result", "string"):
+            raw = node_out.get(key)
+            if raw is None:
+                continue
+            if isinstance(raw, list):
+                texts.extend(str(t) for t in raw if t)
+            elif isinstance(raw, str) and raw:
+                texts.append(raw)
+    return texts

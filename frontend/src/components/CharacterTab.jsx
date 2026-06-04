@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-
-const API = '/api/v1'
+import { apiDelete, apiUrl, request } from '../api/client'
 
 const GENRES = ['玄幻', '奇幻', '現代都市', '科幻', '古風', 'BL/GL', '輕小說', '其他']
 const STATUSES = ['構思中', '撰寫中', '修稿中', '完稿']
@@ -205,20 +204,7 @@ const S = {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 async function apiFetch(path, opts = {}) {
-  const r = await fetch(`${API}${path}`, opts)
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({ detail: r.statusText }))
-    throw new Error(err.detail || r.statusText)
-  }
-  return r.json()
-}
-
-async function apiDelete(path) {
-  const r = await fetch(`${API}${path}`, { method: 'DELETE' })
-  if (!r.ok && r.status !== 204) {
-    const err = await r.json().catch(() => ({ detail: r.statusText }))
-    throw new Error(err.detail || r.statusText)
-  }
+  return request(path, opts).then((r) => r.json())
 }
 
 function Spinner() { return <span style={S.spinner} /> }
@@ -584,9 +570,9 @@ function CharacterListView({ project: initProject, onSelectChar, onCreateChar, o
     >
       <div style={S.portrait}>
         {(c.concept_images?.[0])
-          ? <img src={`${API}/characters/${c.id}/concept-images/0`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+          ? <img src={apiUrl(`/characters/${c.id}/concept-images/0`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
           : c.portrait_path
-            ? <img src={`${API}/characters/${c.id}/portrait`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+            ? <img src={apiUrl(`/characters/${c.id}/portrait`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
             : '無概念圖'
         }
       </div>
@@ -609,7 +595,7 @@ function CharacterListView({ project: initProject, onSelectChar, onCreateChar, o
     >
       <div style={S.factionThumb}>
         {f.thumbnail_path
-          ? <img src={`${API}/factions/${f.id}/thumbnail`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+          ? <img src={apiUrl(`/factions/${f.id}/thumbnail`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
           : '⚑'
         }
       </div>
@@ -753,8 +739,7 @@ function FactionView({ faction: initFaction, project, allChars, onBack, onSelect
 
   const addMember = async (charId) => {
     try {
-      const r = await fetch(`${API}/factions/${faction.id}/members/${charId}`, { method: 'POST' })
-      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText) }
+      await request(`/factions/${faction.id}/members/${charId}`, { method: 'POST' })
       const char = allChars.find(c => c.id === charId)
       if (char) setMembers(prev => [...prev, char])
       setAddingMember(false)
@@ -763,8 +748,7 @@ function FactionView({ faction: initFaction, project, allChars, onBack, onSelect
 
   const removeMember = async (charId) => {
     try {
-      const r = await fetch(`${API}/factions/${faction.id}/members/${charId}`, { method: 'DELETE' })
-      if (!r.ok && r.status !== 204) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText) }
+      await apiDelete(`/factions/${faction.id}/members/${charId}`)
       setMembers(prev => prev.filter(c => c.id !== charId))
     } catch (e) { setError(e.message) }
   }
@@ -836,7 +820,7 @@ function FactionView({ faction: initFaction, project, allChars, onBack, onSelect
             {uploadingThumb
               ? <p style={S.muted}><Spinner />上傳中...</p>
               : faction.thumbnail_path
-                ? <img src={`${API}/factions/${faction.id}/thumbnail?t=${faction.thumbnail_path}`} style={S.portraitImg} alt="縮圖" />
+                ? <img src={apiUrl(`/factions/${faction.id}/thumbnail?t=${faction.thumbnail_path}`)} style={S.portraitImg} alt="縮圖" />
                 : <p style={{ ...S.muted, padding: 12 }}>點擊上傳縮圖</p>
             }
           </div>
@@ -859,9 +843,9 @@ function FactionView({ faction: initFaction, project, allChars, onBack, onSelect
                   >
                     <div style={S.portrait}>
                       {(c.concept_images?.[0])
-                        ? <img src={`${API}/characters/${c.id}/concept-images/0`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+                        ? <img src={apiUrl(`/characters/${c.id}/concept-images/0`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
                         : c.portrait_path
-                          ? <img src={`${API}/characters/${c.id}/portrait`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+                          ? <img src={apiUrl(`/characters/${c.id}/portrait`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
                           : '無概念圖'
                       }
                     </div>
@@ -1181,8 +1165,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         use_controlnet: cnEnabled ? '1' : '0',
         cn_weight: String(cnWeight),
       })
-      const resp = await fetch(`${API}/characters/${char.id}/generate-design?${params}`, { method: 'POST' })
-      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
+      const resp = await request(`/characters/${char.id}/generate-design?${params}`, { method: 'POST' })
       
       // Retrieve debug prompt from header
       let debugPrompt = null
@@ -1271,8 +1254,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
   const joinFaction = async (factionId) => {
     try {
-      const r = await fetch(`${API}/factions/${factionId}/members/${char.id}`, { method: 'POST' })
-      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText) }
+      await request(`/factions/${factionId}/members/${char.id}`, { method: 'POST' })
       setCharFactionIds(prev => [...prev, factionId])
       setAddingFaction(false)
     } catch (e) { setError(e.message) }
@@ -1280,8 +1262,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
   const leaveFaction = async (factionId) => {
     try {
-      const r = await fetch(`${API}/factions/${factionId}/members/${char.id}`, { method: 'DELETE' })
-      if (!r.ok && r.status !== 204) { const d = await r.json().catch(() => ({})); throw new Error(d.detail || r.statusText) }
+      await apiDelete(`/factions/${factionId}/members/${char.id}`)
       setCharFactionIds(prev => prev.filter(id => id !== factionId))
     } catch (e) { setError(e.message) }
   }
@@ -1397,8 +1378,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         use_controlnet: (vState.cnEnabled ?? true) ? '1' : '0',
         cn_weight: String(vState.cnWeight ?? 0.85),
       })
-      const resp = await fetch(`${API}/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
-      if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail ?? resp.statusText)
+      const resp = await request(`/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
       let debugPrompt = null
       const b64Prompt = resp.headers.get('X-Prompt')
       if (b64Prompt) { try { debugPrompt = decodeURIComponent(escape(atob(b64Prompt))) } catch (e) { /* silent */ } }
@@ -1550,11 +1530,11 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               {conceptImages.map((img, idx) => (
                 <div key={idx} style={{ position: 'relative', aspectRatio: '1/1', borderRadius: 8, overflow: 'hidden', background: 'var(--border)' }}>
                   <img
-                    src={`${API}/characters/${char.id}/concept-images/${idx}?t=${img}`}
+                    src={apiUrl(`/characters/${char.id}/concept-images/${idx}?t=${img}`)}
                     style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
                     alt={`概念圖${idx + 1}`}
                     title="點擊放大"
-                    onClick={() => setLightboxSrc(`${API}/characters/${char.id}/concept-images/${idx}?t=${img}`)}
+                    onClick={() => setLightboxSrc(apiUrl(`/characters/${char.id}/concept-images/${idx}?t=${img}`))}
                   />
                   {deletingConceptIdx === idx
                     ? <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
@@ -1668,16 +1648,32 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5, fontWeight: 600, letterSpacing: 0.5 }}>⏱ 生成耗時</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {[
-                        lastTimings.vision_extract != null && ['視覺分析', lastTimings.vision_extract],
-                        lastTimings.compile_prompt  != null && ['提示詞編譯', lastTimings.compile_prompt],
-                        lastTimings.compile_ai_prompt != null && ['AI提示詞', lastTimings.compile_ai_prompt],
-                        lastTimings.comfyui         != null && ['ComfyUI 生成', lastTimings.comfyui],
-                      ].filter(Boolean).map(([label, sec]) => (
+                        lastTimings.vision_extract    != null && ['視覺分析',  lastTimings.models?.vision,   lastTimings.vision_extract],
+                        lastTimings.body_coverage     != null && ['姿態偵測',  lastTimings.models?.vision,   lastTimings.body_coverage],
+                        lastTimings.compile_prompt    != null && ['提示詞編譯', lastTimings.models?.text,    lastTimings.compile_prompt],
+                        lastTimings.compile_ai_prompt != null && ['AI提示詞',  lastTimings.models?.text,    lastTimings.compile_ai_prompt],
+                        lastTimings.upload            != null && ['圖片上傳',  null,                         lastTimings.upload],
+                        lastTimings.comfyui           != null && ['ComfyUI 生成', lastTimings.models?.workflow, lastTimings.comfyui],
+                      ].filter(Boolean).map(([label, model, sec]) => (
                         <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                          <span style={{ color: 'var(--muted)' }}>{label}</span>
+                          <span style={{ color: 'var(--muted)' }}>
+                            {label}
+                            {model && <span style={{ color: '#555', marginLeft: 4, fontSize: 10 }}>({model})</span>}
+                          </span>
                           <span style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{sec}s</span>
                         </div>
                       ))}
+                      {(() => {
+                        const keys = ['vision_extract','body_coverage','compile_prompt','compile_ai_prompt','upload','comfyui']
+                        const sum = keys.reduce((a, k) => a + (lastTimings[k] ?? 0), 0)
+                        const other = Math.round((lastTimings.total - sum) * 10) / 10
+                        return other > 0.5 ? (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                            <span style={{ color: 'var(--muted)' }}>其他</span>
+                            <span style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{other}s</span>
+                          </div>
+                        ) : null
+                      })()}
                       <div style={{ borderTop: '1px solid var(--border)', marginTop: 3, paddingTop: 3, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
                         <span style={{ color: 'var(--accent)', fontWeight: 600 }}>總計</span>
                         <span style={{ color: 'var(--accent)', fontFamily: 'monospace', fontWeight: 600 }}>{lastTimings.total}s</span>
@@ -1694,14 +1690,14 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                 {aiImages.map((img, idx) => (
                   <div key={idx} style={{ borderRadius: 8, overflow: 'hidden' }}>
                     <img
-                      src={`${API}/characters/${char.id}/ai-images/${idx}?t=${img}`}
+                      src={apiUrl(`/characters/${char.id}/ai-images/${idx}?t=${img}`)}
                       style={{ width: '100%', display: 'block', borderRadius: 8, cursor: 'zoom-in' }}
                       alt={`AI圖${idx + 1}`}
                       title="點擊放大"
-                      onClick={() => setLightboxSrc(`${API}/characters/${char.id}/ai-images/${idx}?t=${img}`)}
+                      onClick={() => setLightboxSrc(apiUrl(`/characters/${char.id}/ai-images/${idx}?t=${img}`))}
                     />
                     <div style={{ display: 'flex', gap: 4, marginTop: 4, justifyContent: 'center' }}>
-                      <a href={`${API}/characters/${char.id}/ai-images/${idx}`} download={`${char.name}_ai_${idx + 1}.png`} style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px', textDecoration: 'none', textAlign: 'center' }}>下載</a>
+                      <a href={apiUrl(`/characters/${char.id}/ai-images/${idx}`)} download={`${char.name}_ai_${idx + 1}.png`} style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px', textDecoration: 'none', textAlign: 'center' }}>下載</a>
                       {deletingAiIdx === idx
                         ? <>
                             <button style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: '#5c2020', color: '#f07070', cursor: 'pointer' }} onClick={() => deleteAiImage(idx)}>確認</button>
@@ -1975,10 +1971,10 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               {vState.conceptImages.map((img, idx) => (
                 <div key={idx} style={{ position: 'relative', aspectRatio: '1/1', borderRadius: 8, overflow: 'hidden', background: 'var(--border)' }}>
                   <img
-                    src={`${API}/characters/${char.id}/variants/${activeTab}/concept-images/${idx}?t=${img}`}
+                    src={apiUrl(`/characters/${char.id}/variants/${activeTab}/concept-images/${idx}?t=${img}`)}
                     style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
                     alt={`概念圖${idx + 1}`}
-                    onClick={() => setLightboxSrc(`${API}/characters/${char.id}/variants/${activeTab}/concept-images/${idx}?t=${img}`)}
+                    onClick={() => setLightboxSrc(apiUrl(`/characters/${char.id}/variants/${activeTab}/concept-images/${idx}?t=${img}`))}
                   />
                   {vState.deletingConceptIdx === idx
                     ? <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
@@ -2076,19 +2072,38 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                 {vState.lastTimings && (
                   <div style={{ marginTop: 8, padding: '8px 10px', background: '#0d0d18', borderRadius: 8, border: '1px solid var(--border)' }}>
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5, fontWeight: 600 }}>⏱ 生成耗時</div>
-                    {[
-                      vState.lastTimings.vision_extract != null && ['視覺分析', vState.lastTimings.vision_extract],
-                      vState.lastTimings.compile_prompt  != null && ['提示詞編譯', vState.lastTimings.compile_prompt],
-                      vState.lastTimings.comfyui         != null && ['ComfyUI', vState.lastTimings.comfyui],
-                    ].filter(Boolean).map(([label, sec]) => (
-                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                        <span style={{ color: 'var(--muted)' }}>{label}</span>
-                        <span style={{ fontFamily: 'monospace' }}>{sec}s</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {[
+                        vState.lastTimings.vision_extract    != null && ['視覺分析',   vState.lastTimings.models?.vision,   vState.lastTimings.vision_extract],
+                        vState.lastTimings.body_coverage     != null && ['姿態偵測',   vState.lastTimings.models?.vision,   vState.lastTimings.body_coverage],
+                        vState.lastTimings.compile_prompt    != null && ['提示詞編譯', vState.lastTimings.models?.text,     vState.lastTimings.compile_prompt],
+                        vState.lastTimings.compile_ai_prompt != null && ['AI提示詞',  vState.lastTimings.models?.text,     vState.lastTimings.compile_ai_prompt],
+                        vState.lastTimings.upload            != null && ['圖片上傳',  null,                                 vState.lastTimings.upload],
+                        vState.lastTimings.comfyui           != null && ['ComfyUI 生成', vState.lastTimings.models?.workflow, vState.lastTimings.comfyui],
+                      ].filter(Boolean).map(([label, model, sec]) => (
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                          <span style={{ color: 'var(--muted)' }}>
+                            {label}
+                            {model && <span style={{ color: '#555', marginLeft: 4, fontSize: 10 }}>({model})</span>}
+                          </span>
+                          <span style={{ fontFamily: 'monospace' }}>{sec}s</span>
+                        </div>
+                      ))}
+                      {(() => {
+                        const keys = ['vision_extract','body_coverage','compile_prompt','compile_ai_prompt','upload','comfyui']
+                        const sum = keys.reduce((a, k) => a + (vState.lastTimings[k] ?? 0), 0)
+                        const other = Math.round((vState.lastTimings.total - sum) * 10) / 10
+                        return other > 0.5 ? (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                            <span style={{ color: 'var(--muted)' }}>其他</span>
+                            <span style={{ fontFamily: 'monospace' }}>{other}s</span>
+                          </div>
+                        ) : null
+                      })()}
+                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 3, paddingTop: 3, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                        <span style={{ color: 'var(--accent)', fontWeight: 600 }}>總計</span>
+                        <span style={{ color: 'var(--accent)', fontFamily: 'monospace', fontWeight: 600 }}>{vState.lastTimings.total}s</span>
                       </div>
-                    ))}
-                    <div style={{ borderTop: '1px solid var(--border)', marginTop: 3, paddingTop: 3, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                      <span style={{ color: 'var(--accent)', fontWeight: 600 }}>總計</span>
-                      <span style={{ color: 'var(--accent)', fontFamily: 'monospace', fontWeight: 600 }}>{vState.lastTimings.total}s</span>
                     </div>
                   </div>
                 )}
@@ -2098,11 +2113,11 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
                 {vState.aiImages.map((img, idx) => (
                   <div key={idx} style={{ borderRadius: 8, overflow: 'hidden' }}>
-                    <img src={`${API}/characters/${char.id}/variants/${activeTab}/ai-images/${idx}?t=${img}`}
+                    <img src={apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}?t=${img}`)}
                       style={{ width: '100%', display: 'block', borderRadius: 8, cursor: 'zoom-in' }} alt={`AI圖${idx + 1}`}
-                      onClick={() => setLightboxSrc(`${API}/characters/${char.id}/variants/${activeTab}/ai-images/${idx}?t=${img}`)} />
+                      onClick={() => setLightboxSrc(apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}?t=${img}`))} />
                     <div style={{ display: 'flex', gap: 4, marginTop: 4, justifyContent: 'center' }}>
-                      <a href={`${API}/characters/${char.id}/variants/${activeTab}/ai-images/${idx}`}
+                      <a href={apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}`)}
                         download={`${char.name}_v${activeTab}_ai_${idx + 1}.png`}
                         style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px', textDecoration: 'none', textAlign: 'center' }}>下載</a>
                       {vState.deletingAiIdx === idx
