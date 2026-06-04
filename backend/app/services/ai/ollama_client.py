@@ -62,32 +62,17 @@ def generate(
         payload["options"] = options
     if keep_alive is not None:
         payload["keep_alive"] = keep_alive
-    try:
-        r = requests.post(
-            f"{OLLAMA_BASE}/api/generate",
-            json=payload,
-            timeout=TIMEOUT_TEXT,
-        )
-        r.raise_for_status()
-        return r.json().get("response", "").strip()
-    except requests.exceptions.ConnectionError:
-        return f"[Ollama unavailable at {OLLAMA_BASE}: run `ollama serve` and ensure OLLAMA_HOST=0.0.0.0]"
-    except Exception as e:
-        return f"[Ollama error at {OLLAMA_BASE}: {e}]"
+    return _post_generate(payload, TIMEOUT_TEXT, "Ollama")
 
 
 def analyze_image(image_path: str, prompt: str, model: str = DEFAULT_VISION_MODEL) -> str:
     try:
         image_b64 = base64.b64encode(Path(image_path).read_bytes()).decode()
-        r = requests.post(
-            f"{OLLAMA_BASE}/api/generate",
-            json={"model": model, "prompt": prompt, "images": [image_b64], "stream": False},
-            timeout=TIMEOUT_VISION,
+        return _post_generate(
+            {"model": model, "prompt": prompt, "images": [image_b64], "stream": False},
+            TIMEOUT_VISION,
+            "Vision",
         )
-        r.raise_for_status()
-        return r.json().get("response", "").strip()
-    except requests.exceptions.ConnectionError:
-        return f"[Vision unavailable at {OLLAMA_BASE}: run `ollama serve` and ensure OLLAMA_HOST=0.0.0.0]"
     except Exception as e:
         return f"[Vision error at {OLLAMA_BASE}: {e}]"
 
@@ -107,15 +92,7 @@ def analyze_image_bytes(
             payload["options"] = options
         if keep_alive is not None:
             payload["keep_alive"] = keep_alive
-        r = requests.post(
-            f"{OLLAMA_BASE}/api/generate",
-            json=payload,
-            timeout=TIMEOUT_VISION,
-        )
-        r.raise_for_status()
-        return r.json().get("response", "").strip()
-    except requests.exceptions.ConnectionError:
-        return f"[Vision unavailable at {OLLAMA_BASE}: run `ollama serve` and ensure OLLAMA_HOST=0.0.0.0]"
+        return _post_generate(payload, TIMEOUT_VISION, "Vision")
     except Exception as e:
         return f"[Vision error at {OLLAMA_BASE}: {e}]"
 
@@ -144,17 +121,20 @@ def analyze_multi_images_bytes(
             payload["options"] = options
         if keep_alive is not None:
             payload["keep_alive"] = keep_alive
-        r = requests.post(
-            f"{OLLAMA_BASE}/api/generate",
-            json=payload,
-            timeout=TIMEOUT_VISION,
-        )
+        return _post_generate(payload, TIMEOUT_VISION, "Vision")
+    except Exception as e:
+        return f"[Vision error at {OLLAMA_BASE}: {e}]"
+
+
+def _post_generate(payload: dict, timeout: int, label: str) -> str:
+    try:
+        r = requests.post(f"{OLLAMA_BASE}/api/generate", json=payload, timeout=timeout)
         r.raise_for_status()
         return r.json().get("response", "").strip()
     except requests.exceptions.ConnectionError:
-        return f"[Vision unavailable at {OLLAMA_BASE}: run `ollama serve` and ensure OLLAMA_HOST=0.0.0.0]"
+        return f"[{label} unavailable at {OLLAMA_BASE}: run `ollama serve` and ensure OLLAMA_HOST=0.0.0.0]"
     except Exception as e:
-        return f"[Vision error at {OLLAMA_BASE}: {e}]"
+        return f"[{label} error at {OLLAMA_BASE}: {e}]"
 
 
 def is_available() -> bool:

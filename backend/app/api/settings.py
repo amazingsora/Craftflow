@@ -63,7 +63,7 @@ def set_checkpoint(req: SetCheckpointRequest):
     return {"checkpoint": state.get_checkpoint()}
 
 
-_IPA_NODE_TYPES = {"IPAdapterAdvanced", "IPAdapter", "IPAdapterModelLoader"}
+_IPA_NODE_TYPES = {"IPAdapterAdvanced", "IPAdapter"}
 
 
 def _wf_has_ipa(name: str) -> bool:
