@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from sqlalchemy import String, Text, DateTime, ForeignKey, JSON, Integer, Column, Table
+from sqlalchemy import String, Text, DateTime, ForeignKey, JSON, Integer, Column, Table, Float
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -47,6 +47,9 @@ class Character(Base):
     tab_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     variants: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     art_style_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("art_styles.id"), nullable=True)
+    # 角色專屬 LoRA（直通欄位）：每角色一致性的主線，獨立於畫風 art_style.loras
+    lora_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    lora_weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

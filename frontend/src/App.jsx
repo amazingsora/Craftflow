@@ -10,6 +10,38 @@ import SettingsTab from './components/SettingsTab.jsx'
 const _HISTORY_KEY = 'craftflow_history_v2'
 const _MAX_HISTORY = 100
 const _THUMB_PX = 300
+const _STATUS_POLL_MS = 20000  // 系統狀態輪詢間隔
+
+// header 服務狀態燈：顯示 Ollama / ComfyUI 是否在線，離線時 hover 顯示提示
+function ServiceStatus({ status }) {
+  const dot = (label, ok) => ({
+    label,
+    ok,
+    color: ok ? 'var(--success)' : 'var(--danger)',
+  })
+  // status 為 null（尚未取得 / 後端離線）時，兩者皆視為未知（灰）
+  const known = !!status
+  const ollamaOk = known && status.services?.ollama?.available
+  const comfyOk = known && status.services?.comfyui?.available
+  const dots = [
+    { label: 'Ollama', ok: ollamaOk, color: !known ? 'var(--muted)' : (ollamaOk ? 'var(--success)' : 'var(--danger)') },
+    { label: 'ComfyUI', ok: comfyOk, color: !known ? 'var(--muted)' : (comfyOk ? 'var(--success)' : 'var(--danger)') },
+  ]
+  const hints = (status?.hints ?? [])
+  const tip = !known
+    ? '無法取得系統狀態（後端可能未啟動）'
+    : (hints.length ? hints.join('\n') : 'Ollama 與 ComfyUI 皆正常運作')
+  return (
+    <div title={tip} style={{ display: 'flex', gap: 12, alignItems: 'center', cursor: 'default' }}>
+      {dots.map(d => (
+        <span key={d.label} style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 12, color: 'var(--muted)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: d.color, display: 'inline-block' }} />
+          {d.label}
+        </span>
+      ))}
+    </div>
+  )
+}
 
 async function _makeThumbnail(url) {
   return new Promise(resolve => {
@@ -307,6 +339,21 @@ export default function App() {
   const [activeTextModel, setActiveTextModel] = useState(
     () => localStorage.getItem('craftflow_text_model') ?? ''
   )
+  const [svcStatus, setSvcStatus] = useState(null)  // { services:{ollama,comfyui,database}, hints:[] }
+
+  // 輪詢系統狀態（Ollama / ComfyUI / DB），供 header 狀態燈使用
+  useEffect(() => {
+    let alive = true
+    const poll = () => {
+      fetch('/api/v1/status/')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (alive && data) setSvcStatus(data) })
+        .catch(() => { if (alive) setSvcStatus(null) })
+    }
+    poll()
+    const id = setInterval(poll, _STATUS_POLL_MS)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
 
   useEffect(() => {
     const savedCheckpoint   = localStorage.getItem('craftflow_checkpoint')
@@ -519,6 +566,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <ServiceStatus status={svcStatus} />
           <div style={{ textAlign: 'right' }}>
             <div style={S.modelLabel}>
               {generationMode === 'workflow' ? 'Workflow 模式' : 'Checkpoint 模式'}

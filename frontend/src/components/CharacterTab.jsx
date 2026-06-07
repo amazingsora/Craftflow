@@ -1039,6 +1039,10 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
   const [deletingAiIdx, setDeletingAiIdx] = useState(null)
   const [artStyleId, setArtStyleId] = useState(initChar.art_style_id ?? null)
   const [artStyles, setArtStyles] = useState([])
+  // 角色專屬 LoRA（直通欄位）
+  const [loraName, setLoraName] = useState(initChar.lora_name ?? '')
+  const [loraWeight, setLoraWeight] = useState(initChar.lora_weight ?? 0.8)
+  const [loraList, setLoraList] = useState([])
   const [aiPromptEnabled, setAiPromptEnabled] = useState(
     () => _loadGenPrefs(initChar.id, null, { aiPromptEnabled: !!initChar.ai_prompt }).aiPromptEnabled
   )
@@ -1093,6 +1097,8 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
 
   useEffect(() => {
     apiFetch('/art-styles').then(setArtStyles).catch(() => {})
+    // ComfyUI 離線時 /settings/loras 會 503，靜默忽略即可
+    apiFetch('/settings/loras').then(d => setLoraList(d.loras || [])).catch(() => {})
   }, [])
 
   const saveFields = async () => {
@@ -1116,6 +1122,8 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
           ai_prompt: aiPrompt.trim() || null,
           outfit: outfit.trim() || null,
           art_style_id: artStyleId || null,
+          lora_name: loraName.trim() || null,
+          lora_weight: loraName.trim() ? parseFloat(loraWeight) : null,
         }),
       })
       setChar(updated)
@@ -1652,6 +1660,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                         lastTimings.body_coverage     != null && ['姿態偵測',  lastTimings.models?.vision,   lastTimings.body_coverage],
                         lastTimings.compile_prompt    != null && ['提示詞編譯', lastTimings.models?.text,    lastTimings.compile_prompt],
                         lastTimings.compile_ai_prompt != null && ['AI提示詞',  lastTimings.models?.text,    lastTimings.compile_ai_prompt],
+                        lastTimings.canvas_expand     != null && ['Canvas Expand (Flux)', lastTimings.models?.workflow, lastTimings.canvas_expand],
                         lastTimings.upload            != null && ['圖片上傳',  null,                         lastTimings.upload],
                         lastTimings.comfyui           != null && ['ComfyUI 生成', lastTimings.models?.workflow, lastTimings.comfyui],
                       ].filter(Boolean).map(([label, model, sec]) => (
@@ -1664,7 +1673,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                         </div>
                       ))}
                       {(() => {
-                        const keys = ['vision_extract','body_coverage','compile_prompt','compile_ai_prompt','upload','comfyui']
+                        const keys = ['vision_extract','body_coverage','compile_prompt','compile_ai_prompt','canvas_expand','upload','comfyui']
                         const sum = keys.reduce((a, k) => a + (lastTimings[k] ?? 0), 0)
                         const other = Math.round((lastTimings.total - sum) * 10) / 10
                         return other > 0.5 ? (
@@ -1791,6 +1800,39 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                 <option key={s.id} value={s.id}>{s.name} [{s.base_style}]</option>
               ))}
             </select>
+          </div>
+
+          {/* 角色專屬 LoRA（直通欄位，獨立於畫風） */}
+          <div>
+            <label style={S.label}>專屬 LoRA</label>
+            <select
+              style={S.select}
+              value={loraName}
+              onChange={e => setLoraName(e.target.value)}
+            >
+              <option value="">（不使用專屬 LoRA）</option>
+              {/* 已選但清單中沒有（ComfyUI 離線）時仍保留目前值 */}
+              {loraName && !loraList.includes(loraName) && (
+                <option value={loraName}>{loraName}（目前設定）</option>
+              )}
+              {loraList.map(l => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+            {loraName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>權重</span>
+                <input
+                  type="range" min="0" max="1" step="0.05"
+                  value={loraWeight}
+                  onChange={e => setLoraWeight(parseFloat(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+                <span style={{ fontSize: 12, color: 'var(--text)', width: 32, textAlign: 'right' }}>
+                  {Number(loraWeight).toFixed(2)}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* 所屬勢力 */}
@@ -2078,6 +2120,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                         vState.lastTimings.body_coverage     != null && ['姿態偵測',   vState.lastTimings.models?.vision,   vState.lastTimings.body_coverage],
                         vState.lastTimings.compile_prompt    != null && ['提示詞編譯', vState.lastTimings.models?.text,     vState.lastTimings.compile_prompt],
                         vState.lastTimings.compile_ai_prompt != null && ['AI提示詞',  vState.lastTimings.models?.text,     vState.lastTimings.compile_ai_prompt],
+                        vState.lastTimings.pass1             != null && ['Pass 1 粗稿', vState.lastTimings.models?.workflow, vState.lastTimings.pass1],
                         vState.lastTimings.upload            != null && ['圖片上傳',  null,                                 vState.lastTimings.upload],
                         vState.lastTimings.comfyui           != null && ['ComfyUI 生成', vState.lastTimings.models?.workflow, vState.lastTimings.comfyui],
                       ].filter(Boolean).map(([label, model, sec]) => (
@@ -2090,7 +2133,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                         </div>
                       ))}
                       {(() => {
-                        const keys = ['vision_extract','body_coverage','compile_prompt','compile_ai_prompt','upload','comfyui']
+                        const keys = ['vision_extract','body_coverage','compile_prompt','compile_ai_prompt','canvas_expand','upload','comfyui']
                         const sum = keys.reduce((a, k) => a + (vState.lastTimings[k] ?? 0), 0)
                         const other = Math.round((vState.lastTimings.total - sum) * 10) / 10
                         return other > 0.5 ? (

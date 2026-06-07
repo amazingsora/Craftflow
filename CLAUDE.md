@@ -1,9 +1,9 @@
 # Craftflow — Claude Instructions
 
 ## Architecture Mandates
-- **Local-First:** AI runs on Ollama + ComfyUI. No cloud API unless explicitly told.
-- **Human-in-the-Loop:** Never overwrite original creative content. Output goes to analysis reports only.
-- **Docker → Host:** Always use `host.docker.internal` (not `localhost`) for Ollama/ComfyUI.
+- **Local-First:** AI on Ollama + ComfyUI；無雲端 API（除非明確指示）。
+- **Human-in-the-Loop:** 絕不覆蓋原始創作內容；產出只進分析報告。
+- **Docker → Host:** Ollama/ComfyUI 一律用 `host.docker.internal`（非 `localhost`）。
 
 ## Stack
 | Layer | Tech |
@@ -16,33 +16,22 @@
 
 ## Layout
 ```
-/backend/app/   → api/ models/ schemas/ services/ai/ core/
-/frontend/src/  → components/ (ComposeTab, GenerateTab, ProcessTab)
+/backend/app/     → api/ models/ schemas/ services/ai/ core/
+/frontend/src/    → components/ (ComposeTab, GenerateTab, ProcessTab)
 /tools/Craftflow/ → legacy CLI (migration target → services/ai/)
-/doc/           → dev logs, product plan
+/doc/             → dev logs, product plan
 ```
 
 ## Coding Rules
-1. **Surgical updates** — change only what's needed; no unrelated refactors.
-2. **Progressive feedback** — slow AI tasks must have backend status + frontend progress UI.
-3. **Resilient errors** — Ollama/ComfyUI failures must not crash the app.
-4. Read before editing. Explain *why* before changing.
+1. **Surgical updates** — 只改必要處，無關的不重構。
+2. **Progressive feedback** — 慢速 AI 任務需後端狀態 + 前端進度 UI。
+3. **Resilient errors** — Ollama/ComfyUI 失敗不可讓 app crash。
+4. 改前先讀；動手前先說明 *why*。
 
 ## Workflow
 Research → Propose → Explain risk → Apply
 
-## Doc Update Rules
-
-### 每日開發記錄（`doc/YYYY-MM-DD_開發記錄.md`）
-- 當天所有工作、技術討論、決策、待確認事項，**全部只寫當天日期的檔案**
-- 跨日開發：新的一天開新檔案，開頭用「承接 YYYY-MM-DD」說明脈絡，不回頭修改舊檔
-- 會話開始時若有未完成的工作，先讀最新一筆開發記錄確認當前狀態
-
-### 功能規劃文件（`doc/YYYY-MM-DD_*規劃.md`）
-- 只更新 **進度 checkbox**（`🔲` → `✅`）和**狀態欄**
-- 技術細節、討論內容、調查結果一律寫進當日開發記錄，不塞入規劃文件
-- 規劃文件當 spec 和 checklist 用，保持精簡
-
-### 禁止事項
-- 不在舊日期的檔案裡補寫新內容
-- 不把當日討論的技術細節分散在多個文件
+## Doc Rules
+- **每日開發記錄** `doc/YYYY-MM-DD_開發記錄.md`：當天所有工作/討論/決策/待辦只寫當天檔；跨日開新檔，開頭「承接 YYYY-MM-DD」，不改舊檔；會話開始先讀最新一筆確認狀態。
+- **規劃文件** `doc/YYYY-MM-DD_*規劃.md`：只更新進度 checkbox（🔲→✅）與狀態欄；當 spec/checklist 用，保持精簡。
+- **禁止**：在舊日期檔補寫新內容；把技術細節分散到多個檔案。

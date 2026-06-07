@@ -127,7 +127,14 @@ def _poll_history(prompt_id: str, timeout: int, extract) -> list[str]:
         r = requests.get(f"{COMFYUI_BASE}/history/{prompt_id}", timeout=10)
         data = r.json()
         if prompt_id in data:
-            outputs = data[prompt_id].get("outputs", {})
+            entry = data[prompt_id]
+            status = entry.get("status", {})
+            if status.get("status_str") == "error":
+                msgs = [str(m) for m in status.get("messages", [])]
+                import logging as _log
+                _log.getLogger(__name__).error("[comfyui] job %s failed: %s", prompt_id, "; ".join(msgs))
+                raise ValueError(f"ComfyUI 執行錯誤: {'; '.join(msgs)}")
+            outputs = entry.get("outputs", {})
             return extract(outputs)
         time.sleep(interval)
         interval = min(interval * 1.5, 3)

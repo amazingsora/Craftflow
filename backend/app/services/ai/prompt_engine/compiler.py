@@ -209,7 +209,14 @@ def compile(
 
         # Extract authoritative anchors
         anchors = _extract_color_anchors(text, anchor_source=anchor_text)
-        
+
+        # When heterochromia is present, single-color eye anchors extracted from the
+        # vision-extract portion of text are wrong (they reflect the reference image,
+        # not the actual character). Remove them so _reorder_tags doesn't re-inject
+        # e.g. "(purple eyes:1.1)" after _inject_heterochromia already cleaned it.
+        if _HETERO_DETECT_RE.search(f"{text} {anchor_text}"):
+            anchors = [a for a in anchors if not a.endswith(" eyes")]
+
         # Clean conflicts
         cleaned_tags = _remove_conflicting_tags(cleaned_tags, anchors)
         
