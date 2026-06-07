@@ -83,6 +83,28 @@ def _wf_has_ipa(name: str) -> bool:
     return False
 
 
+# UI 格式（ComfyUI「Save」匯出，非「Save (API format)」）含頂層 "nodes" 陣列，
+# 無法直接送進 /prompt，會在生圖時回 422。提早在列表/切換階段偵測並給明確指引。
+_UI_FORMAT_HINT = (
+    " 是 ComfyUI UI 格式（含 'nodes' 陣列），無法直接使用。"
+    "請在 ComfyUI 重新匯出：Settings → Enable Dev mode options → Save (API format)。"
+)
+
+
+def _wf_is_ui_format(name: str) -> bool:
+    """Return True if the workflow JSON is a ComfyUI UI-format export (invalid for /prompt)."""
+    for base in (_CUSTOM_DIR, _SYSTEM_DIR):
+        path = base / name
+        if path.exists():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    wf = json.load(f)
+                return isinstance(wf.get("nodes"), list)
+            except Exception:
+                return False
+    return False
+
+
 @router.get("/workflows", summary="列出使用者自訂 workflow JSON 檔案")
 def list_workflows():
     _CUSTOM_DIR.mkdir(parents=True, exist_ok=True)
@@ -92,6 +114,8 @@ def list_workflows():
         "active": state.get_workflow(),
         "dir": str(_CUSTOM_DIR),
         "ipa_support": {w: _wf_has_ipa(w) for w in workflows},
+        # invalid=true 代表該檔是 UI 格式、不可用，前端可標記並提示重新匯出
+        "invalid": {w: _wf_is_ui_format(w) for w in workflows},
     }
 
 
@@ -113,6 +137,8 @@ def set_workflow(req: SetWorkflowRequest):
     exists = (_CUSTOM_DIR / name).exists() or (_SYSTEM_DIR / name).exists()
     if not exists:
         raise HTTPException(status_code=404, detail=f"Workflow '{name}' 不存在")
+    if _wf_is_ui_format(name):
+        raise HTTPException(status_code=422, detail=f"Workflow '{name}'{_UI_FORMAT_HINT}")
     state.set_workflow(name)
     return {"workflow": state.get_workflow(), "ipa_supported": _wf_has_ipa(name)}
 

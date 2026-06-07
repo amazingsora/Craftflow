@@ -12,6 +12,7 @@ from typing import Annotated, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.database import get_db
 from app.models.analysis_report import AnalysisReport
@@ -79,7 +80,8 @@ async def analyze_chapter(chapter_id: int, req: AnalyzeRequest, db: DbDep):
         )
         for c in db_chars
     ]
-    consistency_results, warnings = consistency_service.analyze(
+    consistency_results, warnings = await run_in_threadpool(
+        consistency_service.analyze,
         chapter.content,
         profiles,
         enable_semantic=req.enable_semantic and req.mode == "pro",
@@ -137,7 +139,9 @@ async def rewrite_chapter(chapter_id: int, req: RewriteRequest, db: DbDep):
     if not to_rewrite:
         return {"chapter_id": chapter_id, "message": "No rhythm issues found, no rewrite needed.", "suggestions": []}
 
-    suggestions = rewrite_service.batch_rewrite(to_rewrite, mode=req.mode, model=req.model)
+    suggestions = await run_in_threadpool(
+        rewrite_service.batch_rewrite, to_rewrite, mode=req.mode, model=req.model
+    )
 
     import json
     report_content = json.dumps(
@@ -176,7 +180,9 @@ async def extract_character_traits(character_id: int, req: ExtractRequest, db: D
         raise HTTPException(status_code=400, detail="Chapter has no content")
 
     await guardian.request_focus("ollama")
-    extracted = character_service.extract_from_text(chapter.content, character.name, model=req.model)
+    extracted = await run_in_threadpool(
+        character_service.extract_from_text, chapter.content, character.name, model=req.model
+    )
     return {
         "character_id": character_id,
         "character_name": character.name,
@@ -199,7 +205,8 @@ async def character_design_ask(character_id: int, req: CharacterAskRequest, db: 
         "notes": character.notes,
     }
     await guardian.request_focus("ollama")
-    answer = character_service.design_chat(
+    answer = await run_in_threadpool(
+        character_service.design_chat,
         question=req.question,
         character_name=character.name,
         existing_profile=profile,

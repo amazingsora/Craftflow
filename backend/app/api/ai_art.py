@@ -13,6 +13,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import UPLOAD_DIR
 from app.core.database import get_db
@@ -55,11 +56,11 @@ async def analyze_illustration(illustration_id: int, req: AnalyzeIllustrationReq
     await guardian.request_focus("ollama")
 
     if req.mode == "sketch_critique":
-        result = art_service.critique_sketch(image_path, model=req.model)
+        result = await run_in_threadpool(art_service.critique_sketch, image_path, model=req.model)
     elif req.mode == "finished_critique":
-        result = art_service.critique_finished(image_path, model=req.model)
+        result = await run_in_threadpool(art_service.critique_finished, image_path, model=req.model)
     else:
-        result = art_service.advise_color(image_path, model=req.model)
+        result = await run_in_threadpool(art_service.advise_color, image_path, model=req.model)
 
     return {
         "illustration_id": illustration_id,
@@ -76,7 +77,7 @@ async def describe_illustration(illustration_id: int, db: DbDep, model: str = DE
     image_path = str(UPLOAD_DIR / illus.file_path)
 
     await guardian.request_focus("ollama")
-    description = art_service.describe_illustration(image_path, model=model)
+    description = await run_in_threadpool(art_service.describe_illustration, image_path, model=model)
     illus.ai_description = description
     db.commit()
 
@@ -89,7 +90,8 @@ async def ask_with_illustration(illustration_id: int, req: ArtAskRequest, db: Db
     image_path = str(UPLOAD_DIR / illus.file_path)
 
     await guardian.request_focus("ollama")
-    answer = art_service.composition_ask(
+    answer = await run_in_threadpool(
+        art_service.composition_ask,
         question=req.question,
         image_path=image_path,
         model=req.model,
@@ -111,7 +113,8 @@ async def art_ask_freeform(
         image_bytes = await image.read()
 
     await guardian.request_focus("ollama")
-    answer = art_service.composition_ask(
+    answer = await run_in_threadpool(
+        art_service.composition_ask,
         question=question,
         image_bytes=image_bytes,
         model=model,
@@ -152,7 +155,9 @@ async def describe_character_portrait(
 
     image_path = str(UPLOAD_DIR / illus.file_path)
     await guardian.request_focus("ollama")
-    description = character_service.describe_portrait(image_path, character.name, model=req.model)
+    description = await run_in_threadpool(
+        character_service.describe_portrait, image_path, character.name, model=req.model
+    )
 
     existing = character.notes or ""
     sep = "\n\n---\n" if existing else ""

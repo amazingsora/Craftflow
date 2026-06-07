@@ -10,7 +10,17 @@
       "Read(//f/wk/ComfyUI_portable/ComfyUI/**)",
       "Read(//f/wk/ComfyUI_portable/ComfyUI/comfy_extras/**)",
       "Read(//f/wk/ComfyUI_portable/ComfyUI/custom_nodes/comfyui_controlnet_aux/src/**)",
-      "Bash(dir \"f:\\\\wk\\\\Craftflow\\\\doc\" /B /O:N)"
+      "Bash(dir \"f:\\\\wk\\\\Craftflow\\\\doc\" /B /O:N)",
+      "Bash(Get-ChildItem -Path \"F:\\\\wk\\\\ComfyUI_portable\\\\ComfyUI\\\\\" -Directory | Select-Object Name)",
+      "PowerShell(Get-ChildItem \"F:\\\\wk\\\\ComfyUI_portable\\\\ComfyUI\\\\custom_nodes\" -Directory | Select-Object Name | Where-Object {$_.Name -match \"gguf|llama|GGUF|LLAMA\"})",
+      "Bash(python -c \"from pathlib import Path; BASE_DIR=Path\\('f:/wk/Craftflow/backend'\\); print\\(BASE_DIR.parent / 'data' / 'custom_workflows' / 'canvas_expand_flux.json'\\)\")",
+      "Bash(Test-Path \"f:\\\\wk\\\\Craftflow\\\\data\\\\custom_workflows\\\\canvas_expand_flux.json\")",
+      "Bash(cp f:/wk/Craftflow/data/custom_workflows/canvas_expand_flux.json \"f:/wk/ComfyUI_portable/ComfyUI/user/default/workflows/craftflow/canvas_expand_flux.json\" && ls \"f:/wk/ComfyUI_portable/ComfyUI/user/default/workflows/craftflow/\")",
+      "Bash(f:/wk/ComfyUI_portable/python_embeded/python.exe -c \"import transformers; print\\(transformers.__version__\\)\")",
+      "Bash(f:/wk/ComfyUI_portable/python_embeded/python.exe -c \"from transformers.models.pixtral.convert_pixtral_weights_to_hf import MistralConverter; print\\('OK'\\)\")"
+    ],
+    "additionalDirectories": [
+      "f:\\wk\\ComfyUI_portable\\ComfyUI\\user\\default\\workflows\\craftflow"
     ]
   }
 }
