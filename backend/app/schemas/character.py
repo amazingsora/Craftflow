@@ -19,6 +19,8 @@ class CharacterCreate(BaseModel):
     outfit: Optional[str] = None
     gender: Optional[str] = None
     art_style_id: Optional[int] = None
+    lora_name: Optional[str] = None
+    lora_weight: Optional[float] = None
 
 
 class CharacterUpdate(BaseModel):
@@ -39,6 +41,8 @@ class CharacterUpdate(BaseModel):
     outfit: Optional[str] = None
     gender: Optional[str] = None
     art_style_id: Optional[int] = None
+    lora_name: Optional[str] = None
+    lora_weight: Optional[float] = None
     concept_images: Optional[list[str]] = None
     ai_generated_images: Optional[list[str]] = None
     tab_names: Optional[list[str]] = None
@@ -70,6 +74,8 @@ class CharacterResponse(BaseModel):
     gender: Optional[str] = None
     faction_ids: list[int] = []
     art_style_id: Optional[int] = None
+    lora_name: Optional[str] = None
+    lora_weight: Optional[float] = None
     tab_names: Optional[list] = None
     variants: Optional[list] = None
     created_at: datetime

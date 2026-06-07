@@ -48,6 +48,8 @@ def _migrate() -> None:
         ("art_style_id", "INTEGER"),
         ("height", "INTEGER"),
         ("outfit", "TEXT"),
+        ("lora_name", "VARCHAR(200)"),
+        ("lora_weight", "FLOAT"),
     ])
 
 

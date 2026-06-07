@@ -87,7 +87,7 @@ def analyze_image_bytes(
     try:
         resized = _resize_for_vision(image_bytes)
         image_b64 = base64.b64encode(resized).decode()
-        payload: dict = {"model": model, "prompt": prompt, "images": [image_b64], "stream": False}
+        payload: dict = {"model": model, "prompt": prompt, "images": [image_b64], "stream": False, "think": False}
         if options:
             payload["options"] = options
         if keep_alive is not None:
@@ -116,7 +116,7 @@ def analyze_multi_images_bytes(
             base64.b64encode(_resize_for_vision(b, max_px=max_px)).decode()
             for b in images_bytes
         ]
-        payload: dict = {"model": model, "prompt": prompt, "images": encoded, "stream": False}
+        payload: dict = {"model": model, "prompt": prompt, "images": encoded, "stream": False, "think": False}
         if options:
             payload["options"] = options
         if keep_alive is not None:

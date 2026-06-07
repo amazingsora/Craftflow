@@ -90,7 +90,7 @@ _COLOR_RULES = (
 _DANBOORU_COMMON_RULES = f"""- FORMAT: Output ONLY comma-separated tags. NO key-value pairs (e.g., no "name:", no "age:").
 - GENDER: Always start with a gender tag (1boy, 1girl, 2boys, etc.) based on the input.
 - NO-GO: No "Output:" prefix, No "Tags:" prefix, No explanations, No capital letters.
-- CONFLICT: If "視覺參考特徵" (Visual Traits) conflicts with "外貌與個性" (Priority Traits), the Priority Traits ALWAYS win. For example, if Visual says "pink hair" but Priority says "brown hair", use "brown hair".
+- CONFLICT: "外貌與個性" (Priority Traits) and "服裝設定" (Outfit Setting) ALWAYS override "視覺參考特徵" (Visual Traits). (a) If Visual says "pink jacket" but Outfit Setting says "grey combat suit", output ONLY the Outfit Setting outfit — discard the Visual outfit entirely. (b) If Visual says "purple eyes" but Priority Traits says "brown hair" / "異色瞳", use Priority Traits only.
 - MODIFIERS: Pay extreme attention to hair length and style modifiers. "短雙馬尾" = "short hair, short twin tails" or "short hair, short ponytail".
 - HETEROCHROMIA: If "異色瞳" is present, always output "heterochromia" plus each eye's color with direction. Example: 左眼紅右眼綠 → heterochromia, red eye (left), green eye (right).
 - STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
