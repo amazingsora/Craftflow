@@ -8,14 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import API_PREFIX, APP_TITLE, APP_VERSION
+from app.core.backup import backup_loop
 from app.core.database import init_db
-from app.api import projects, chapters, volumes, characters, illustrations, analysis, ai_text, ai_art, status, art_generate, factions, settings, art_styles, training
+from app.api import projects, chapters, volumes, characters, illustrations, analysis, ai_text, ai_art, status, art_generate, factions, settings, art_styles, training, export, generation_history
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    import asyncio
+    backup_task = asyncio.create_task(backup_loop())
     yield
+    backup_task.cancel()
 
 
 app = FastAPI(title=APP_TITLE, version=APP_VERSION, lifespan=lifespan)
@@ -41,6 +45,8 @@ app.include_router(factions.router, prefix=API_PREFIX)
 app.include_router(settings.router, prefix=API_PREFIX)
 app.include_router(art_styles.router, prefix=API_PREFIX)
 app.include_router(training.router, prefix=API_PREFIX)
+app.include_router(export.router, prefix=API_PREFIX)
+app.include_router(generation_history.router, prefix=API_PREFIX)
 
 
 @app.exception_handler(Exception)
