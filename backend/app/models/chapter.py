@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.models.project import Project
     from app.models.analysis_report import AnalysisReport
     from app.models.volume import Volume
+    from app.models.chapter_revision import ChapterRevision
 
 
 class Chapter(Base):
@@ -30,4 +31,8 @@ class Chapter(Base):
     volume: Mapped[Optional[Volume]] = relationship("Volume", back_populates="chapters")
     analysis_reports: Mapped[list[AnalysisReport]] = relationship(
         "AnalysisReport", back_populates="chapter", cascade="all, delete-orphan",
+    )
+    revisions: Mapped[list[ChapterRevision]] = relationship(
+        "ChapterRevision", back_populates="chapter", cascade="all, delete-orphan",
+        order_by="ChapterRevision.id.desc()",
     )
