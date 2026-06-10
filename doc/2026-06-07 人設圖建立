@@ -1,0 +1,331 @@
+角色人設圖表情差分製作技術文件（ComfyUI 版）
+1. 目標
+
+製作一張接近商業角色設定集的完整人設圖，包含：
+
+全身立繪 1 張
+表情差分 4～6 張
+保持同一角色識別度、同一服裝、同一髮型、同一配色
+背景、版面、字條、logo、資訊欄維持一致
+表情差分只變化臉部，不破壞身體與構圖
+2. 核心原則
+2.1 不要用單次全圖生成處理所有差分
+
+原因很簡單：
+全圖重抽會導致這些問題：
+
+臉部特徵飄掉
+髮型微變
+服裝細節不一致
+手部、鞋子、腰線不穩
+每張表情差分失去「同一角色」的感覺
+2.2 正確做法是「底圖固定，表情局部替換」
+
+最穩流程是：
+
+先生成或整理出一張完整的人設底圖
+鎖定身體、服裝、背景、文字
+只對臉部做局部 inpaint
+每次只改表情，不改五官結構與頭髮輪廓
+3. 推薦製作方式
+方案 A：最推薦的量產法
+
+適合做角色設定圖、表情包、遊戲立繪差分。
+
+流程
+
+Base Character Sheet → Face Mask Inpaint → Expression Variants → Layout Composite
+
+優點
+角色一致性最好
+服裝不容易跑掉
+表情變化最乾淨
+適合做多張差分
+缺點
+前期要先做一張高品質底圖
+臉部遮罩要做得精準
+4. 底圖製作規格
+4.1 畫布比例
+
+建議使用：
+
+1536 × 2304
+或 1024 × 1536
+若是卡片式設定圖，也可用 1400 × 2000 左右
+原則
+
+要保留：
+
+頭頂留白
+腳底空間
+左側文字欄
+下方表情差分區塊
+4.2 底圖內容固定項
+
+底圖完成後，下列元素盡量不要再變：
+
+髮型輪廓
+髮飾位置
+臉部比例基準
+服裝設計
+身體站姿
+鞋型
+背景紋理
+左側直排字體區
+角色名稱與 CV 欄位
+5. 表情差分的技術實作
+5.1 差分的本質
+
+表情差分不是「換一張新圖」，而是：
+
+在同一角色頭部基礎上
+改變眼睛形狀、嘴型、眉毛、臉頰狀態
+保留髮型、頭部輪廓、衣服、背景一致
+5.2 差分的建議數量
+
+商業人設圖常見可做：
+
+基本微笑
+開心笑
+冷淡 / 平靜
+生氣 / 不爽
+驚訝
+閉眼笑 / 眨眼
+
+你可以依角色個性縮減成 4 張，避免畫面過滿。
+
+6. ComfyUI 技術架構
+6.1 基本節點思路
+
+一套穩定的結構會長這樣：
+
+底圖生成
+Load Image / Blank Canvas
+Resize / Pad
+ControlNet（草圖或姿勢）
+IPAdapter（風格參考）
+KSampler
+VAE Decode
+表情差分
+Load Base Image
+Mask Face Region
+Inpaint Model
+Prompt Expression Variant
+KSampler
+VAE Decode
+Composite 回原圖
+7. 建議節點配置
+7.1 底圖階段
+必備節點
+Load Image：讀取草圖或底稿
+Resize / Pad Image：補成完整人設比例
+ControlNet Loader
+Apply ControlNet
+IPAdapter Loader
+Apply IPAdapter
+Checkpoint Loader
+KSampler
+VAE Decode
+Save Image
+建議參數
+ControlNet strength：0.65～0.8
+IPAdapter strength：0.15～0.25
+CFG：4.5～6.5
+Steps：25～35
+Denoise：0.45～0.7
+7.2 表情差分階段
+必備節點
+Load Base Image
+Mask Editor / Inpaint Mask
+Grow Mask
+Inpaint Model
+Prompt
+KSampler
+VAE Decode
+Image Composite
+建議參數
+Mask 範圍：只蓋臉部，不要蓋到頭髮大面積
+Grow Mask：8～20 px
+Denoise：0.2～0.45
+CFG：4～6
+Steps：20～30
+8. 遮罩策略
+8.1 表情差分遮罩範圍
+
+最重要的一點是，遮罩不要只蓋眼睛，也不要蓋太大。
+
+建議遮罩區
+眉毛
+眼睛
+鼻樑上半部
+嘴巴
+蘋果肌一小部分
+下巴上緣
+不建議遮罩區
+整顆頭
+髮飾
+頭髮主輪廓
+頸部
+衣領以下
+8.2 遮罩策略分類
+類型 1：輕微表情變化
+
+例如微笑、平靜、眨眼。
+遮罩可以小一點。
+
+類型 2：強情緒表情
+
+例如驚訝、憤怒、哭笑。
+遮罩要稍微擴大到臉頰與眉骨。
+
+9. 表情提示詞設計
+9.1 共通提示詞
+
+所有差分共用：
+
+same character
+same hairstyle
+same outfit
+clean anime illustration
+character sheet
+consistent design
+soft shading
+9.2 差分專用詞
+微笑
+gentle smile
+soft expression
+relaxed eyes
+開心笑
+cheerful smile
+eyes closed
+bright expression
+冷淡
+neutral expression
+calm eyes
+composed face
+生氣
+annoyed expression
+furrowed brows
+slightly puffed cheeks
+驚訝
+surprised expression
+widened eyes
+slightly open mouth
+10. 底圖與差分的分離製作方式
+10.1 最佳實務
+
+建議把整張人設圖拆成三層思維：
+
+Layer 1：固定層
+身體
+衣服
+姿勢
+背景
+文字欄
+標誌
+Layer 2：可變層
+眼睛
+眉毛
+嘴型
+臉頰表情
+Layer 3：版面層
+左側直排資訊
+表情差分小框
+Logo
+額外裝飾元素
+
+這樣你後面要改表情，不會重畫整張。
+
+11. 推薦工作流結構
+11.1 單張底圖工作流
+草圖輸入
+控制輪廓
+套風格參考
+生成完整立繪
+固定為底圖 master file
+11.2 表情差分工作流
+讀取 master file
+擷取臉部區域
+依表情改寫 prompt
+只做臉部 inpaint
+合成回原圖
+匯出差分版本
+12. 版本控制建議
+檔案命名
+
+建議這樣管理：
+
+char_base_v01.png
+char_base_v02.png
+char_face_smile_v01.png
+char_face_angry_v01.png
+char_sheet_final_v01.png
+版本原則
+先把底圖穩住
+再產差分
+不要一邊修底圖一邊改差分
+每次只改一個面向，方便回溯
+13. 品質檢查表
+
+每張差分輸出前檢查：
+
+臉型是否一致
+髮型有沒有跑掉
+眼睛是不是還屬於同一角色
+嘴巴位置是否偏移
+衣服輪廓是否變形
+腳部是否被重繪
+背景是否有不必要改變
+文字欄有沒有被污染
+14. 如果你要做成「像商業設定集」的感覺
+
+建議在版面上加入：
+
+左側立牌文字欄
+角色名
+CV
+所屬學校 / 陣營 / 職位
+左下角表情差分 4 宮格
+背景使用淡紋理與筆刷筆觸
+主體人物保持乾淨輪廓與柔和陰影
+
+這樣會非常接近你貼的那種完成度。
+
+15. 最推薦的技術路線
+路線 A：高穩定
+草圖出全身底圖
+風格鎖定
+固定 master sheet
+用 inpaint 做表情差分
+
+這是我最推薦的方案。
+
+路線 B：省時間
+直接用同一底圖生成 4 個臉部差分
+只改 prompt 與 mask
+速度快，但要多修幾次
+16. 你的情況下，我會怎麼做
+
+以你現在的需求，我會採取：
+
+先做一張完整人設圖底稿
+把臉部做成可抽換區域
+預先定義 4 個情緒：
+平靜
+微笑
+開心笑
+不爽 / 驚訝
+每張都使用同一背景與同一版面
+最後把差分小圖排進左下角
+17. 結論
+
+表情差分最穩的技術關鍵只有一句話：
+
+不要重抽整張圖，只重抽臉。
+
+這樣你才能保住：
+
+角色一致性
+商業感
+版面穩定性
+服裝與背景完整度

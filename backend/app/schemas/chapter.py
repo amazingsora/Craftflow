@@ -20,6 +20,7 @@ class ChapterBrief(BaseModel):
 
     id: int
     project_id: int
+    volume_id: Optional[int]
     order_index: int
     title: str
     created_at: datetime

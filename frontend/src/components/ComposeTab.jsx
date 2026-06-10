@@ -140,6 +140,10 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
   const inputRef = useRef()
   const elapsedTimer = useRef()
 
+  // ControlNet
+  const [cnEnabled, setCnEnabled] = useState(false)
+  const [cnWeight, setCnWeight] = useState(0.85)
+
   // IP-Adapter 角色外觀參考
   const [ipaEnabled, setIpaEnabled] = useState(false)
   useEffect(() => {
@@ -182,7 +186,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
   }
 
   const onSubmit = async () => {
-    if (!file || !question.trim() || loading) return
+    if (!file || loading) return
     setLoading(true)
     setError(null)
     setResult(null)
@@ -191,12 +195,14 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
     try {
       const body = new FormData()
       body.append('file', file)
-      body.append('question', question.trim())
+      if (question.trim()) body.append('question', question.trim())
       if (ipaEnabled) {
         body.append('use_sketch_as_ref', 'true')
         body.append('ipa_weight', String(ipaWeight))
-        // 備用：若未來恢復外部角色參考圖，取消下方注釋
-        // if (ipaFile) body.append('character_ref', ipaFile)
+      }
+      if (cnEnabled) {
+        body.append('use_cn', 'true')
+        body.append('cn_weight', String(cnWeight))
       }
 
       const resp = await fetch('/api/v1/art/compose', { method: 'POST', body })
@@ -233,7 +239,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
     a.click()
   }
 
-  const canSubmit = file && question.trim().length > 0 && !loading
+  const canSubmit = file && !loading
   const dzStyle = { ...S.dropzone, ...(dragging ? S.dropzoneActive : {}) }
 
   return (
@@ -313,8 +319,48 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
           )}
         </div>
 
+        {/* ControlNet 草圖引導 */}
+        <div style={{
+          border: '1px solid var(--border)', borderRadius: 10,
+          padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>草圖線稿引導 (CN)</span>
+            <button
+              style={{
+                fontSize: 12, padding: '3px 10px', borderRadius: 6,
+                border: cnEnabled ? 'none' : '1px solid var(--border)',
+                cursor: 'pointer',
+                background: cnEnabled ? 'var(--accent)' : 'transparent',
+                color: cnEnabled ? '#fff' : 'var(--muted)',
+              }}
+              onClick={() => setCnEnabled(v => !v)}
+            >
+              {cnEnabled ? '已啟用' : '未啟用'}
+            </button>
+          </div>
+          {cnEnabled && (
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
+                以草圖線稿引導生圖構圖，強度越高越貼近草圖姿勢。
+              </div>
+              <label style={{ ...S.label, marginBottom: 4 }}>
+                引導強度：{cnWeight.toFixed(2)}
+                <span style={{ marginLeft: 6, opacity: 0.6 }}>（0.85 建議起點）</span>
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
+                <input type="range" min={0.1} max={1.5} step={0.05}
+                  value={cnWeight} style={{ flex: 1, accentColor: 'var(--accent)' }}
+                  onChange={e => setCnWeight(Number(e.target.value))} />
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div>
-          <label style={S.label}>你的問題</label>
+          <label style={S.label}>你的問題 <span style={{ opacity: 0.5 }}>（選填，空白則 AI 自動分析）</span></label>
           <textarea
             style={S.textarea}
             placeholder={PLACEHOLDER_QUESTIONS[Math.floor(Math.random() * PLACEHOLDER_QUESTIONS.length)]}

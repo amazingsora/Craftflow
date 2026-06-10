@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import API_PREFIX, APP_TITLE, APP_VERSION
 from app.core.database import init_db
-from app.api import projects, chapters, characters, illustrations, analysis, ai_text, ai_art, status, art_generate, factions, settings, art_styles, training
+from app.api import projects, chapters, volumes, characters, illustrations, analysis, ai_text, ai_art, status, art_generate, factions, settings, art_styles, training
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(projects.router, prefix=API_PREFIX)
+app.include_router(volumes.router, prefix=API_PREFIX)
 app.include_router(chapters.router, prefix=API_PREFIX)
 app.include_router(characters.router, prefix=API_PREFIX)
 app.include_router(illustrations.router, prefix=API_PREFIX)
