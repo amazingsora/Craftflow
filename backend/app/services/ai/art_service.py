@@ -40,13 +40,17 @@ def suggest_lineart_colors_bytes(
 
 def analyze_composition_bytes(
     image_bytes: bytes,
-    user_question: str,
+    user_question: str | None = None,
     model: str = ollama_client.DEFAULT_VISION_MODEL,
 ) -> tuple[str, str]:
     """
     上傳草稿並提出構圖問題，由 Vision 模型給出具體建議，並提煉出精準對齊草稿的 SDXL Prompt。
+    user_question 為 None 時，AI 自動分析構圖（不需使用者輸入問題）。
     """
-    prompt = load_prompt("art/composition_analysis", user_question=user_question)
+    if user_question:
+        prompt = load_prompt("art/composition_analysis", user_question=user_question)
+    else:
+        prompt = load_prompt("art/composition_analysis_auto")
 
     raw = ollama_client.analyze_image_bytes(
         image_bytes, prompt, model=model,
@@ -136,17 +140,12 @@ def composition_ask(
 
 
 def compose_ask(
-    user_question: str, 
-    image_bytes: bytes, 
+    user_question: str | None,
+    image_bytes: bytes,
     model: str = ollama_client.DEFAULT_VISION_MODEL
 ) -> tuple[str, str]:
-    """
-    相容舊版 API 路由的轉接函式。
-    注意：舊版參數順序為 (user_question, image_bytes)，內部已自動調換。
-    """
-    # 呼叫我們全新優化的精準分析函式
     return analyze_composition_bytes(
         image_bytes=image_bytes,
-        user_question=user_question,
+        user_question=user_question or None,
         model=model
     )

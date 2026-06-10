@@ -6,6 +6,7 @@ import CharacterTab from './components/CharacterTab.jsx'
 import ArtStyleTab from './components/ArtStyleTab.jsx'
 import TrainingTab from './components/TrainingTab.jsx'
 import SettingsTab from './components/SettingsTab.jsx'
+import NovelTab from './components/NovelTab.jsx'
 
 const _HISTORY_KEY = 'craftflow_history_v2'
 const _MAX_HISTORY = 100
@@ -90,7 +91,9 @@ function _badgeLabel(type) {
 }
 
 const TABS = [
-  { id: 'process', label: '草稿 → 線稿' },
+  // TODO: 草稿→線稿功能暫時隱藏，待評估是否整合進角色管理或移除
+  { id: 'process', label: '草稿 → 線稿', hidden: true },
+  { id: 'novel', label: '小說' },
   { id: 'generate', label: '文字 → 生圖' },
   { id: 'compose', label: '草圖問答' },
   { id: 'character', label: '角色管理' },
@@ -312,7 +315,11 @@ function _shortModel(model) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState(() => localStorage.getItem('craftflow_tab') ?? 'process')
+  const [tab, setTab] = useState(() => {
+    const saved = localStorage.getItem('craftflow_tab')
+    const visible = TABS.filter(t => !t.hidden).map(t => t.id)
+    return (saved && visible.includes(saved)) ? saved : 'generate'
+  })
   const [history, setHistory] = useState(() => {
     try { return JSON.parse(localStorage.getItem(_HISTORY_KEY) || '[]') }
     catch { return [] }
@@ -586,7 +593,7 @@ export default function App() {
       </div>
 
       <div style={S.tabBar}>
-        {TABS.map((t) => (
+        {TABS.filter(t => !t.hidden).map((t) => (
           <button
             key={t.id}
             style={{ ...S.tab, ...(tab === t.id ? S.tabActive : {}) }}
@@ -616,6 +623,9 @@ export default function App() {
             ipaSupported={generationMode === 'checkpoint' || workflowIpaSupported}
             onSendToGenerate={onSendToGenerate}
           />
+        </div>
+        <div style={{ display: tab === 'novel' ? 'block' : 'none' }}>
+          <NovelTab />
         </div>
         <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
           <CharacterTab onAddHistory={addHistory} onSendToGenerate={onSendToGenerate} />

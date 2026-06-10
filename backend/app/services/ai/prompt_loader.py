@@ -97,22 +97,38 @@ _DEFAULTS: dict[str, str] = {
 - **氛圍描述**：
 """,
 
+    "art/composition_analysis_auto": """\
+你是一位精準的草稿轉提示詞大師與構圖專家。請分析這張**草稿**。
+
+請嚴格依循以下結構回應：
+
+[ADVICE]
+（使用繁體中文，分析草稿的構圖安排、人體比例、透視關係與視覺焦點，給出 2-3 點具體改善建議。）
+
+[PROMPT]
+Translate the sketch into Stable Diffusion tags. Hard rules:
+1. Describe ONLY what is visually present in the sketch (hair, pose, expression — e.g. add "smile" if smiling).
+2. For clothing, describe the actual silhouette objectively (e.g. vest, hoodie, sleeveless). Never invent unrelated styles (suit, gown, jacket).
+3. Default background: white background, simple background. Do NOT invent complex scenes.
+4. Output format: comma-separated English tags only. No natural language sentences.
+""",
+
     "art/composition_analysis": """\
 你是一位精準的草稿轉提示詞大師與構圖專家。請分析這張**草稿**並回答使用者的問題。
 
 使用者問題：{user_question}
 
-請嚴格依循以下結構回應（使用繁體中文）：
+請嚴格依循以下結構回應：
 
 [ADVICE]
-（請在此處詳細回答使用者的問題，給出關於視角、光源、佈局或人體結構的具體優化建議。）
+（使用繁體中文，詳細回答使用者的問題，給出關於視角、光源、佈局或人體結構的具體優化建議。）
 
 [PROMPT]
-（請根據草稿內容，將其轉譯為適合 Stable Diffusion 生成的英文標籤(tags)。請遵守以下硬性規則：
-1. 只描述草稿中「肉眼可見」的特徵，例如髮型、姿勢與表情（例如有微笑請務必加 smile）。
-2. 對於服裝，請依據草稿的剪裁客觀描述（例如：vest, hoodie, sleeveless），絕不可無中生有添加西裝(suit)、禮服、夾克等無關風格。
-3. 預設背景為純白或簡單背景（white background, simple background），禁止腦補任何複雜場景。
-4. 格式請完全使用逗號分隔的標籤，不要有任何自然語言解釋。）
+Translate the sketch into Stable Diffusion tags. Hard rules:
+1. Describe ONLY what is visually present in the sketch (hair, pose, expression — e.g. add "smile" if smiling).
+2. For clothing, describe the actual silhouette objectively (e.g. vest, hoodie, sleeveless). Never invent unrelated styles (suit, gown, jacket).
+3. Default background: white background, simple background. Do NOT invent complex scenes.
+4. Output format: comma-separated English tags only. No natural language sentences.
 """,
 
     "art/describe_illustration": """\
@@ -130,32 +146,32 @@ _DEFAULTS: dict[str, str] = {
     # ── Character ────────────────────────────────────────────────────────────
 
     "character/generate_summary": """\
-你是一位專業的角色設定整理師，正在為小說角色「{name}」建立角色檔案。
+You are a professional character profile editor compiling a character file for the novel character "{name}".
 
-以下是作者提供的原始筆記：
+Raw notes from the author:
 {raw_notes}
 
-請將上述資料整理成一份結構清晰的角色設定檔，使用繁體中文，格式如下：
+Organize the above into a structured character profile. Write ALL content in Traditional Chinese (繁體中文). Use exactly the following format:
 
 ## 角色概述
-（一段話總結這個角色的核心定位與魅力，50字以內）
+(One paragraph summarizing the character's core role and appeal, under 50 characters)
 
 ## 外貌與氣質
-（外貌特徵、穿著風格、整體氣質）
+(Physical appearance, clothing style, overall impression)
 
 ## 性格特質
-（核心個性、優點、缺點或矛盾面）
+(Core personality, strengths, flaws or contradictions)
 
 ## 行為模式
-（面對事情的反應方式、習慣、癖好）
+(How the character reacts, habits, quirks)
 
 ## 說話方式
-（語氣、常用詞彙、說話特色）
+(Tone, characteristic vocabulary, speech patterns)
 
 ## 創作備注
-（對作者有用的額外提示、潛在故事線等）
+(Additional notes useful to the author, potential story threads)
 
-請只輸出格式化內容，不要加入任何前言或說明。
+Output the formatted content only. No preamble, no explanation.
 """,
 
     "character/extract_from_text": """\

@@ -1051,9 +1051,11 @@ _FULLBODY_NEG_TAGS = (
 )
 # 全身畫布比例：依角色身形自動選取（「自動匹配大小」）。皆為 64 倍數、約 1MP，
 # 貼近 SDXL 訓練分佈。高瘦 → 更長縱向畫布（多給頭/腳空間，減少裁切）；矮/幼態 → 較方。
-_FULLBODY_CANVAS_TALL = (768, 1344)    # 身高 ≥170：高挑/長腿
-_FULLBODY_CANVAS_STD = (832, 1216)     # 標準成人比例（預設）
-_FULLBODY_CANVAS_SHORT = (896, 1152)   # 身高 <150 或幼態：矮/Q版
+# 2026-06-07：整體往上拉一個 SDXL 直幅 bucket，加大縱向空間。部分 checkpoint
+# （如 AnythingXL_xl）偏 portrait 構圖，較矮畫布會裁掉小腿/腳；加高後全身較完整。
+_FULLBODY_CANVAS_TALL = (704, 1408)    # 身高 ≥170：高挑/長腿（比例 1:2）
+_FULLBODY_CANVAS_STD = (768, 1344)     # 標準成人比例（預設，SDXL 直幅 bucket）
+_FULLBODY_CANVAS_SHORT = (832, 1216)   # 身高 <150 或幼態：矮/Q版
 # 身高分界（cm）
 _FULLBODY_TALL_CM = 170
 _FULLBODY_SHORT_CM = 150
@@ -1094,11 +1096,13 @@ def _is_flat_color_draft(image_bytes: bytes) -> bool:
 @router.post("/art/compose", summary="草圖問答 → 構圖意見 + 參考圖")
 async def compose(
     file: Annotated[UploadFile, File(description="草稿圖片")],
-    question: str = Form(..., description="針對草圖的構圖問題"),
+    question: Optional[str] = Form(None, description="針對草圖的構圖問題（空白則 AI 自動分析）"),
     model: str = Form(""),
     character_ref: Optional[UploadFile] = File(None, description="角色外觀參考圖（隱藏備用）"),
     ipa_weight: float = Form(0.6, ge=0.1, le=1.5, description="IP-Adapter 強度"),
     use_sketch_as_ref: bool = Form(False, description="以草圖本身作為 IP-Adapter 參考"),
+    use_cn: bool = Form(False, description="以草圖作為 ControlNet hint"),
+    cn_weight: float = Form(0.85, ge=0.1, le=1.5, description="ControlNet 強度"),
 ):
     image_bytes = await file.read()
     width, height = _image_dimensions(image_bytes)
@@ -1106,7 +1110,7 @@ async def compose(
 
     await guardian.request_focus("ollama")
     try:
-        advice, sdxl_prompt = art_service.compose_ask(question, image_bytes, model=effective_model)
+        advice, sdxl_prompt = art_service.compose_ask(question or None, image_bytes, model=effective_model)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
@@ -1129,36 +1133,61 @@ async def compose(
 
     await guardian.request_focus("comfyui")
 
+    # CN：草圖 letterbox 後上傳作為 ControlNet hint
+    uploaded_cn: str | None = None
+    if use_cn:
+        sketch_lb = _letterbox_to_aspect(image_bytes, gen_w, gen_h)
+        uploaded_cn = comfyui_client.upload_image_bytes(sketch_lb, "compose_cn_ref.png")
+
     if use_sketch_as_ref or character_ref is not None:
         # IP-Adapter 模式：以草圖（或外部參考圖）作為外觀基準
         if character_ref is not None:
             ref_bytes = await character_ref.read()
             ref_filename = character_ref.filename or "char_ref.png"
         else:
-            ref_bytes = image_bytes  # 草圖本身作為參考
+            ref_bytes = image_bytes
             ref_filename = "sketch_ref.png"
         uploaded_ref = comfyui_client.upload_image_bytes(ref_bytes, ref_filename)
         final_prompt = sdxl_prompt.rstrip(", ") + ", full body, complete character, all limbs visible"
         wf = _load_workflow("ipadapter_txt2img.json")
+
+        # CN 注入 / bypass
+        if use_cn and not _wf_has_controlnet(wf):
+            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True)
+        elif not use_cn and _wf_has_controlnet(wf):
+            _bypass_controlnet_nodes(wf)
+
         _inject_prompts(wf, final_prompt, negative)
         for node in wf.values():
             if not isinstance(node, dict):
                 continue
             ct = node.get("class_type")
             inputs = node.get("inputs", {})
-            if ct == "LoadImage":
-                inputs["image"] = uploaded_ref
-            elif ct == "IPAdapterAdvanced":
+            if ct == "IPAdapterAdvanced":
                 inputs["weight"] = round(ipa_weight, 2)
             elif ct == "EmptyLatentImage":
                 inputs["width"] = gen_w
                 inputs["height"] = gen_h
             elif ct == "KSampler":
                 inputs["seed"] = seed
+
+        # IPA 圖片：BFS 只注入 IPA 鏈的 LoadImage（不覆蓋 CN 的 LoadImage）
+        _inject_ipa_image(wf, uploaded_ref)
     else:
-        # txt2img 模式（線稿風）
+        # txt2img / CN-only 模式
         final_prompt = sdxl_prompt.rstrip(", ") + ", full body, complete character, all limbs visible, white background, monochrome, lineart, clean lines, no shading, no color"
         wf = _load_workflow(active_wf)
+
+        # IPA bypass（若 workflow 有殘留 IPA 節點）
+        if _wf_has_ipa(wf):
+            _bypass_ipa_nodes(wf)
+
+        # CN 注入 / bypass
+        if use_cn and not _wf_has_controlnet(wf):
+            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True)
+        elif not use_cn and _wf_has_controlnet(wf):
+            _bypass_controlnet_nodes(wf)
+
         _inject_prompts(wf, final_prompt, negative)
         for node in wf.values():
             if not isinstance(node, dict):
@@ -1170,6 +1199,13 @@ async def compose(
                 inputs["height"] = gen_h
             elif ct == "KSampler":
                 inputs["seed"] = seed
+
+    # CN 圖片注入 + 強度設定
+    if use_cn and uploaded_cn and _wf_has_controlnet(wf):
+        _inject_controlnet_image(wf, uploaded_cn)
+        for node in wf.values():
+            if isinstance(node, dict) and node.get("class_type") in _CN_APPLY_TYPES:
+                node.get("inputs", {})["strength"] = round(cn_weight, 2)
 
     _replace_negative_seeds(wf, seed)
     image_data = await _run_comfyui(wf)

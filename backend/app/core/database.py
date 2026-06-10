@@ -51,6 +51,9 @@ def _migrate() -> None:
         ("lora_name", "VARCHAR(200)"),
         ("lora_weight", "FLOAT"),
     ])
+    _add_columns("chapters", [
+        ("volume_id", "INTEGER"),
+    ])
 
 
 def _add_columns(table: str, columns: list[tuple[str, str]]) -> None:
