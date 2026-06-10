@@ -53,7 +53,7 @@ const S = {
     borderRadius: 8,
     border: 'none',
     background: 'var(--accent)',
-    color: '#fff',
+    color: 'var(--accent-contrast)',
     fontSize: 15,
     fontWeight: 600,
     cursor: 'pointer',
@@ -99,7 +99,7 @@ const S = {
     border: '1px solid var(--border)', cursor: 'pointer',
     background: 'transparent', color: 'var(--muted)',
   },
-  toggleBtnActive: { background: 'var(--accent)', color: '#fff', border: 'none' },
+  toggleBtnActive: { background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none' },
   refDropzone: {
     border: '2px dashed var(--border)', borderRadius: 8, minHeight: 100,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -114,7 +114,7 @@ const S = {
     background: 'transparent', color: 'var(--muted)', fontSize: 12,
     cursor: 'pointer', textAlign: 'center',
   },
-  modeBtnActive: { background: 'var(--accent)', color: '#fff', border: 'none', fontWeight: 600 },
+  modeBtnActive: { background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', fontWeight: 600 },
   diceBtn: {
     padding: '7px 10px',
     borderRadius: 8,
@@ -308,8 +308,8 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
               {detectedStyle && (
                 <span style={{
                   fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                  background: 'rgba(124, 106, 247, 0.15)',
-                  border: '1px solid rgba(124, 106, 247, 0.4)',
+                  background: 'var(--accent-soft-2)',
+                  border: '1px solid var(--accent-border)',
                   color: 'var(--accent)', fontWeight: 600, letterSpacing: '0.05em',
                 }}>
                   {detectedStyle.toUpperCase()}
@@ -317,7 +317,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
               )}
             </div>
             <button
-              style={{ ...S.btnSecondary, padding: '2px 8px', fontSize: 11, background: 'rgba(126, 184, 247, 0.1)', borderColor: 'var(--accent)', color: 'var(--accent)' }}
+              style={{ ...S.btnSecondary, padding: '2px 8px', fontSize: 11, background: 'var(--tint-blue-bg)', borderColor: 'var(--accent)', color: 'var(--accent)' }}
               onClick={onOptimize}
               disabled={optimizing || !promptZh.trim()}
             >
@@ -363,7 +363,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
             <label style={S.label}>最終提示詞預覽 (發送給 AI)</label>
             {finalPrompt && (
               <button 
-                style={{ ...S.btnSecondary, padding: '2px 8px', fontSize: 11, background: 'rgba(255, 255, 255, 0.05)', borderColor: 'var(--border)' }}
+                style={{ ...S.btnSecondary, padding: '2px 8px', fontSize: 11, background: 'var(--hover)', borderColor: 'var(--border)' }}
                 onClick={onCopy}
               >
                 {copied ? '✅ 已複製' : '📋 複製'}
@@ -372,13 +372,13 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
           </div>
           <div style={{ 
             ...S.textarea, 
-            background: '#0d0d15', 
+            background: 'var(--code-bg)', 
             fontSize: 12, 
             minHeight: 100, 
             padding: '12px',
             borderStyle: 'dashed',
             whiteSpace: 'pre-wrap',
-            color: '#abb2bf',
+            color: 'var(--code-fg)',
             lineHeight: 1.6
           }}>
             {promptEn || optimizedEn ? (

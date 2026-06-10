@@ -16,7 +16,7 @@ const S = {
     cursor: 'pointer', padding: '10px 14px', borderRadius: 8,
     border: '1px solid var(--border)', transition: 'border-color .15s',
   },
-  radioLabelActive: { borderColor: 'var(--accent)', background: 'rgba(99,102,241,.08)' },
+  radioLabelActive: { borderColor: 'var(--accent)', background: 'var(--accent-soft)' },
   radioTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 2 },
   radioDesc: { fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 },
   radio: { marginTop: 2, accentColor: 'var(--accent)', width: 16, height: 16, flexShrink: 0 },
@@ -49,20 +49,20 @@ const S = {
   statusRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 },
   dot: (online) => ({
     width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-    background: online ? '#4ade80' : '#f87171',
+    background: online ? 'var(--tint-green-fg)' : 'var(--danger)',
   }),
   statusText: { color: 'var(--muted)' },
   saveBtn: {
     alignSelf: 'flex-start',
     padding: '8px 20px', borderRadius: 8, border: 'none',
-    background: 'var(--accent)', color: '#fff',
+    background: 'var(--accent)', color: 'var(--accent-contrast)',
     fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
-  savedMsg: { fontSize: 12, color: '#4ade80', alignSelf: 'center' },
+  savedMsg: { fontSize: 12, color: 'var(--tint-green-fg)', alignSelf: 'center' },
   infoBox: {
     padding: '10px 14px', borderRadius: 8,
-    background: 'rgba(99,102,241,.08)',
-    border: '1px solid rgba(99,102,241,.2)',
+    background: 'var(--accent-soft)',
+    border: '1px solid var(--accent-border)',
     fontSize: 12, color: 'var(--muted)', lineHeight: 1.6,
   },
   workflowList: { display: 'flex', flexDirection: 'column', gap: 6 },
@@ -75,7 +75,7 @@ const S = {
   workflowActive: { borderColor: 'var(--accent)', color: 'var(--accent)' },
   workflowBadge: {
     fontSize: 10, padding: '1px 6px', borderRadius: 4, fontWeight: 600,
-    background: 'rgba(99,102,241,.15)', color: 'var(--accent)',
+    background: 'var(--accent-soft-2)', color: 'var(--accent)',
   },
   loraNone: { color: 'var(--muted)', fontSize: 12, marginTop: 2 },
 }
