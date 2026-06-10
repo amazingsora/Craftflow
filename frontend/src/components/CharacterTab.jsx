@@ -5,10 +5,10 @@ const GENRES = ['玄幻', '奇幻', '現代都市', '科幻', '古風', 'BL/GL',
 const STATUSES = ['構思中', '撰寫中', '修稿中', '完稿']
 
 const STATUS_COLOR = {
-  '構思中': { bg: '#1e2a3a', text: '#7eb8f7' },
-  '撰寫中': { bg: '#1e3a2d', text: '#7ef7b0' },
-  '修稿中': { bg: '#3a2d1e', text: '#f7c87e' },
-  '完稿':   { bg: '#2d1e3a', text: '#c07ef7' },
+  '構思中': { bg: 'var(--tint-blue-bg)', text: 'var(--tint-blue-fg)' },
+  '撰寫中': { bg: 'var(--tint-green-bg)', text: 'var(--tint-green-fg)' },
+  '修稿中': { bg: 'var(--tint-amber-bg)', text: 'var(--tint-amber-fg)' },
+  '完稿':   { bg: 'var(--tint-purple-bg)', text: 'var(--tint-purple-fg)' },
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -23,7 +23,7 @@ const S = {
 
   addBtn: {
     padding: '8px 18px', borderRadius: 8, border: 'none',
-    background: 'var(--accent)', color: '#fff', fontSize: 14,
+    background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 14,
     fontWeight: 600, cursor: 'pointer',
   },
   backBtn: {
@@ -36,7 +36,7 @@ const S = {
   // Project grid
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 },
   card: {
-    background: '#12121e', border: '1px solid var(--border)',
+    background: 'var(--surface-2)', border: '1px solid var(--border)',
     borderRadius: 12, padding: 18, cursor: 'pointer',
     transition: 'border-color .15s', display: 'flex', flexDirection: 'column', gap: 8,
   },
@@ -48,7 +48,7 @@ const S = {
   },
   genreBadge: {
     display: 'inline-block', fontSize: 11, borderRadius: 4,
-    padding: '2px 7px', background: '#1a1a2e',
+    padding: '2px 7px', background: 'var(--surface)',
     border: '1px solid var(--border)', color: 'var(--muted)',
   },
   charCount: { fontSize: 12, color: 'var(--muted)', marginTop: 'auto' },
@@ -56,7 +56,7 @@ const S = {
   // Character + Faction mixed grid
   charGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 },
   charCard: {
-    background: '#12121e', border: '1px solid var(--border)',
+    background: 'var(--surface-2)', border: '1px solid var(--border)',
     borderRadius: 10, padding: 14, cursor: 'pointer',
     transition: 'border-color .15s', display: 'flex', flexDirection: 'column', gap: 8,
   },
@@ -71,13 +71,13 @@ const S = {
 
   // Faction tile (same size as char card, distinct style)
   factionTile: {
-    background: '#0e0e1c', border: '2px dashed var(--border)',
+    background: 'var(--surface-2)', border: '2px dashed var(--border)',
     borderRadius: 10, padding: 14, cursor: 'pointer',
     transition: 'border-color .15s', display: 'flex', flexDirection: 'column', gap: 8,
   },
   factionThumb: {
     width: '100%', aspectRatio: '1/1', borderRadius: 8,
-    background: '#1a1a2e', overflow: 'hidden',
+    background: 'var(--surface)', overflow: 'hidden',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 30, color: 'var(--muted)',
   },
@@ -97,7 +97,7 @@ const S = {
   factionChip: {
     display: 'inline-flex', alignItems: 'center', gap: 5,
     fontSize: 12, borderRadius: 20, padding: '3px 10px',
-    background: '#1a1a2e', border: '1px solid var(--accent)',
+    background: 'var(--surface)', border: '1px solid var(--accent)',
     color: 'var(--accent)', cursor: 'default',
   },
   chipX: {
@@ -107,33 +107,33 @@ const S = {
 
   // Delete confirm box
   deleteBox: {
-    background: '#1e0d0d', border: '1px solid #5c2020',
+    background: 'var(--tint-red-bg)', border: '1px solid var(--tint-red-bg)',
     borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 10,
   },
-  deletePrompt: { fontSize: 13, color: '#f07070', margin: 0 },
+  deletePrompt: { fontSize: 13, color: 'var(--danger)', margin: 0 },
 
   // Forms
   form: { display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 },
   label: { fontSize: 12, color: 'var(--muted)', marginBottom: 3, display: 'block' },
   input: {
-    width: '100%', background: '#12121e', border: '1px solid var(--border)',
+    width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
     borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
     fontSize: 14, outline: 'none', boxSizing: 'border-box',
   },
   select: {
-    width: '100%', background: '#12121e', border: '1px solid var(--border)',
+    width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
     borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
     fontSize: 14, outline: 'none', boxSizing: 'border-box',
   },
   textarea: {
-    width: '100%', background: '#12121e', border: '1px solid var(--border)',
+    width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
     borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
     fontSize: 14, resize: 'vertical', fontFamily: 'inherit',
     outline: 'none', minHeight: 80, boxSizing: 'border-box',
   },
   btn: {
     padding: '10px 0', borderRadius: 8, border: 'none',
-    background: 'var(--accent)', color: '#fff',
+    background: 'var(--accent)', color: 'var(--accent-contrast)',
     fontSize: 15, fontWeight: 600, cursor: 'pointer',
   },
   btnSm: {
@@ -143,8 +143,8 @@ const S = {
   },
   btnDanger: {
     padding: '6px 14px', borderRadius: 8,
-    border: '1px solid #5c2020', background: 'transparent',
-    color: '#f07070', fontSize: 13, cursor: 'pointer',
+    border: '1px solid var(--tint-red-bg)', background: 'transparent',
+    color: 'var(--danger)', fontSize: 13, cursor: 'pointer',
   },
   error: { color: 'var(--danger)', fontSize: 13 },
   muted: { color: 'var(--muted)', fontSize: 13 },
@@ -157,7 +157,7 @@ const S = {
     borderBottom: '2px solid transparent', marginBottom: -1, borderRadius: '6px 6px 0 0',
     display: 'flex', alignItems: 'center', gap: 5, transition: 'color .12s',
   },
-  varTabActive: { color: 'var(--text)', borderBottom: '2px solid var(--accent)', fontWeight: 600, background: 'rgba(124,106,247,0.07)' },
+  varTabActive: { color: 'var(--text)', borderBottom: '2px solid var(--accent)', fontWeight: 600, background: 'var(--accent-soft)' },
   tabEditBtn: {
     width: 16, height: 16, border: 'none', background: 'transparent',
     color: 'var(--muted)', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1,
@@ -170,13 +170,13 @@ const S = {
   detailLeft: { flex: '0 0 290px', display: 'flex', flexDirection: 'column', gap: 14 },
   detailRight: { flex: 1, display: 'flex', flexDirection: 'column', gap: 14 },
   summaryCard: {
-    background: '#0d0d18', border: '1px solid var(--border)',
+    background: 'var(--surface-2)', border: '1px solid var(--border)',
     borderRadius: 10, padding: '14px 16px',
     fontSize: 13, lineHeight: 1.9, whiteSpace: 'pre-wrap',
     color: 'var(--text)', minHeight: 120,
   },
   summaryPlaceholder: {
-    background: '#0d0d18', border: '2px dashed var(--border)',
+    background: 'var(--surface-2)', border: '2px dashed var(--border)',
     borderRadius: 10, padding: '20px 16px',
     color: 'var(--muted)', fontSize: 13, textAlign: 'center',
   },
@@ -245,7 +245,7 @@ function ImageLightbox({ src, onClose }) {
           position: 'absolute', top: 16, right: 20,
           width: 34, height: 34, borderRadius: '50%',
           border: 'none', background: 'rgba(255,255,255,0.15)',
-          color: '#fff', fontSize: 20, cursor: 'pointer',
+          color: 'var(--accent-contrast)', fontSize: 20, cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           lineHeight: 1,
         }}
@@ -255,16 +255,16 @@ function ImageLightbox({ src, onClose }) {
 }
 
 function StatusBadge({ status }) {
-  const c = STATUS_COLOR[status] ?? { bg: '#1a1a2e', text: 'var(--muted)' }
+  const c = STATUS_COLOR[status] ?? { bg: 'var(--surface)', text: 'var(--muted)' }
   return <span style={{ ...S.badge, background: c.bg, color: c.text }}>{status ?? '—'}</span>
 }
 
 // ── GenderPicker ──────────────────────────────────────────────────────────────
 
 const GENDER_OPTIONS = [
-  { value: 'male',    icon: '♂', label: '男',   active: '#3a8fd8', bg: '#1a2a40' },
-  { value: 'female',  icon: '♀', label: '女',   active: '#d83a8f', bg: '#3a1a2a' },
-  { value: 'neutral', icon: '⚧', label: '中性', active: '#9a5cd8', bg: '#2a1a40' },
+  { value: 'male',    icon: '♂', label: '男',   active: 'var(--tint-blue-fg)', bg: 'var(--tint-blue-bg)' },
+  { value: 'female',  icon: '♀', label: '女',   active: 'var(--tint-pink-fg)', bg: 'var(--tint-pink-bg)' },
+  { value: 'neutral', icon: '⚧', label: '中性', active: 'var(--tint-purple-fg)', bg: 'var(--tint-purple-bg)' },
 ]
 
 function GenderPicker({ value, onChange }) {
@@ -628,7 +628,7 @@ function CharacterListView({ project: initProject, onSelectChar, onCreateChar, o
       </div>
 
       {editing && (
-        <div style={{ ...S.form, maxWidth: 480, background: '#12121e', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+        <div style={{ ...S.form, maxWidth: 480, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
           <div style={S.row}>
             <div style={{ ...S.fieldGroup, flex: 2 }}>
               <label style={S.label}>作品名稱</label>
@@ -792,7 +792,7 @@ function FactionView({ faction: initFaction, project, allChars, onBack, onSelect
       )}
 
       {addingMember && (
-        <div style={{ background: '#12121e', border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
+        <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
           <p style={S.sectionLabel}>選擇角色加入 {faction.name}</p>
           {nonMembers.length === 0
             ? <p style={S.muted}>所有角色都已在此勢力中。</p>
@@ -1465,7 +1465,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
         </div>
         {onSendToGenerate && (
           <button
-            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer', fontWeight: 600 }}
             onClick={() => {
               const parts = [char.name]
               if (char.core_traits) parts.push(char.core_traits)
@@ -1546,15 +1546,15 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                   />
                   {deletingConceptIdx === idx
                     ? <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, color: '#f07070' }}>確認刪除？</span>
+                        <span style={{ fontSize: 11, color: 'var(--danger)' }}>確認刪除？</span>
                         <div style={{ display: 'flex', gap: 4 }}>
-                          <button onClick={() => deleteConceptImage(idx)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: '#5c2020', color: '#f07070', cursor: 'pointer' }}>刪除</button>
+                          <button onClick={() => deleteConceptImage(idx)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: 'var(--tint-red-bg)', color: 'var(--danger)', cursor: 'pointer' }}>刪除</button>
                           <button onClick={() => setDeletingConceptIdx(null)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>取消</button>
                         </div>
                       </div>
                     : <button
                         onClick={() => setDeletingConceptIdx(idx)}
-                        style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
+                        style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: 'var(--accent-contrast)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
                       >×</button>
                   }
                 </div>
@@ -1579,14 +1579,14 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: ipaEnabled ? 8 : 6 }}>
               <span style={S.sectionLabel}>AI 人設圖（{aiImages.length}/8）</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: ipaEnabled ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
                   <input type="checkbox" checked={ipaEnabled} onChange={e => { setIpaEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'ipaEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
                   概念圖參考
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: cnEnabled ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: cnEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
                   <input type="checkbox" checked={cnEnabled} onChange={e => { setCnEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'cnEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
                   ControlNet
                 </label>
                 <button style={S.btnSm} disabled={generating} onClick={generateDesignImage}>
@@ -1599,10 +1599,10 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                 <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>IPA 強度</span>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
                 <input type="range" min={0.1} max={1.5} step={0.05} value={ipaWeight}
-                  style={{ flex: 1, accentColor: '#7eb8f7' }}
+                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
                   onChange={e => { const v = Number(e.target.value); setIpaWeight(v); _saveGenPref(initChar.id, null, 'ipaWeight', v) }} />
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-                <span style={{ fontSize: 12, color: '#7eb8f7', minWidth: 30, textAlign: 'right' }}>{ipaWeight.toFixed(2)}</span>
+                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{ipaWeight.toFixed(2)}</span>
               </div>
             )}
             {cnEnabled && (
@@ -1610,10 +1610,10 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                 <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>CN 強度</span>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
                 <input type="range" min={0.1} max={1.5} step={0.05} value={cnWeight}
-                  style={{ flex: 1, accentColor: '#7eb8f7' }}
+                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
                   onChange={e => { const v = Number(e.target.value); setCnWeight(v); _saveGenPref(initChar.id, null, 'cnWeight', v) }} />
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-                <span style={{ fontSize: 12, color: '#7eb8f7', minWidth: 30, textAlign: 'right' }}>{cnWeight.toFixed(2)}</span>
+                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{cnWeight.toFixed(2)}</span>
               </div>
             )}
 
@@ -1652,7 +1652,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                 </div>
 
                 {lastTimings && (
-                  <div style={{ marginTop: 8, padding: '8px 10px', background: '#0d0d18', borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5, fontWeight: 600, letterSpacing: 0.5 }}>⏱ 生成耗時</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {[
@@ -1667,7 +1667,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                         <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
                           <span style={{ color: 'var(--muted)' }}>
                             {label}
-                            {model && <span style={{ color: '#555', marginLeft: 4, fontSize: 10 }}>({model})</span>}
+                            {model && <span style={{ color: 'var(--muted)', marginLeft: 4, fontSize: 10 }}>({model})</span>}
                           </span>
                           <span style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{sec}s</span>
                         </div>
@@ -1709,7 +1709,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                       <a href={apiUrl(`/characters/${char.id}/ai-images/${idx}`)} download={`${char.name}_ai_${idx + 1}.png`} style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px', textDecoration: 'none', textAlign: 'center' }}>下載</a>
                       {deletingAiIdx === idx
                         ? <>
-                            <button style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: '#5c2020', color: '#f07070', cursor: 'pointer' }} onClick={() => deleteAiImage(idx)}>確認</button>
+                            <button style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: 'var(--tint-red-bg)', color: 'var(--danger)', cursor: 'pointer' }} onClick={() => deleteAiImage(idx)}>確認</button>
                             <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px' }} onClick={() => setDeletingAiIdx(null)}>取消</button>
                           </>
                         : <button style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px' }} onClick={() => setDeletingAiIdx(idx)}>移除</button>
@@ -1941,43 +1941,43 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               lastDebugPrompt
                 ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ fontSize: 10, color: '#7eb8f7', letterSpacing: 1, fontFamily: 'monospace' }}>中文描述（AI 翻譯前）</div>
+                      <div style={{ fontSize: 10, color: 'var(--tint-blue-fg)', letterSpacing: 1, fontFamily: 'monospace' }}>中文描述（AI 翻譯前）</div>
                       {lastFlatDraft != null && (
                         <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: lastFlatDraft ? '#2a1e0e' : '#0e2a1e',
-                          color: lastFlatDraft ? '#f7c87e' : '#7ef7c8',
-                          border: `1px solid ${lastFlatDraft ? '#6a4a1e' : '#1e6a4a'}` }}>
+                          background: lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)',
+                          color: lastFlatDraft ? 'var(--tint-amber-fg)' : 'var(--tint-green-fg)',
+                          border: `1px solid ${lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)'}` }}>
                           {lastFlatDraft ? '單色稿 → 文字優先' : '正式上色 → 視覺優先'}
                         </div>
                       )}
                       {lastIpaUsed != null && (
                         <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: lastIpaUsed ? '#0e1a2a' : '#1e1e1e',
-                          color: lastIpaUsed ? '#7eb8f7' : '#666',
-                          border: `1px solid ${lastIpaUsed ? '#2a5080' : '#444'}` }}>
+                          background: lastIpaUsed ? 'var(--tint-blue-bg)' : 'var(--surface-2)',
+                          color: lastIpaUsed ? 'var(--tint-blue-fg)' : 'var(--muted)',
+                          border: `1px solid ${lastIpaUsed ? 'var(--tint-blue-border)' : 'var(--border-strong)'}` }}>
                           {lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
                         </div>
                       )}
                     </div>
-                    <div style={{ fontSize: 11, color: '#7ef7c8', background: '#0e1e2a', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid #1e4a3a', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                    <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {lastRawDesc ?? '—'}
                     </div>
                     {lastAiPromptCompiled !== null && (
                       <>
                         <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
-                          color: lastAiPromptCompiled === '[compilation_failed]' ? '#f07070' : '#f7c87e' }}>
+                          color: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)' }}>
                           AI 提示詞編譯結果{lastAiPromptCompiled === '[compilation_failed]' ? ' ⚠ 失敗' : '（置於 prompt 首位）'}
                         </div>
                         <div style={{ fontSize: 11, padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, fontFamily: 'monospace',
-                          color: lastAiPromptCompiled === '[compilation_failed]' ? '#f07070' : '#f7c87e',
-                          background: lastAiPromptCompiled === '[compilation_failed]' ? '#1e0d0d' : '#1e1a0a',
-                          border: `1px solid ${lastAiPromptCompiled === '[compilation_failed]' ? '#5c2020' : '#6a5a1e'}` }}>
+                          color: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)',
+                          background: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)',
+                          border: `1px solid ${lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)'}` }}>
                           {lastAiPromptCompiled === '[compilation_failed]' ? 'AI 提示詞未套用（Ollama 翻譯錯誤）' : lastAiPromptCompiled}
                         </div>
                       </>
                     )}
-                    <div style={{ fontSize: 10, color: '#b09ef0', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
-                    <div style={{ fontSize: 11, color: '#b09ef0', background: '#1e1a3a', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid #3a2d6a', fontFamily: 'monospace' }}>
+                    <div style={{ fontSize: 10, color: 'var(--tint-purple-fg)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
+                    <div style={{ fontSize: 11, color: 'var(--tint-purple-fg)', background: 'var(--tint-purple-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-purple-bg)', fontFamily: 'monospace' }}>
                       {lastDebugPrompt}
                     </div>
                   </div>
@@ -2020,14 +2020,14 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                   />
                   {vState.deletingConceptIdx === idx
                     ? <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, color: '#f07070' }}>確認刪除？</span>
+                        <span style={{ fontSize: 11, color: 'var(--danger)' }}>確認刪除？</span>
                         <div style={{ display: 'flex', gap: 4 }}>
-                          <button onClick={() => deleteVariantConceptImage(activeTab, idx)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: '#5c2020', color: '#f07070', cursor: 'pointer' }}>刪除</button>
+                          <button onClick={() => deleteVariantConceptImage(activeTab, idx)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: 'var(--tint-red-bg)', color: 'var(--danger)', cursor: 'pointer' }}>刪除</button>
                           <button onClick={() => setV(activeTab, { deletingConceptIdx: null })} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>取消</button>
                         </div>
                       </div>
                     : <button onClick={() => setV(activeTab, { deletingConceptIdx: idx })}
-                        style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: '#fff', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
+                        style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: 'var(--accent-contrast)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
                       >×</button>
                   }
                 </div>
@@ -2059,14 +2059,14 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: vState.ipaEnabled ? 8 : 6 }}>
               <span style={S.sectionLabel}>AI 人設圖（{vState.aiImages.length}/8）</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: vState.ipaEnabled ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: vState.ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
                   <input type="checkbox" checked={vState.ipaEnabled} onChange={e => { setV(activeTab, { ipaEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'ipaEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
                   概念圖參考
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: (vState.cnEnabled ?? true) ? '#7eb8f7' : '#666', cursor: 'pointer', userSelect: 'none' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: (vState.cnEnabled ?? true) ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
                   <input type="checkbox" checked={vState.cnEnabled ?? true} onChange={e => { setV(activeTab, { cnEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'cnEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: '#7eb8f7' }} />
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
                   ControlNet
                 </label>
                 <button style={S.btnSm} disabled={vState.generating} onClick={generateVariantDesignImage}>
@@ -2079,10 +2079,10 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                 <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>IPA 強度</span>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
                 <input type="range" min={0.1} max={1.5} step={0.05} value={vState.ipaWeight ?? 0.6}
-                  style={{ flex: 1, accentColor: '#7eb8f7' }}
+                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
                   onChange={e => { const v = Number(e.target.value); setV(activeTab, { ipaWeight: v }); _saveGenPref(initChar.id, activeTab, 'ipaWeight', v) }} />
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-                <span style={{ fontSize: 12, color: '#7eb8f7', minWidth: 30, textAlign: 'right' }}>{(vState.ipaWeight ?? 0.6).toFixed(2)}</span>
+                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.ipaWeight ?? 0.6).toFixed(2)}</span>
               </div>
             )}
             {(vState.cnEnabled ?? true) && (
@@ -2090,10 +2090,10 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                 <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>CN 強度</span>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
                 <input type="range" min={0.1} max={1.5} step={0.05} value={vState.cnWeight ?? 0.85}
-                  style={{ flex: 1, accentColor: '#7eb8f7' }}
+                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
                   onChange={e => { const v = Number(e.target.value); setV(activeTab, { cnWeight: v }); _saveGenPref(initChar.id, activeTab, 'cnWeight', v) }} />
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-                <span style={{ fontSize: 12, color: '#7eb8f7', minWidth: 30, textAlign: 'right' }}>{(vState.cnWeight ?? 0.85).toFixed(2)}</span>
+                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.cnWeight ?? 0.85).toFixed(2)}</span>
               </div>
             )}
             {vState.pendingQueue.length > 0 && (
@@ -2112,7 +2112,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                   <button style={S.btnSm} disabled={vState.savingGen} onClick={() => { URL.revokeObjectURL(vState.pendingQueue[0].url); setV(activeTab, { pendingQueue: vState.pendingQueue.slice(1) }) }}>捨棄</button>
                 </div>
                 {vState.lastTimings && (
-                  <div style={{ marginTop: 8, padding: '8px 10px', background: '#0d0d18', borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
                     <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5, fontWeight: 600 }}>⏱ 生成耗時</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {[
@@ -2127,7 +2127,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                         <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
                           <span style={{ color: 'var(--muted)' }}>
                             {label}
-                            {model && <span style={{ color: '#555', marginLeft: 4, fontSize: 10 }}>({model})</span>}
+                            {model && <span style={{ color: 'var(--muted)', marginLeft: 4, fontSize: 10 }}>({model})</span>}
                           </span>
                           <span style={{ fontFamily: 'monospace' }}>{sec}s</span>
                         </div>
@@ -2165,7 +2165,7 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
                         style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px', textDecoration: 'none', textAlign: 'center' }}>下載</a>
                       {vState.deletingAiIdx === idx
                         ? <>
-                            <button style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: '#5c2020', color: '#f07070', cursor: 'pointer' }} onClick={() => deleteVariantAiImage(activeTab, idx)}>確認</button>
+                            <button style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: 'var(--tint-red-bg)', color: 'var(--danger)', cursor: 'pointer' }} onClick={() => deleteVariantAiImage(activeTab, idx)}>確認</button>
                             <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px' }} onClick={() => setV(activeTab, { deletingAiIdx: null })}>取消</button>
                           </>
                         : <button style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px' }} onClick={() => setV(activeTab, { deletingAiIdx: idx })}>移除</button>
@@ -2276,43 +2276,43 @@ function CharacterDetailView({ character: initChar, project, allFactions, onBack
               vState.lastDebugPrompt
                 ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ fontSize: 10, color: '#7eb8f7', letterSpacing: 1, fontFamily: 'monospace' }}>中文描述（AI 翻譯前）</div>
+                      <div style={{ fontSize: 10, color: 'var(--tint-blue-fg)', letterSpacing: 1, fontFamily: 'monospace' }}>中文描述（AI 翻譯前）</div>
                       {vState.lastFlatDraft != null && (
                         <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: vState.lastFlatDraft ? '#2a1e0e' : '#0e2a1e',
-                          color: vState.lastFlatDraft ? '#f7c87e' : '#7ef7c8',
-                          border: `1px solid ${vState.lastFlatDraft ? '#6a4a1e' : '#1e6a4a'}` }}>
+                          background: vState.lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)',
+                          color: vState.lastFlatDraft ? 'var(--tint-amber-fg)' : 'var(--tint-green-fg)',
+                          border: `1px solid ${vState.lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)'}` }}>
                           {vState.lastFlatDraft ? '單色稿 → 文字優先' : '正式上色 → 視覺優先'}
                         </div>
                       )}
                       {vState.lastIpaUsed != null && (
                         <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: vState.lastIpaUsed ? '#0e1a2a' : '#1e1e1e',
-                          color: vState.lastIpaUsed ? '#7eb8f7' : '#666',
-                          border: `1px solid ${vState.lastIpaUsed ? '#2a5080' : '#444'}` }}>
+                          background: vState.lastIpaUsed ? 'var(--tint-blue-bg)' : 'var(--surface-2)',
+                          color: vState.lastIpaUsed ? 'var(--tint-blue-fg)' : 'var(--muted)',
+                          border: `1px solid ${vState.lastIpaUsed ? 'var(--tint-blue-border)' : 'var(--border-strong)'}` }}>
                           {vState.lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
                         </div>
                       )}
                     </div>
-                    <div style={{ fontSize: 11, color: '#7ef7c8', background: '#0e1e2a', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid #1e4a3a', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                    <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {vState.lastRawDesc ?? '—'}
                     </div>
                     {vState.lastAiPromptCompiled !== null && (
                       <>
                         <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
-                          color: vState.lastAiPromptCompiled === '[compilation_failed]' ? '#f07070' : '#f7c87e' }}>
+                          color: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)' }}>
                           AI 提示詞編譯結果{vState.lastAiPromptCompiled === '[compilation_failed]' ? ' ⚠ 失敗' : '（置於 prompt 首位）'}
                         </div>
                         <div style={{ fontSize: 11, padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, fontFamily: 'monospace',
-                          color: vState.lastAiPromptCompiled === '[compilation_failed]' ? '#f07070' : '#f7c87e',
-                          background: vState.lastAiPromptCompiled === '[compilation_failed]' ? '#1e0d0d' : '#1e1a0a',
-                          border: `1px solid ${vState.lastAiPromptCompiled === '[compilation_failed]' ? '#5c2020' : '#6a5a1e'}` }}>
+                          color: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)',
+                          background: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)',
+                          border: `1px solid ${vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)'}` }}>
                           {vState.lastAiPromptCompiled === '[compilation_failed]' ? 'AI 提示詞未套用（Ollama 翻譯錯誤）' : vState.lastAiPromptCompiled}
                         </div>
                       </>
                     )}
-                    <div style={{ fontSize: 10, color: '#b09ef0', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
-                    <div style={{ fontSize: 11, color: '#b09ef0', background: '#1e1a3a', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid #3a2d6a', fontFamily: 'monospace' }}>{vState.lastDebugPrompt}</div>
+                    <div style={{ fontSize: 10, color: 'var(--tint-purple-fg)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
+                    <div style={{ fontSize: 11, color: 'var(--tint-purple-fg)', background: 'var(--tint-purple-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-purple-bg)', fontFamily: 'monospace' }}>{vState.lastDebugPrompt}</div>
                   </div>
                 : <p style={{ ...S.muted, fontSize: 11 }}>尚未生成人設圖，無 prompt 記錄</p>
             )}
