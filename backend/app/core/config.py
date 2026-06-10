@@ -32,6 +32,19 @@ COMFYUI_LORAS_DIR = Path(os.getenv("COMFYUI_LORAS_DIR", r"C:\ComfyUI\models\lora
 
 CUSTOM_WORKFLOWS_DIR = Path(os.getenv("CUSTOM_WORKFLOWS_DIR", str(BASE_DIR.parent / "data" / "custom_workflows")))
 
+# ── 資料安全（章節版本快照 + DB 備份）──────────────────────────────────────
+CHAPTER_REVISIONS_KEEP = int(os.getenv("CHAPTER_REVISIONS_KEEP", "20"))  # 每章保留快照數
+BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(BASE_DIR.parent / "data" / "backups")))
+BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "7"))                         # 保留備份份數
+BACKUP_INTERVAL_HOURS = float(os.getenv("BACKUP_INTERVAL_HOURS", "24"))  # 0 = 停用定時備份
+
+# ── VRAM Guardian（條件式卸載）────────────────────────────────────────────
+# 切換 Ollama/ComfyUI 前先查實際 VRAM；兩者放得下就不卸載（省去模型重載 10~30s）。
+# VRAM_COEXIST_ENABLED=false 退回舊行為（切換時一律卸載另一方）。
+VRAM_COEXIST_ENABLED: bool = os.getenv("VRAM_COEXIST_ENABLED", "true").lower() == "true"
+COMFYUI_REQUIRED_VRAM_GB = float(os.getenv("COMFYUI_REQUIRED_VRAM_GB", "8"))   # SDXL fp16 + CLIP/VAE
+OLLAMA_REQUIRED_VRAM_GB = float(os.getenv("OLLAMA_REQUIRED_VRAM_GB", "7"))     # 7B Q4/Q8 vision/text
+
 # ── Personal Style Preset（個人風格預設，.env 啟用 / git 預設關閉）────────────
 # PERSONAL_STYLE_ENABLED=true  → 角色生圖時附加 PERSONAL_STYLE_EXTRA_TAGS
 # PERSONAL_NEGATIVE_ENABLED=true → 取代預設負向提示詞（art_style 未設定 negative 時）

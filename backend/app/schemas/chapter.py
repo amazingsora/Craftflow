@@ -29,3 +29,17 @@ class ChapterBrief(BaseModel):
 
 class ChapterResponse(ChapterBrief):
     content: Optional[str]
+
+
+class ChapterRevisionBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    chapter_id: int
+    title: str
+    content_length: int  # 由 model property 提供，供列表顯示字數
+    created_at: datetime
+
+
+class ChapterRevisionResponse(ChapterRevisionBrief):
+    content: Optional[str]

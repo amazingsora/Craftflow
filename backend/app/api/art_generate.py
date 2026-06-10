@@ -8,8 +8,10 @@ ComfyUI image generation endpoints:
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import colorsys
+import hashlib
 import io
 import json
 import logging
@@ -43,6 +45,8 @@ from app.services.ai import art_service, ollama_client as _oc
 from app.services.ai.prompt_engine import compile as compile_prompt, PromptStyle
 from app.services.ai.prompt_engine.styles import STYLE_CONFIG
 from app.services.ai.vram_manager import guardian
+from app.services.ai.generation_recorder import record_generation
+from app.services.ai import generation_jobs
 
 _PORTRAIT_DIR = UPLOAD_DIR / "portraits"
 
@@ -371,11 +375,10 @@ class GenerateRequest(BaseModel):
     art_style_id: Optional[int] = None
 
 
-@router.post("/art/generate", summary="文字→圖片 (SDXL txt2img)")
-async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
-    """
-    Generate an illustration from a text prompt via ComfyUI.
-    If negative_prompt is empty, uses the model-appropriate preset (or art_style override).
+def _build_txt2img(req: "GenerateRequest", db: Session, batch_size: int = 1):
+    """txt2img workflow 組裝（sync /art/generate 與 async job 共用）。
+
+    回傳 (wf, seed, style, prompt, negative, lora_list)。
     """
     art_style = db.get(ArtStyle, req.art_style_id) if req.art_style_id else None
     style = _resolve_style(art_style)
@@ -405,20 +408,121 @@ async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
         if ct == "EmptyLatentImage":
             inputs["width"] = req.width
             inputs["height"] = req.height
+            if batch_size > 1:
+                inputs["batch_size"] = batch_size
         elif ct == "KSampler":
             inputs["seed"] = seed
             inputs["steps"] = req.steps
 
     _replace_negative_seeds(wf, seed)
+    return wf, seed, style, prompt, negative, lora_list
+
+
+@router.post("/art/generate", summary="文字→圖片 (SDXL txt2img)")
+async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
+    """
+    Generate an illustration from a text prompt via ComfyUI.
+    If negative_prompt is empty, uses the model-appropriate preset (or art_style override).
+    """
+    wf, seed, style, prompt, negative, lora_list = _build_txt2img(req, db)
     await guardian.request_focus("comfyui")
+    image_bytes = await _run_comfyui(wf)
+    hist_id = record_generation(
+        db,
+        endpoint="generate",
+        seed=seed,
+        workflow=state.get_workflow(),
+        style=style.value,
+        positive=prompt,
+        negative=negative,
+        params={
+            "width": req.width, "height": req.height, "steps": req.steps,
+            "loras": lora_list, "art_style_id": req.art_style_id,
+        },
+    )
     return Response(
-        content=await _run_comfyui(wf),
+        content=image_bytes,
         media_type="image/png",
         headers={
             "X-Seed": str(seed),
             "X-Style": style.value,
             "X-Steps": str(req.steps),
             "X-Workflow": state.get_workflow(),
+            "X-History-Id": str(hist_id) if hist_id else "",
+        },
+    )
+
+
+class GenerateAsyncRequest(GenerateRequest):
+    batch_size: int = 1  # 1~8，>1 時同 seed 批次出多張（挑圖用）
+
+
+@router.post("/art/generate-async", summary="文字→圖片（非同步 job + 批次）")
+async def generate_async(req: GenerateAsyncRequest, db: Session = Depends(get_db)):
+    """
+    立即回傳 job_id，背景執行生成（避免 two-pass / 高解析度 / 批次撞 HTTP 逾時）。
+    輪詢 GET /art/jobs/{job_id}，完成後 GET /art/jobs/{job_id}/result?index=N 取圖。
+    """
+    batch_size = max(1, min(8, req.batch_size))
+    wf, seed, style, prompt, negative, lora_list = _build_txt2img(req, db, batch_size=batch_size)
+    job = generation_jobs.create_job(meta={
+        "seed": seed,
+        "style": style.value,
+        "workflow": state.get_workflow(),
+        "batch_size": batch_size,
+    })
+    record_kwargs = dict(
+        endpoint="generate",
+        seed=seed,
+        workflow=state.get_workflow(),
+        style=style.value,
+        positive=prompt,
+        negative=negative,
+        params={
+            "width": req.width, "height": req.height, "steps": req.steps,
+            "loras": lora_list, "art_style_id": req.art_style_id,
+            "batch_size": batch_size, "async": True,
+        },
+    )
+    asyncio.create_task(generation_jobs.run_txt2img_job(job, wf, record_kwargs))
+    return {"job_id": job.id, "status": job.status, "seed": seed, "batch_size": batch_size}
+
+
+@router.get("/art/jobs/{job_id}", summary="生圖 job 狀態")
+def get_generation_job(job_id: str):
+    job = generation_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found（可能已逾時淘汰）")
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "error": job.error,
+        "image_count": len(job.images),
+        "elapsed": round(time.time() - job.created_at, 1),
+        **job.meta,
+    }
+
+
+@router.get("/art/jobs/{job_id}/result", summary="取生圖 job 結果（PNG）")
+def get_generation_job_result(job_id: str, index: int = 0):
+    job = generation_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found（可能已逾時淘汰）")
+    if job.status == "error":
+        raise HTTPException(status_code=500, detail=job.error or "生成失敗")
+    if job.status != "done":
+        raise HTTPException(status_code=409, detail=f"Job 尚未完成（{job.status}）")
+    if not (0 <= index < len(job.images)):
+        raise HTTPException(status_code=404, detail=f"index 超出範圍（共 {len(job.images)} 張）")
+    hist_id = job.meta.get("history_id")
+    return Response(
+        content=job.images[index],
+        media_type="image/png",
+        headers={
+            "X-Seed": str(job.meta.get("seed", "")),
+            "X-Batch-Index": str(index),
+            "X-Batch-Size": str(job.meta.get("batch_size", 1)),
+            "X-History-Id": str(hist_id) if hist_id else "",
         },
     )
 
@@ -1550,6 +1654,59 @@ def _visual_extract_prompt(n: int) -> str:
         "格式：逗號分隔的中文短語，不加標號，不寫句子，控制在90字以內。"
     )
 
+# ── Vision extraction cache ──────────────────────────────────────────────────
+# concept images 不變 → vision 抽取結果不變。以 image bytes hash + 模式 + 模型為
+# key 快取，重複生成同角色時跳過最貴的 Ollama vision 呼叫（5~20s）。
+# 錯誤結果（"[...]" 開頭）不快取。dict 依插入序淘汰最舊項目。
+_VISION_CACHE: dict[str, tuple[str, str]] = {}
+_VISION_CACHE_MAX = 32
+
+
+def _vision_cache_key(images_bytes: list[bytes], mode: str) -> str:
+    h = hashlib.sha256()
+    for b in images_bytes:
+        h.update(len(b).to_bytes(8, "little"))
+        h.update(b)
+    return f"{mode}|{state.get_vision_model()}|{h.hexdigest()}"
+
+
+async def _vision_extract_cached(
+    valid_images: list[bytes], need_coverage: bool,
+) -> tuple[str, str]:
+    """
+    Shared vision-extraction step for character / variant design generation.
+    Returns (coverage, visual); coverage is "full" placeholder when
+    need_coverage=False.  Cache hit skips the Ollama call entirely
+    (including request_focus, so ComfyUI stays warm).
+    """
+    mode = "coverage" if need_coverage else f"plain{len(valid_images)}"
+    key = _vision_cache_key(valid_images, mode)
+    cached = _VISION_CACHE.get(key)
+    if cached is not None:
+        logger.info("[vision-cache] hit (%s)", mode)
+        return cached
+
+    await guardian.request_focus("ollama")
+    if need_coverage:
+        coverage, visual = await run_in_threadpool(
+            _detect_coverage_and_extract_visual, valid_images
+        )
+    else:
+        coverage = "full"
+        visual = await run_in_threadpool(
+            _oc.analyze_multi_images_bytes,
+            valid_images, _visual_extract_prompt(len(valid_images)),
+            model=state.get_vision_model(),
+            options={"num_predict": 160, "temperature": 0.1},
+        )
+
+    if visual and not visual.startswith("["):
+        _VISION_CACHE[key] = (coverage, visual)
+        while len(_VISION_CACHE) > _VISION_CACHE_MAX:
+            _VISION_CACHE.pop(next(iter(_VISION_CACHE)))
+    return coverage, visual
+
+
 # expression id → (English SD tags for positive, Chinese label)
 _EXPRESSION_MAP: dict[str, tuple[str, str]] = {
     "smile":   ("smiling, happy expression, gentle smile", "喜"),
@@ -1854,15 +2011,13 @@ async def generate_character_design(
 
         # Full-body CN mode: merge coverage detection + visual extraction into one Ollama call
         # to avoid paying the vision-model cold-start cost twice.
+        # Result cached by image hash — repeat generations skip the vision call.
         if valid_images:
-            await guardian.request_focus("ollama")
             t0 = time.perf_counter()
             need_coverage = use_controlnet and not is_expression
+            coverage, visual = await _vision_extract_cached(valid_images, need_coverage)
+            timings["vision_extract"] = round(time.perf_counter() - t0, 1)
             if need_coverage:
-                coverage, visual = await run_in_threadpool(
-                    _detect_coverage_and_extract_visual, valid_images
-                )
-                timings["vision_extract"] = round(time.perf_counter() - t0, 1)
                 _exp_w, _exp_h = _fullbody_canvas(getattr(character, 'height', None))
                 _cn_coverage = coverage
                 # Pixel fallback：LLM 偵測不穩定時，用像素分析二次確認
@@ -1884,15 +2039,6 @@ async def generate_character_design(
                     "[char-gen] coverage=%s → CN (weight=%.2f, fill=%.2f)",
                     _cn_coverage, cn_weight, _BODY_FILL_RATIO.get(_cn_coverage, 1.0),
                 )
-            else:
-                prompt_txt = _visual_extract_prompt(len(valid_images))
-                visual = await run_in_threadpool(
-                    _oc.analyze_multi_images_bytes,
-                    valid_images, prompt_txt,
-                    model=state.get_vision_model(),
-                    options={"num_predict": 160, "temperature": 0.1},
-                )
-                timings["vision_extract"] = round(time.perf_counter() - t0, 1)
             logger.debug("visual extract (%d imgs): %s", len(valid_images), visual)
             if visual and not visual.startswith("["):
                 has_outfit = bool(use_outfit and getattr(character, 'outfit', None))
@@ -2177,10 +2323,30 @@ async def generate_character_design(
         "workflow": active_wf,
     }
 
+    hist_id = record_generation(
+        db,
+        endpoint="character_design",
+        character_id=character_id,
+        seed=seed,
+        workflow=active_wf,
+        style=style.value,
+        positive=final_positive,
+        negative=final_negative,
+        params={
+            "width": width, "height": height, "steps": steps,
+            "expression": expression, "art_style_id": art_style_id,
+            "ipa_used": ipa_used, "ipa_weight": round(ipa_weight, 2),
+            "cn_used": cn_used, "cn_weight": round(cn_weight, 2),
+            "cn_mode": cn_mode, "coverage": _cn_coverage,
+            "loras": lora_list, "use_ai_prompt": use_ai_prompt,
+            "use_outfit": use_outfit, "timings": timings,
+        },
+    )
     return Response(
         content=image_bytes,
         media_type="image/png",
         headers={
+            "X-History-Id": str(hist_id) if hist_id else "",
             "X-Seed": str(seed),
             "X-Style": style.value,
             "X-Flat-Draft": "1" if all_flat else "0",
@@ -2267,14 +2433,12 @@ async def generate_variant_design(
                 _cn_ref_bytes = valid_images[0]
 
             # Merge coverage detection + visual extraction into one Ollama call
-            await guardian.request_focus("ollama")
+            # (cached by image hash — repeat generations skip the vision call)
             t0 = time.perf_counter()
             need_coverage = use_controlnet and not is_expression
+            coverage, visual = await _vision_extract_cached(valid_images, need_coverage)
+            timings["vision_extract"] = round(time.perf_counter() - t0, 1)
             if need_coverage:
-                coverage, visual = await run_in_threadpool(
-                    _detect_coverage_and_extract_visual, valid_images
-                )
-                timings["vision_extract"] = round(time.perf_counter() - t0, 1)
                 _exp_w, _exp_h = _fullbody_canvas(v.get("height"))
                 _cn_coverage = coverage
                 # CN≥0.7 限制條件：所有 coverage 一律保留 CN，不再 bypass。
@@ -2289,15 +2453,6 @@ async def generate_variant_design(
                     "[variant-gen] coverage=%s → CN (weight=%.2f, fill=%.2f)",
                     coverage, cn_weight, _BODY_FILL_RATIO.get(coverage, 1.0),
                 )
-            else:
-                prompt_txt = _visual_extract_prompt(len(valid_images))
-                visual = await run_in_threadpool(
-                    _oc.analyze_multi_images_bytes,
-                    valid_images, prompt_txt,
-                    model=state.get_vision_model(),
-                    options={"num_predict": 160, "temperature": 0.1},
-                )
-                timings["vision_extract"] = round(time.perf_counter() - t0, 1)
             if visual and not visual.startswith("["):
                 v_outfit_check = v.get("outfit")
                 has_outfit = bool(use_outfit and v_outfit_check)
@@ -2550,10 +2705,31 @@ async def generate_variant_design(
         "workflow": active_wf,
     }
 
+    hist_id = record_generation(
+        db,
+        endpoint="variant_design",
+        character_id=character_id,
+        variant_slot=slot,
+        seed=seed,
+        workflow=active_wf,
+        style=style.value,
+        positive=final_positive,
+        negative=final_negative,
+        params={
+            "width": width, "height": height, "steps": steps,
+            "expression": expression, "art_style_id": art_style_id,
+            "ipa_used": ipa_used, "ipa_weight": round(ipa_weight, 2),
+            "cn_used": cn_used, "cn_weight": round(cn_weight, 2),
+            "cn_mode": cn_mode_out, "coverage": _cn_coverage,
+            "loras": lora_list, "use_ai_prompt": use_ai_prompt,
+            "use_outfit": use_outfit, "timings": timings,
+        },
+    )
     return Response(
         content=image_bytes,
         media_type="image/png",
         headers={
+            "X-History-Id": str(hist_id) if hist_id else "",
             "X-Seed": str(seed),
             "X-Style": style.value,
             "X-Flat-Draft": "1" if all_flat else "0",
