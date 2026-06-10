@@ -1,4 +1,5 @@
 from app.models.project import Project
+from app.models.volume import Volume
 from app.models.chapter import Chapter
 from app.models.character import Character, character_factions
 from app.models.illustration import Illustration
@@ -8,4 +9,4 @@ from app.models.art_style import ArtStyle
 from app.models.training_image import TrainingImage
 from app.models.training_job import TrainingJob
 
-__all__ = ["Project", "Chapter", "Character", "character_factions", "Illustration", "AnalysisReport", "Faction", "ArtStyle", "TrainingImage", "TrainingJob"]
+__all__ = ["Project", "Volume", "Chapter", "Character", "character_factions", "Illustration", "AnalysisReport", "Faction", "ArtStyle", "TrainingImage", "TrainingJob"]

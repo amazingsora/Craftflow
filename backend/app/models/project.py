@@ -10,6 +10,7 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.chapter import Chapter
+    from app.models.volume import Volume
     from app.models.character import Character
     from app.models.illustration import Illustration
     from app.models.faction import Faction
@@ -32,6 +33,10 @@ class Project(Base):
     chapters: Mapped[list[Chapter]] = relationship(
         "Chapter", back_populates="project",
         cascade="all, delete-orphan", order_by="Chapter.order_index",
+    )
+    volumes: Mapped[list[Volume]] = relationship(
+        "Volume", back_populates="project",
+        cascade="all, delete-orphan", order_by="Volume.order_index",
     )
     characters: Mapped[list[Character]] = relationship(
         "Character", back_populates="project", cascade="all, delete-orphan",
