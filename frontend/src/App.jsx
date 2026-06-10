@@ -98,11 +98,75 @@ const TABS = [
 ]
 
 const S = {
-  page: { minHeight: '100vh', display: 'flex', flexDirection: 'column', padding: '24px 32px', gap: 20 },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
-  headerLeft: {},
-  title: { fontSize: 22, fontWeight: 700, letterSpacing: 1, color: 'var(--accent)' },
-  subtitle: { fontSize: 13, color: 'var(--muted)', marginTop: 4 },
+  app: { minHeight: '100vh', display: 'flex', alignItems: 'stretch' },
+  sidebar: {
+    width: 196,
+    flexShrink: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    padding: '20px 12px 16px',
+    borderRight: '1px solid var(--border)',
+    background: 'var(--surface)',
+    position: 'sticky',
+    top: 0,
+    height: '100vh',
+    overflowY: 'auto',
+  },
+  brand: { fontSize: 18, fontWeight: 700, letterSpacing: .5, color: 'var(--text)', padding: '0 10px' },
+  brandSub: { fontSize: 11, color: 'var(--muted)', padding: '0 10px', marginBottom: 16 },
+  navItem: {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    padding: '9px 12px',
+    border: 'none',
+    borderRadius: 8,
+    background: 'transparent',
+    color: 'var(--muted)',
+    fontSize: 14,
+    cursor: 'pointer',
+    transition: 'color .15s, background .15s',
+  },
+  navItemActive: { background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 },
+  sidebarFooter: {
+    marginTop: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+    padding: '12px 10px 0',
+    borderTop: '1px solid var(--border)',
+  },
+  footerBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    padding: '7px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 8,
+    background: 'transparent',
+    color: 'var(--muted)',
+    fontSize: 12,
+    cursor: 'pointer',
+    transition: 'color .15s, border-color .15s',
+  },
+  main: {
+    flex: 1,
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 16,
+    padding: '20px 28px 24px',
+  },
+  topbar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: 12,
+  },
+  topbarTitle: { fontSize: 17, fontWeight: 600, color: 'var(--text)' },
+  topbarInfo: { fontSize: 12, color: 'var(--muted)', textAlign: 'right' },
   modelSelect: {
     background: 'var(--surface)',
     border: '1px solid var(--border)',
@@ -114,19 +178,6 @@ const S = {
     maxWidth: 260,
   },
   modelLabel: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 },
-  tabBar: { display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', paddingBottom: 0 },
-  tab: {
-    padding: '9px 22px',
-    border: 'none',
-    background: 'transparent',
-    color: 'var(--muted)',
-    fontSize: 14,
-    cursor: 'pointer',
-    borderBottom: '2px solid transparent',
-    marginBottom: -1,
-    transition: 'color .15s',
-  },
-  tabActive: { color: 'var(--text)', borderBottom: '2px solid var(--accent)', fontWeight: 600 },
   content: {
     background: 'var(--surface)',
     border: '1px solid var(--border)',
@@ -189,7 +240,7 @@ const S = {
     borderRadius: '50%',
     background: 'rgba(0,0,0,.75)',
     border: 'none',
-    color: '#fff',
+    color: 'var(--accent-contrast)',
     fontSize: 13,
     lineHeight: '20px',
     textAlign: 'center',
@@ -253,22 +304,11 @@ const S = {
     right: 6,
     zIndex: 1,
   },
-  badgeProcess: { background: '#2d3a5c', color: '#7eb8f7' },
-  badgeGenerate: { background: '#3a2d5c', color: '#c07ef7' },
-  badgeCompose: { background: '#1e3a2d', color: '#7ef7b0' },
+  badgeProcess: { background: 'var(--tint-blue-bg)', color: 'var(--tint-blue-fg)' },
+  badgeGenerate: { background: 'var(--tint-purple-bg)', color: 'var(--tint-purple-fg)' },
+  badgeCompose: { background: 'var(--tint-green-bg)', color: 'var(--tint-green-fg)' },
   historyMeta: { fontSize: 12, color: 'var(--text)', lineHeight: 1.5 },
   historyMetaSub: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 1 },
-  gearBtn: {
-    background: 'none',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    color: 'var(--muted)',
-    fontSize: 18,
-    cursor: 'pointer',
-    padding: '5px 9px',
-    lineHeight: 1,
-    transition: 'color .15s, border-color .15s',
-  },
   modalOverlay: {
     position: 'fixed', inset: 0,
     background: 'rgba(0,0,0,.55)',
@@ -284,7 +324,7 @@ const S = {
     maxHeight: '85vh',
     display: 'flex', flexDirection: 'column',
     overflow: 'hidden',
-    boxShadow: '0 24px 60px rgba(0,0,0,.5)',
+    boxShadow: 'var(--shadow-modal)',
   },
   modalHeader: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -340,6 +380,13 @@ export default function App() {
     () => localStorage.getItem('craftflow_text_model') ?? ''
   )
   const [svcStatus, setSvcStatus] = useState(null)  // { services:{ollama,comfyui,database}, hints:[] }
+  const [theme, setTheme] = useState(() => localStorage.getItem('craftflow_theme') ?? 'light')
+
+  // 主題切換：data-theme 掛在 <html>，token 定義見 index.css
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('craftflow_theme', theme)
+  }, [theme])
 
   // 輪詢系統狀態（Ollama / ComfyUI / DB），供 header 狀態燈使用
   useEffect(() => {
@@ -554,47 +601,46 @@ export default function App() {
   }
 
   return (
-    <div style={S.page}>
-      <div style={S.header}>
-        <div style={S.headerLeft}>
-          <div style={S.title}>Craftflow</div>
-          <div style={S.subtitle}>
-            ComfyUI · {generationMode === 'workflow'
-              ? (activeWorkflow.replace('.json', '') || 'workflow 模式')
-              : (activeCheckpoint || '未設定 checkpoint')
-            } · localhost:8188
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <ServiceStatus status={svcStatus} />
-          <div style={{ textAlign: 'right' }}>
-            <div style={S.modelLabel}>
-              {generationMode === 'workflow' ? 'Workflow 模式' : 'Checkpoint 模式'}
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-              {generationMode === 'workflow'
-                ? (activeWorkflow.replace('.json', '') || '—')
-                : (activeCheckpoint || '未設定')}
-            </div>
-          </div>
-          <button
-            style={S.gearBtn}
-            onClick={() => setSettingsOpen(true)}
-            title="設定"
-          >⚙</button>
-        </div>
-      </div>
-
-      <div style={S.tabBar}>
+    <div style={S.app}>
+      <aside style={S.sidebar}>
+        <div style={S.brand}>Craftflow</div>
+        <div style={S.brandSub}>本地創作助手</div>
         {TABS.map((t) => (
           <button
             key={t.id}
-            style={{ ...S.tab, ...(tab === t.id ? S.tabActive : {}) }}
+            style={{ ...S.navItem, ...(tab === t.id ? S.navItemActive : {}) }}
             onClick={() => switchTab(t.id)}
           >
             {t.label}
           </button>
         ))}
+        <div style={S.sidebarFooter}>
+          <ServiceStatus status={svcStatus} />
+          <button
+            style={S.footerBtn}
+            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+            title="切換淺色 / 深色主題"
+          >
+            {theme === 'light' ? '◑ 深色模式' : '◐ 淺色模式'}
+          </button>
+          <button
+            style={S.footerBtn}
+            onClick={() => setSettingsOpen(true)}
+            title="設定"
+          >⚙ 設定</button>
+        </div>
+      </aside>
+
+      <div style={S.main}>
+      <div style={S.topbar}>
+        <div style={S.topbarTitle}>{TABS.find(t => t.id === tab)?.label}</div>
+        <div style={S.topbarInfo}>
+          {generationMode === 'workflow' ? 'Workflow' : 'Checkpoint'} ·{' '}
+          {generationMode === 'workflow'
+            ? (activeWorkflow.replace('.json', '') || '—')
+            : (activeCheckpoint || '未設定')}
+          {' '}· ComfyUI localhost:8188
+        </div>
       </div>
 
       {/* 用 display:none 切換，保留各 Tab 的 React state */}
@@ -690,7 +736,7 @@ export default function App() {
                   fontSize: 11, padding: '2px 10px', borderRadius: 20, cursor: 'pointer',
                   border: historyFilter === f.key ? 'none' : '1px solid var(--border)',
                   background: historyFilter === f.key ? 'var(--accent)' : 'transparent',
-                  color: historyFilter === f.key ? '#fff' : 'var(--muted)',
+                  color: historyFilter === f.key ? 'var(--accent-contrast)' : 'var(--muted)',
                   fontWeight: historyFilter === f.key ? 600 : 400,
                 }}
               >{f.label}</button>
@@ -800,6 +846,7 @@ export default function App() {
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
