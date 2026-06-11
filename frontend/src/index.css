@@ -1,21 +1,86 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ============================================================
+   Craftflow 雙主題 token
+   預設：淺色「紙感畫室」；[data-theme="dark"]：中性暖灰工作室
+   規則：元件一律引用 var(--*)，不寫死色碼
+   ============================================================ */
 :root {
-  --bg: #0f0f17;
-  --surface: #1a1a2e;
-  --border: #2e2e4a;
-  --accent: #7c6af7;
-  --accent-hover: #9585ff;
-  --text: #e2e2f0;
-  --muted: #6b6b8a;
-  --danger: #f97070;
-  --success: #6fcf97;
+  /* 基底 */
+  --bg: #F6F4EE;            /* 暖白紙感 */
+  --surface: #FFFFFF;
+  --surface-2: #EFECE3;     /* inset：dropzone / 輸入框 / 次層背景 */
+  --border: #DFDBD0;
+  --border-strong: #C9C4B6;
+  --text: #26241F;
+  --muted: #8B8579;
+
+  /* 主色：朱紅 */
+  --accent: #BC4B24;
+  --accent-hover: #A33D19;
+  --accent-contrast: #FFFFFF;
+  --accent-soft: rgba(188, 75, 36, .08);
+  --accent-soft-2: rgba(188, 75, 36, .15);
+  --accent-border: rgba(188, 75, 36, .38);
+
+  /* 語意色 */
+  --danger: #B3372F;
+  --success: #2E7D5B;
+  --warning: #96690F;
+
+  /* 標籤 / 徽章（淺底深字） */
+  --tint-blue-bg: #E4EEF8;   --tint-blue-fg: #1D5C96;   --tint-blue-border: #B5D4F0;
+  --tint-green-bg: #E2F1E7;  --tint-green-fg: #1E6B47;
+  --tint-red-bg: #F9E7E4;    --tint-red-fg: #A33028;
+  --tint-amber-bg: #F7EDD8;  --tint-amber-fg: #7E5710;
+  --tint-purple-bg: #ECE8F8; --tint-purple-fg: #5A48A8;
+  --tint-pink-bg: #F8E7F0;   --tint-pink-fg: #A8336E;
+
+  /* 其他 */
+  --code-bg: #F1EFE7;
+  --code-fg: #4E4C44;
+  --hover: rgba(0, 0, 0, .04);
+  --shadow-modal: 0 24px 60px rgba(40, 35, 25, .18);
+}
+
+:root[data-theme="dark"] {
+  --bg: #191917;
+  --surface: #222220;
+  --surface-2: #1B1B19;
+  --border: #383834;
+  --border-strong: #4A4A44;
+  --text: #E9E6DF;
+  --muted: #92907F;
+
+  --accent: #CF5A2E;
+  --accent-hover: #E07347;
+  --accent-contrast: #FFFFFF;
+  --accent-soft: rgba(224, 115, 71, .10);
+  --accent-soft-2: rgba(224, 115, 71, .18);
+  --accent-border: rgba(224, 115, 71, .45);
+
+  --danger: #E97F72;
+  --success: #6FBF97;
+  --warning: #D8AC5E;
+
+  /* 標籤 / 徽章（深底淺字，低飽和） */
+  --tint-blue-bg: #20303E;   --tint-blue-fg: #8DBCE8;   --tint-blue-border: #33597F;
+  --tint-green-bg: #20362B;  --tint-green-fg: #84CFA8;
+  --tint-red-bg: #3C2522;    --tint-red-fg: #E89488;
+  --tint-amber-bg: #38301E;  --tint-amber-fg: #DDB572;
+  --tint-purple-bg: #2C2840; --tint-purple-fg: #ABA0DC;
+  --tint-pink-bg: #382230;   --tint-pink-fg: #D391B4;
+
+  --code-bg: #141412;
+  --code-fg: #B2AFA2;
+  --hover: rgba(255, 255, 255, .06);
+  --shadow-modal: 0 24px 60px rgba(0, 0, 0, .5);
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-family: 'Segoe UI', 'Noto Sans TC', 'Microsoft JhengHei', system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.6;
 }

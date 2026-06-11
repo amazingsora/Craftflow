@@ -22,7 +22,7 @@ const S = {
   label: { fontSize: 12, color: 'var(--muted)', marginBottom: 3, display: 'block' },
   textarea: {
     width: '100%',
-    background: '#12121e',
+    background: 'var(--surface-2)',
     border: '1px solid var(--border)',
     borderRadius: 8,
     color: 'var(--text)',
@@ -38,7 +38,7 @@ const S = {
     borderRadius: 8,
     border: 'none',
     background: 'var(--accent)',
-    color: '#fff',
+    color: 'var(--accent-contrast)',
     fontSize: 15,
     fontWeight: 600,
     cursor: 'pointer',
@@ -68,7 +68,7 @@ const S = {
     fontSize: 13,
   },
   adviceCard: {
-    background: '#12121e',
+    background: 'var(--surface-2)',
     border: '1px solid var(--border)',
     borderRadius: 12,
     padding: '16px 20px',
@@ -88,12 +88,12 @@ const S = {
     fontSize: 13,
   },
   promptPill: {
-    background: '#1e1a3a',
-    border: '1px solid #3a2d6a',
+    background: 'var(--tint-purple-bg)',
+    border: '1px solid var(--tint-purple-bg)',
     borderRadius: 8,
     padding: '8px 14px',
     fontSize: 12,
-    color: '#b09ef0',
+    color: 'var(--tint-purple-fg)',
     wordBreak: 'break-all',
     lineHeight: 1.6,
   },
@@ -292,7 +292,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
                 cursor: ipaSupported ? 'pointer' : 'not-allowed',
                 opacity: ipaSupported ? 1 : 0.4,
                 background: ipaEnabled ? 'var(--accent)' : 'transparent',
-                color: ipaEnabled ? '#fff' : 'var(--muted)',
+                color: ipaEnabled ? 'var(--accent-contrast)' : 'var(--muted)',
               }}
               onClick={() => { if (ipaSupported) { setIpaEnabled(v => !v); setIpaFile(null); setIpaPreview(null) } }}
             >
@@ -427,7 +427,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
                 <p style={{ ...S.sectionLabel, marginBottom: 0 }}>Ollama 生成的 SDXL Prompt</p>
                 {onSendToGenerate && (
                   <button
-                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer', fontWeight: 600 }}
                     onClick={() => onSendToGenerate(question.trim())}
                     title="將此次問題描述帶入文字→生圖 Tab"
                   >→ 送到生圖</button>

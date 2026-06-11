@@ -23,7 +23,7 @@ const S = {
     borderRadius: 8,
     border: 'none',
     background: 'var(--accent)',
-    color: '#fff',
+    color: 'var(--accent-contrast)',
     fontSize: 15,
     fontWeight: 600,
     cursor: 'pointer',
