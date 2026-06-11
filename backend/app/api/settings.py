@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-
 import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel

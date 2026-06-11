@@ -43,3 +43,17 @@ def export_markdown(project_id: int, db: DbDep, format: Literal["zip", "md"] = "
         media_type="application/zip",
         headers=_attachment_headers(filename),
     )
+
+
+@router.get("/projects/{project_id}/export/characters", summary="角色設定集匯出（zip）")
+def export_characters(project_id: int, db: DbDep):
+    """全專案角色設定集：結構化欄位 + 人設圖打包，可給同人出本/外包溝通用。"""
+    result = export_service.export_character_sheet_zip(db, project_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    zip_bytes, filename = result
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers=_attachment_headers(filename),
+    )
