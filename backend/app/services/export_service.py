@@ -149,3 +149,95 @@ def export_zip(db: Session, project_id: int) -> tuple[bytes, str] | None:
             else:
                 logger.warning("[export] 插圖檔不存在，略過：%s", src)
     return buf.getvalue(), f"{project.title}.zip"
+
+
+# ── 角色設定集匯出（P2 後續）──────────────────────────────────────────────────
+
+_PORTRAIT_DIR = UPLOAD_DIR / "portraits"
+
+_FIELD_LABELS = [
+    ("core_traits", "外貌與個性"),
+    ("outfit", "服裝設定"),
+    ("behavior_rules", "行為準則"),
+    ("voice_style", "語氣風格"),
+    ("forbidden_actions", "禁止行為"),
+    ("ai_summary", "AI 摘要"),
+    ("notes", "備註"),
+]
+
+
+def _character_md(ch, faction_names: list[str], images: list[str]) -> list[str]:
+    lines = [f"## {ch.name}", ""]
+
+    basics = []
+    if ch.aliases:
+        basics.append(f"別名：{'、'.join(ch.aliases)}")
+    if ch.gender:
+        basics.append({"male": "男", "female": "女"}.get(ch.gender, ch.gender))
+    if ch.age is not None:
+        basics.append(f"{ch.age} 歲")
+    if ch.height is not None:
+        basics.append(f"{ch.height} cm")
+    if ch.birthday:
+        basics.append(f"生日：{ch.birthday}")
+    if faction_names:
+        basics.append(f"陣營：{'、'.join(faction_names)}")
+    if basics:
+        lines += ["　｜　".join(basics), ""]
+
+    for img in images:
+        lines.append(f"![{ch.name}](images/{Path(img).name})")
+    if images:
+        lines.append("")
+
+    for attr, label in _FIELD_LABELS:
+        val = (getattr(ch, attr, None) or "").strip()
+        if val:
+            lines += [f"**{label}**", "", val, ""]
+    return lines
+
+
+def export_character_sheet_zip(db: Session, project_id: int) -> tuple[bytes, str] | None:
+    """全專案角色設定集：{專案名}_角色設定集.md + images/，打包 zip。"""
+    from app.models.character import Character  # 延遲 import 避免循環
+
+    project = db.get(Project, project_id)
+    if not project:
+        return None
+    characters = (
+        db.query(Character)
+        .filter(Character.project_id == project_id)
+        .order_by(Character.id)
+        .all()
+    )
+
+    lines: list[str] = [f"# {project.title}　角色設定集", ""]
+    if project.author:
+        lines += [f"**作者**：{project.author}", ""]
+    lines += [f"共 {len(characters)} 名角色", "", "---", ""]
+
+    image_files: list[Path] = []
+    for ch in characters:
+        # 圖片：肖像 + 概念圖 + AI 人設圖（全部位於 uploads/portraits/）
+        imgs: list[str] = []
+        for name in [ch.portrait_path, *(ch.concept_images or []), *(ch.ai_generated_images or [])]:
+            if name and (_PORTRAIT_DIR / name).exists() and name not in imgs:
+                imgs.append(name)
+                image_files.append(_PORTRAIT_DIR / name)
+        faction_names = [f.name for f in (ch.factions or [])]
+        lines.extend(_character_md(ch, faction_names, imgs))
+        lines += ["---", ""]
+
+    markdown = "\n".join(lines).rstrip() + "\n"
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{project.title}_角色設定集.md", markdown)
+        seen: set[str] = set()
+        for src in image_files:
+            arcname = f"images/{src.name}"
+            if arcname in seen:
+                continue
+            seen.add(arcname)
+            zf.write(src, arcname)
+    return buf.getvalue(), f"{project.title}_角色設定集.zip"

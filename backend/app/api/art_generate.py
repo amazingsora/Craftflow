@@ -47,6 +47,7 @@ from app.services.ai.prompt_engine.styles import STYLE_CONFIG
 from app.services.ai.vram_manager import guardian
 from app.services.ai.generation_recorder import record_generation
 from app.services.ai import generation_jobs
+from app.services.ai import image_edit_service
 
 _PORTRAIT_DIR = UPLOAD_DIR / "portraits"
 
@@ -524,6 +525,109 @@ def get_generation_job_result(job_id: str, index: int = 0):
             "X-Batch-Size": str(job.meta.get("batch_size", 1)),
             "X-History-Id": str(hist_id) if hist_id else "",
         },
+    )
+
+
+def _style_prompts(db: Session, art_style_id: Optional[int], prompt: str, negative: str):
+    """inpaint/upscale 共用：解析 art_style，補 extra tags 與預設負向。"""
+    art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
+    style = _resolve_style(art_style)
+    default_neg = (art_style.negative or STYLE_CONFIG[style].negative) if art_style else STYLE_CONFIG[style].negative
+    negative = negative.strip() or default_neg
+    prompt = prompt.strip()
+    extra = _extra_tags(art_style)
+    if prompt and extra:
+        prompt = f"{prompt}, {extra}"
+    return style, prompt, negative
+
+
+@router.post("/art/inpaint", summary="局部重繪（白色遮罩區 = 重繪區）")
+async def inpaint(
+    file: Annotated[UploadFile, File(description="原圖 (JPEG/PNG)")],
+    mask: Annotated[UploadFile, File(description="遮罩圖（白=重繪區、黑=保留）")],
+    prompt: str = Form("", description="重繪區內容描述（SD tags，可空）"),
+    negative_prompt: str = Form(""),
+    denoise: float = Form(0.75, ge=0.1, le=1.0, description="重繪強度：0.5 微調 / 0.75 標準 / 1.0 全換"),
+    steps: int = Form(20, ge=1, le=60),
+    seed: int = Form(-1),
+    grow_mask: int = Form(6, ge=0, le=64, description="遮罩外擴像素，緩和接縫"),
+    art_style_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """完稿微調用：改手、改臉、改局部細節，不必整張重 roll。"""
+    style, pos, neg = _style_prompts(db, art_style_id, prompt, negative_prompt)
+    actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
+
+    wf = _load_workflow(state.get_workflow())
+    canvas_name = comfyui_client.upload_image_bytes(await file.read(), "inpaint_canvas.png")
+    mask_name = comfyui_client.upload_image_bytes(await mask.read(), "inpaint_mask.png")
+    try:
+        image_edit_service.to_inpaint_workflow(wf, canvas_name, mask_name, denoise, grow_mask)
+    except image_edit_service.WorkflowShapeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    _inject_prompts(wf, pos, neg)
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") == "KSampler":
+            node["inputs"]["seed"] = actual_seed
+            node["inputs"]["steps"] = steps
+    _replace_negative_seeds(wf, actual_seed)
+
+    await guardian.request_focus("comfyui")
+    image_bytes = await _run_comfyui(wf)
+    hist_id = record_generation(
+        db, endpoint="inpaint", seed=actual_seed, workflow=state.get_workflow(),
+        style=style.value, positive=pos, negative=neg,
+        params={"denoise": denoise, "steps": steps, "grow_mask": grow_mask,
+                "art_style_id": art_style_id},
+    )
+    return Response(
+        content=image_bytes, media_type="image/png",
+        headers={"X-Seed": str(actual_seed), "X-Denoise": str(denoise),
+                 "X-History-Id": str(hist_id) if hist_id else ""},
+    )
+
+
+@router.post("/art/upscale", summary="高解析度修復（hires-fix 放大）")
+async def upscale(
+    file: Annotated[UploadFile, File(description="原圖 (JPEG/PNG)")],
+    scale: float = Form(1.5, ge=1.1, le=2.0, description="放大倍率（1.5 建議；2.0 需較多 VRAM）"),
+    denoise: float = Form(0.4, ge=0.1, le=0.7, description="重採樣強度：0.3 保守 / 0.4 標準 / 0.55 重建細節"),
+    prompt: str = Form("", description="內容描述（可空，給重採樣參考）"),
+    negative_prompt: str = Form(""),
+    steps: int = Form(20, ge=1, le=60),
+    seed: int = Form(-1),
+    art_style_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """完稿輸出用：潛空間放大 + 低 denoise 重採樣補細節（只用核心節點，免裝 upscale 模型）。"""
+    style, pos, neg = _style_prompts(db, art_style_id, prompt, negative_prompt)
+    actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
+
+    wf = _load_workflow(state.get_workflow())
+    image_name = comfyui_client.upload_image_bytes(await file.read(), "upscale_src.png")
+    try:
+        image_edit_service.to_upscale_workflow(wf, image_name, scale, denoise)
+    except image_edit_service.WorkflowShapeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    _inject_prompts(wf, pos, neg)
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") == "KSampler":
+            node["inputs"]["seed"] = actual_seed
+            node["inputs"]["steps"] = steps
+    _replace_negative_seeds(wf, actual_seed)
+
+    await guardian.request_focus("comfyui")
+    image_bytes = await _run_comfyui(wf)
+    hist_id = record_generation(
+        db, endpoint="upscale", seed=actual_seed, workflow=state.get_workflow(),
+        style=style.value, positive=pos, negative=neg,
+        params={"scale": scale, "denoise": denoise, "steps": steps,
+                "art_style_id": art_style_id},
+    )
+    return Response(
+        content=image_bytes, media_type="image/png",
+        headers={"X-Seed": str(actual_seed), "X-Scale": str(scale),
+                 "X-History-Id": str(hist_id) if hist_id else ""},
     )
 
 
@@ -2881,6 +2985,11 @@ async def img_guide(
     await guardian.request_focus("comfyui")
     image_out = await _run_comfyui(wf)
 
+    hist_id = record_generation(
+        db, endpoint="img_guide", seed=actual_seed, workflow=state.get_workflow(),
+        style=style.value, positive=pos, negative=neg,
+        params={"mode": mode, "denoise": denoise, "steps": steps, "art_style_id": art_style_id},
+    )
     return Response(
         content=image_out,
         media_type="image/png",
@@ -2889,6 +2998,7 @@ async def img_guide(
             "X-Mode": mode,
             "X-Style": style.value,
             "X-Denoise": str(denoise),
+            "X-History-Id": str(hist_id) if hist_id else "",
         },
     )
 
@@ -2947,6 +3057,12 @@ async def ipadapter(
     await guardian.request_focus("comfyui")
     image_out = await _run_comfyui(wf)
 
+    hist_id = record_generation(
+        db, endpoint="ipadapter", seed=actual_seed, workflow="ipadapter_txt2img.json",
+        style=style.value, positive=pos, negative=neg,
+        params={"weight": weight, "steps": steps, "width": width, "height": height,
+                "art_style_id": art_style_id},
+    )
     return Response(
         content=image_out,
         media_type="image/png",
@@ -2954,5 +3070,6 @@ async def ipadapter(
             "X-Seed": str(actual_seed),
             "X-Style": style.value,
             "X-IPAdapter-Weight": str(weight),
+            "X-History-Id": str(hist_id) if hist_id else "",
         },
     )
