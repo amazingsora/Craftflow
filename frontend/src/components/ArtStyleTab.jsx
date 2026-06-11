@@ -8,7 +8,7 @@ const S = {
   title: { fontSize: 15, fontWeight: 600, color: 'var(--text)' },
   btn: {
     padding: '8px 16px', borderRadius: 8, border: 'none',
-    background: 'var(--accent)', color: '#fff',
+    background: 'var(--accent)', color: 'var(--accent-contrast)',
     fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
   btnSecondary: {
@@ -18,11 +18,11 @@ const S = {
   },
   btnDanger: {
     padding: '8px 16px', borderRadius: 8, border: 'none',
-    background: '#5c2d2d', color: '#f77', fontSize: 13, cursor: 'pointer',
+    background: 'var(--tint-red-bg)', color: 'var(--danger)', fontSize: 13, cursor: 'pointer',
   },
   btnIcon: {
     padding: '4px 8px', borderRadius: 6, border: 'none',
-    background: '#3a2020', color: '#f77', fontSize: 12, cursor: 'pointer',
+    background: 'var(--tint-red-bg)', color: 'var(--danger)', fontSize: 12, cursor: 'pointer',
   },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
   card: {
@@ -435,7 +435,7 @@ export default function ArtStyleTab() {
 
         {/* Error */}
         {error && (
-          <div style={{ color: '#f77', fontSize: 13 }}>{error}</div>
+          <div style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</div>
         )}
 
         {/* Actions */}
@@ -475,7 +475,7 @@ export default function ArtStyleTab() {
                   {testGenerating ? <span style={S.spinner} /> : '測試生成'}
                 </button>
               </div>
-              {testError && <div style={{ color: '#f77', fontSize: 12 }}>{testError}</div>}
+              {testError && <div style={{ color: 'var(--danger)', fontSize: 12 }}>{testError}</div>}
               {testGenerating && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--muted)', fontSize: 13 }}>
                   <span style={S.spinnerLg} />

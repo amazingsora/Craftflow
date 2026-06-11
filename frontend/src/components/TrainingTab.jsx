@@ -9,19 +9,19 @@ const S = {
   row: { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' },
   btn: {
     padding: '7px 18px', borderRadius: 8, border: '1px solid var(--border)',
-    background: 'var(--surface2, #1e2130)', color: 'var(--text)', fontSize: 13,
+    background: 'var(--surface2, var(--surface-2))', color: 'var(--text)', fontSize: 13,
     cursor: 'pointer', transition: 'opacity .15s',
   },
-  btnPrimary: { background: 'var(--accent)', color: '#fff', border: 'none' },
-  btnDanger: { background: '#5c2d2d', color: '#f77', border: 'none' },
+  btnPrimary: { background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none' },
+  btnDanger: { background: 'var(--tint-red-bg)', color: 'var(--danger)', border: 'none' },
   input: {
     padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)',
-    background: 'var(--surface2, #1e2130)', color: 'var(--text)', fontSize: 13, outline: 'none',
+    background: 'var(--surface2, var(--surface-2))', color: 'var(--text)', fontSize: 13, outline: 'none',
   },
   label: { fontSize: 12, color: 'var(--muted)', display: 'flex', flexDirection: 'column', gap: 4 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 },
   imgCard: {
-    background: 'var(--surface2, #1e2130)', border: '1px solid var(--border)',
+    background: 'var(--surface2, var(--surface-2))', border: '1px solid var(--border)',
     borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column',
   },
   imgThumb: { width: '100%', aspectRatio: '1/1', objectFit: 'cover' },
@@ -34,7 +34,7 @@ const S = {
   imgFooter: { display: 'flex', justifyContent: 'space-between', padding: '2px 6px 6px', alignItems: 'center' },
   delBtn: { fontSize: 11, color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' },
   jobCard: {
-    background: 'var(--surface2, #1e2130)', border: '1px solid var(--border)',
+    background: 'var(--surface2, var(--surface-2))', border: '1px solid var(--border)',
     borderRadius: 8, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8,
   },
   jobHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
@@ -43,8 +43,8 @@ const S = {
   progressBar: { height: 6, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3, background: 'var(--accent)', transition: 'width .3s' },
   logBox: {
-    background: '#0d0f17', borderRadius: 6, padding: '8px 10px',
-    fontSize: 11, color: '#8af', fontFamily: 'monospace', maxHeight: 120, overflowY: 'auto',
+    background: 'var(--code-bg)', borderRadius: 6, padding: '8px 10px',
+    fontSize: 11, color: 'var(--tint-blue-fg)', fontFamily: 'monospace', maxHeight: 120, overflowY: 'auto',
     whiteSpace: 'pre-wrap', wordBreak: 'break-all',
   },
   formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 },
@@ -52,11 +52,11 @@ const S = {
 }
 
 const STATUS_COLOR = {
-  pending: { background: '#2d3a1e', color: '#9ef77e' },
-  running: { background: '#1e2d3a', color: '#7eb8f7' },
-  done:    { background: '#1e3a2d', color: '#7ef7c0' },
-  failed:  { background: '#3a1e1e', color: '#f77' },
-  stopped: { background: '#2d2d1e', color: '#f7d07e' },
+  pending: { background: 'var(--tint-green-bg)', color: 'var(--tint-green-fg)' },
+  running: { background: 'var(--tint-blue-bg)', color: 'var(--tint-blue-fg)' },
+  done:    { background: 'var(--tint-green-bg)', color: 'var(--tint-green-fg)' },
+  failed:  { background: 'var(--tint-red-bg)', color: 'var(--danger)' },
+  stopped: { background: 'var(--tint-amber-bg)', color: 'var(--tint-amber-fg)' },
 }
 
 export default function TrainingTab() {
@@ -193,9 +193,9 @@ export default function TrainingTab() {
       {envStatus && (
         <div style={{
           padding: '10px 16px', borderRadius: 8, fontSize: 13,
-          background: envStatus.ready ? '#1e3a2d' : '#3a1e1e',
-          color: envStatus.ready ? '#7ef7c0' : '#f77',
-          border: `1px solid ${envStatus.ready ? '#2d5a40' : '#5a2d2d'}`,
+          background: envStatus.ready ? 'var(--tint-green-bg)' : 'var(--tint-red-bg)',
+          color: envStatus.ready ? 'var(--tint-green-fg)' : 'var(--danger)',
+          border: `1px solid ${envStatus.ready ? 'var(--tint-green-bg)' : 'var(--tint-red-bg)'}`,
           display: 'flex', alignItems: 'center', gap: 12,
         }}>
           <span style={{ fontSize: 16 }}>{envStatus.ready ? '✓' : '✗'}</span>
@@ -356,7 +356,7 @@ function JobCard({ job, log, onStart, onStop }) {
         </>
       )}
       {job.status === 'done' && job.output_lora_name && (
-        <div style={{ fontSize: 12, color: '#7ef7c0' }}>輸出：{job.output_lora_name}</div>
+        <div style={{ fontSize: 12, color: 'var(--tint-green-fg)' }}>輸出：{job.output_lora_name}</div>
       )}
       <div style={S.row}>
         {job.status === 'pending' && (
