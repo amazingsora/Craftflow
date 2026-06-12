@@ -15,11 +15,18 @@ import yaml
 from fastapi import HTTPException
 from starlette.concurrency import run_in_threadpool
 
+import random
+
+from sqlalchemy.orm import Session
+
 from app.core.config import CUSTOM_WORKFLOWS_DIR
 from app.core import state
 from app.models.art_style import ArtStyle
 from app.services import comfyui_client
 from app.services.ai.prompt_engine import PromptStyle
+from app.services.ai.prompt_engine.styles import STYLE_CONFIG
+from app.schemas.art_generate import GenerateRequest
+from app.services.ai.wf_node_ops import _inject_prompts
 
 logger = logging.getLogger(__name__)
 
@@ -273,3 +280,60 @@ def _run(workflow: dict) -> bytes:
 
 async def _run_comfyui(workflow: dict) -> bytes:
     return await run_in_threadpool(_run, workflow)
+
+# ── txt2img 組裝 / inpaint·upscale 風格解析（A1 Step 4 自 api 下沉）─────────────
+
+def _build_txt2img(req: "GenerateRequest", db: Session, batch_size: int = 1):
+    """txt2img workflow 組裝（sync /art/generate 與 async job 共用）。
+
+    回傳 (wf, seed, style, prompt, negative, lora_list)。
+    """
+    art_style = db.get(ArtStyle, req.art_style_id) if req.art_style_id else None
+    style = _resolve_style(art_style)
+    default_neg = (art_style.negative or STYLE_CONFIG[style].negative) if art_style else STYLE_CONFIG[style].negative
+    negative = req.negative_prompt or default_neg
+    seed = req.seed if req.seed >= 0 else random.randint(0, 2**31 - 1)
+    prompt = req.prompt
+    extra = _extra_tags(art_style)
+    if extra:
+        prompt = f"{prompt}, {extra}"
+
+    wf = _load_workflow(state.get_workflow())
+    # global LoRA（settings 頁設定）優先注入，art_style LoRA 疊加在後
+    global_lora = state.get_lora()
+    lora_list = []
+    if global_lora.get("name"):
+        lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
+    if art_style and art_style.loras:
+        lora_list.extend(art_style.loras)
+    _inject_loras(wf, lora_list)
+    _inject_prompts(wf, prompt, negative)
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type")
+        inputs = node.get("inputs", {})
+        if ct == "EmptyLatentImage":
+            inputs["width"] = req.width
+            inputs["height"] = req.height
+            if batch_size > 1:
+                inputs["batch_size"] = batch_size
+        elif ct == "KSampler":
+            inputs["seed"] = seed
+            inputs["steps"] = req.steps
+
+    _replace_negative_seeds(wf, seed)
+    return wf, seed, style, prompt, negative, lora_list
+
+
+def _style_prompts(db: Session, art_style_id: Optional[int], prompt: str, negative: str):
+    """inpaint/upscale 共用：解析 art_style，補 extra tags 與預設負向。"""
+    art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
+    style = _resolve_style(art_style)
+    default_neg = (art_style.negative or STYLE_CONFIG[style].negative) if art_style else STYLE_CONFIG[style].negative
+    negative = negative.strip() or default_neg
+    prompt = prompt.strip()
+    extra = _extra_tags(art_style)
+    if prompt and extra:
+        prompt = f"{prompt}, {extra}"
+    return style, prompt, negative
