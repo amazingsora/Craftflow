@@ -64,7 +64,7 @@ FastAPI Backend (localhost:8000)
 ```
 Craftflow/
 ├── backend/
-│   ├── main.py                  # FastAPI 入口（掛載 13 個 router）
+│   ├── main.py                  # FastAPI 入口（掛載 16 個 router）
 │   └── app/
 │       ├── api/                 # REST 端點（projects, characters, art_generate, training …）
 │       ├── models/              # SQLAlchemy ORM 模型
@@ -155,9 +155,10 @@ npm run dev
 
 所有端點前綴 `/api/v1`，互動式文件於 `/docs`。主要 router：
 
-`projects` · `chapters` · `characters` · `factions` · `illustrations` · `art_styles` ·
+`projects` · `volumes` · `chapters` · `characters` · `factions` · `illustrations` · `art_styles` ·
 `art_generate`（人設 / 變體生成）· `ai_art` · `ai_text` · `analysis`（節奏 / 一致性）·
-`training`（LoRA）· `settings` · `status`（Ollama / ComfyUI 健康檢查）
+`training`（LoRA）· `export`（Markdown / 角色集匯出）· `generation_history`（生成參數記錄）·
+`settings` · `status`（Ollama / ComfyUI 健康檢查）
 
 ---
 
