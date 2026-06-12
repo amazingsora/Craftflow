@@ -1,45 +1,34 @@
 # Craftflow Senior Architect & Full-stack Developer Instructions
 
 ## 1. Project Context
-- **Name:** Craftflow
-- **Description:** A private creative assistant for writers and artists. Focuses on local-first AI (Ollama/ComfyUI) for novel writing and art generation.
-- **Core Philosophy:** Human-in-the-loop (AI suggests, never overwrites), Local-first (GPU-intensive tasks on local machine), and Content Integrity (Original drafts stay untouched).
+- **Name:** Craftflow — private creative assistant for writers and artists (novel writing + AI illustration).
+- **Core Philosophy:** Human-in-the-loop (AI suggests, never overwrites), Local-first (Ollama/ComfyUI on local machine), Content Integrity (original drafts untouched).
 
 ## 2. Tech Stack
-- **Backend:** Python 3.10+, FastAPI, SQLAlchemy (SQLite), Pydantic v2.
-- **Frontend:** React 18 (Vite), JavaScript, Vanilla CSS.
-- **AI Infrastructure:** 
-  - Ollama (LLM/Vision): `http://host.docker.internal:11434`
-  - ComfyUI (Diffusion): `http://host.docker.internal:8188`
-  - Models: `dolphin-llama3` (Text/Translation), `qwen2.5vl:7b` (Vision Analysis).
-- **Environment:** Dockerized environment. Use `host.docker.internal` for host machine services.
+- **Backend:** Python 3.11, FastAPI, SQLAlchemy 2.0 (SQLite), Pydantic v2.
+- **Frontend:** React 18 (Vite 5), JavaScript, Vanilla CSS-in-JS, dual-theme tokens in index.css.
+- **AI:** Ollama `http://host.docker.internal:11434` (`dolphin-llama3` text, `qwen2.5vl:7b` vision) · ComfyUI `http://host.docker.internal:8188` (SDXL, ControlNet Union ProMax, IP-Adapter) · kohya_ss for LoRA training.
+- Use `host.docker.internal` from containers, `localhost` when running directly.
 
 ## 3. Directory Structure
-- `backend/`: FastAPI app, models, and service layer.
-- `frontend/`: React source code (ComposeTab, GenerateTab, ProcessTab).
-- `tools/Craftflow/`: Core algorithms (Legacy logic to be migrated to services).
-- `doc/`: Strategic plans and development logs.
+- `backend/main.py`: 16 routers, prefix `/api/v1`.
+- `backend/app/api/`: routes only (art_generate.py is 3,075 lines — split plan: doc/2026-06-12_A1拆解規劃.md).
+- `backend/app/services/` (+`ai/`): business logic — art/character/consistency/image_edit services, generation_jobs (async), generation_recorder, vram_manager, prompt_engine, lora_trainer, export_service.
+- `backend/app/models|schemas/`: ORM + Pydantic (chapter_revision = snapshots, generation_history = reproducibility).
+- `backend/app/core/`: config (.env, PERSONAL_STYLE_*), database, backup (periodic VACUUM INTO), state (runtime globals, reset on restart).
+- `frontend/src/`: App.jsx (sidebar shell, bottom history), components/*Tab.jsx (CharacterTab 2,431 lines — split planned A2).
+- `data/custom_workflows/`: ComfyUI workflows, API format required (Standard_V35 / _EyeFix A/B).
+- `tools/Craftflow/`: legacy CLI, migrating into services/ai/.
+- `doc/`: daily dev logs (`YYYY-MM-DD_開發記錄.md`, never edit old days) + planning docs (checkbox updates only).
 
 ## 4. Coding Standards & Rules
-- **Backend:** 
-    - Use FastAPI router patterns.
-    - Business logic in `app/services/`.
-    - Data models in `app/models/`.
-    - Schemas in `app/schemas/`.
-    - Maintain type safety with Pydantic v2.
-- **Frontend:** 
-    - Functional components with React Hooks.
-    - CSS-in-JS or Vanilla CSS (Prefer simplicity).
-    - Clean state management.
-- **AI Integration:** 
-    - Always handle timeouts and connection errors.
-    - Provide real-time progress feedback for long tasks.
-- **Non-destructive:** 
-    - Rewrite/analysis results MUST be saved to separate files or fields.
-    - NEVER overwrite user's original text without explicit command.
+- Surgical updates only — no unrelated refactors.
+- FastAPI router patterns; business logic in services/, models in models/, schemas in schemas/.
+- Always handle Ollama/ComfyUI timeouts/errors — the app must not crash; long tasks need backend status + frontend progress.
+- Non-destructive: analysis/rewrite results go to separate files/fields; NEVER overwrite user originals.
+- Read before editing; propose and explain risk before applying.
 
-## 5. Mission Pattern
-1. **Analyze:** Check interaction between FE -> BE -> AI.
-2. **Strategy:** Propose a plan before writing code.
-3. **Execution:** Provide clean, idiomatic, and documented code.
-4. **Validation:** Suggest test cases or run existing tests.
+## 5. Environment Pitfalls
+- repo=LF, Windows tree=CRLF → sandbox git shows all files modified (false); normalize before staging.
+- File-tool writes to mounted folders may truncate tails → write via shell, verify tail.
+- Never commit `vite.config.js.timestamp-*.mjs`; SQLite must not be written from sandbox.
