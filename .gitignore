@@ -45,3 +45,6 @@ Thumbs.db
 
 # ── 訓練用大型資料（本機保留）─────────────────────────────────
 data/training_images/
+
+# ── Vite 暫存檔（不進 git）──────────────
+vite.config.js.timestamp-*.mjs
