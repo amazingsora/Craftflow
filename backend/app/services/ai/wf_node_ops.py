@@ -3,8 +3,6 @@
 自 api/art_generate.py 下沉（2026-06-11 A1 階段 1）：
 IPA / ControlNet 節點偵測、參考圖注入、動態建鏈、bypass 拆鏈、
 prompt 注入（含 conditioning 邊回溯）。純 dict 操作，無 app 狀態依賴。
-
-備註：_inject_txt2img 搬移時即無呼叫端（死碼），保留待確認。
 """
 from __future__ import annotations
 
@@ -519,22 +517,6 @@ def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
     if not neg_injected and len(sorted_ids) > 1:
         clips[sorted_ids[1]]["inputs"]["text"] = negative
         logger.debug("[inject-prompts] fallback negative → node %s", sorted_ids[1])
-
-
-def _inject_txt2img(wf: dict, prompt: str, negative: str, seed: int, steps: int = 20) -> None:
-    for node in wf.values():
-        if not isinstance(node, dict):
-            continue
-        ct = node.get("class_type")
-        inputs = node.get("inputs", {})
-        if ct == "CLIPTextEncode":
-            if inputs.get("text") == "__POSITIVE__":
-                inputs["text"] = prompt
-            elif inputs.get("text") == "__NEGATIVE__":
-                inputs["text"] = negative
-        elif ct == "KSampler":
-            inputs["seed"] = seed
-            inputs["steps"] = steps
 
 
 def _inject_controlnet_compose(

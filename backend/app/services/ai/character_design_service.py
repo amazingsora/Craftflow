@@ -2,8 +2,7 @@
 
 自 api/art_generate.py 下沉(2026-06-13 A1 Step 3,逐字搬移零邏輯變更)。
 兩主流程相似度 ~65% 但 IPA/CN 權重規則有分歧——本步只搬不去重(P7 另開)。
-注意: generate_variant_design 內有 lazy import app.api.characters(_get_variants/_slot_index),
-為搬移期過渡;Step 4 後應將該兩 helper 移至 service 層解除 services→api 反向依賴。
+_get_variants/_slot_index 於 2026-06-13(項2)抽至 services/ai/variant_helpers，本模組與 api/characters 共同 import。
 """
 from __future__ import annotations
 
@@ -15,6 +14,7 @@ import logging
 import random
 import time
 from typing import Optional
+from dataclasses import dataclass
 
 from PIL import Image, ImageDraw
 
@@ -75,11 +75,11 @@ from app.services.ai.vision_extract import (
     _height_body_tags,
     _vision_extract_cached,
 )
+from app.services.ai.variant_helpers import _get_variants, _slot_index
 
 _PORTRAIT_DIR = UPLOAD_DIR / "portraits"
 
 logger = logging.getLogger(__name__)
-
 
 # ── Character Design Sheet Generation ────────────────────────────────────────
 
@@ -347,27 +347,41 @@ async def _run_canvas_expand_flux(
         raise
 
 
-async def generate_character_design(
-    character_id: int,
-    expression: Optional[str] = None,  # None=full body; key from _EXPRESSION_MAP = bust shot
-    art_style_id: Optional[int] = None,
-    use_ai_prompt: bool = True,
-    use_outfit: bool = True,
-    use_ipa: bool = True,
-    ipa_weight: float = 0.6,
-    use_controlnet: bool = True,
-    cn_weight: float = 0.85,
-    db: Session = Depends(get_db),
-):
-    """
-    expression=None  → full-body character design sheet (768×1024)
-    expression=<key> → bust/face close-up with that expression (512×640)
-    Returns PNG bytes.
-    """
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+@dataclass
+class _DesignInputs:
+    """正規化的設計輸入：角色版取自 character 模型欄位，變體版取自 variant slot dict。"""
+    name: str
+    concept_imgs: list
+    outfit: Optional[str]
+    core_traits: Optional[str]
+    color: Optional[str]
+    gender: Optional[str]
+    age: Optional[int]
+    ai_prompt: Optional[str]
+    height: Optional[int]
 
+
+async def _generate_design_core(
+    *,
+    character: Character,
+    inp: _DesignInputs,
+    db: Session,
+    slot: Optional[int],
+    expression: Optional[str],
+    art_style_id: Optional[int],
+    use_ai_prompt: bool,
+    use_outfit: bool,
+    use_ipa: bool,
+    ipa_weight: float,
+    use_controlnet: bool,
+    cn_weight: float,
+    canvas_expand_mode: str,      # "pre"=角色版(SDXL前/概念圖/提早return) | "post"=變體版(SDXL後/輸出圖/try)
+    use_pixel_override: bool,     # 角色版 True：coverage=full 時像素二次確認
+    use_solo_tag: bool,           # 變體版 True：partial/bust 加 solo 標籤
+    log_label: str,
+    record_endpoint: str,
+):
+    """角色人設圖 / 變體人設圖共用核心（2026-06-13 項3 去重；分歧以策略參數保留，零行為變更）。"""
     if expression and expression not in _EXPRESSION_MAP:
         raise HTTPException(status_code=400, detail=f"Unknown expression. Valid: {list(_EXPRESSION_MAP)}")
 
@@ -387,80 +401,62 @@ async def generate_character_design(
     t_total = time.perf_counter()
 
     # ── Build Chinese description ──────────────────────────────────────────
-    # Age/gender are encoded via gender_prefix (1boy/1girl/1man/1woman) — do NOT
-    # pass age text to the LLM to avoid spurious "15 years old" text tags.
-    parts = [f"角色名稱：{character.name}"]
+    parts = [f"角色名稱：{inp.name}"]
 
-    # Visual traits from first concept image — added BEFORE core_traits so that
-    # the author's explicit description (core_traits) takes precedence when the
-    # LLM resolves conflicts (recency bias: later tokens win).
-    concept_imgs = list(character.concept_images or [])
-    if not concept_imgs and character.portrait_path:
-        concept_imgs = [character.portrait_path]
-
+    all_flat = True  # no images → treat as flat, use core_traits for anchors
     _ipa_ref_bytes: bytes | None = None
     _cn_ref_bytes: bytes | None = None
     _cn_coverage: str = "full"
     _coverage_end_pct: float | None = None
 
-    if concept_imgs:
-        # Load all available concept images (up to 3) for multi-image analysis
+    if inp.concept_imgs:
         valid_images: list[bytes] = []
-        for img_filename in concept_imgs[:3]:
+        for img_filename in inp.concept_imgs[:3]:
             img_path = _PORTRAIT_DIR / img_filename
             if img_path.exists():
                 try:
                     valid_images.append(img_path.read_bytes())
                 except Exception:
                     pass
-
-        # Detect flat-color drafts before vision analysis
-        all_flat = all(_is_flat_color_draft(img) for img in valid_images)
-        logger.info("[prompt-log] concept images flat_draft=%s (%d imgs)", all_flat, len(valid_images))
-
-        # IP-Adapter: use first available image when enabled (flat drafts included)
-        if use_ipa and valid_images:
-            _ipa_ref_bytes = valid_images[0]
-
-        # ControlNet base ref (may be overridden by _shrink_for_full_body below)
-        if use_controlnet and valid_images:
-            _cn_ref_bytes = valid_images[0]
-
-        # Full-body CN mode: merge coverage detection + visual extraction into one Ollama call
-        # to avoid paying the vision-model cold-start cost twice.
-        # Result cached by image hash — repeat generations skip the vision call.
         if valid_images:
+            all_flat = all(_is_flat_color_draft(img) for img in valid_images)
+            logger.info("[prompt-log] %s concept images flat_draft=%s (%d imgs)", log_label, all_flat, len(valid_images))
+            if use_ipa:
+                _ipa_ref_bytes = valid_images[0]
+            if use_controlnet:
+                _cn_ref_bytes = valid_images[0]
+
+            # Merge coverage detection + visual extraction into one Ollama call
+            # (cached by image hash — repeat generations skip the vision call)
             t0 = time.perf_counter()
             need_coverage = use_controlnet and not is_expression
             coverage, visual = await _vision_extract_cached(valid_images, need_coverage)
             timings["vision_extract"] = round(time.perf_counter() - t0, 1)
             if need_coverage:
-                _exp_w, _exp_h = _fullbody_canvas(getattr(character, 'height', None))
+                _exp_w, _exp_h = _fullbody_canvas(inp.height)
                 _cn_coverage = coverage
-                # Pixel fallback：LLM 偵測不穩定時，用像素分析二次確認
-                if _cn_coverage == "full":
+                # 角色版：LLM 偵測 full 時用像素分析二次確認（變體版略過）
+                if use_pixel_override and _cn_coverage == "full":
                     pixel_override = _pixel_coverage_check(valid_images[0])
                     if pixel_override:
-                        logger.info("[char-gen] pixel-check override: %s → %s", _cn_coverage, pixel_override)
+                        logger.info("[%s] pixel-check override: %s → %s", log_label, _cn_coverage, pixel_override)
                         _cn_coverage = pixel_override
                 # CN≥0.7 限制條件：所有 coverage 一律保留 CN，不再 bypass。
-                # partial/bust 透過 _shrink_for_full_body 把草圖縮到畫布上半（依
-                # _BODY_FILL_RATIO），下半留空交給 SD 補腿；CN 以 AnimeLineArt（非 Canny）
-                # 用使用者權重引導上半身結構，單 pass 無接縫。
+                # partial/bust 透過 _shrink_for_full_body 縮到畫布上半，下半留空補腿；
+                # CN 以 AnimeLineArt（非 Canny）引導上半身，單 pass 無接縫。
                 _cn_ref_bytes = _shrink_for_full_body(valid_images[0], _exp_w, _exp_h, _cn_coverage)
                 _override_cn_w = _COVERAGE_CN_WEIGHT.get(_cn_coverage)
                 if _override_cn_w is not None:
                     cn_weight = _override_cn_w
                 _coverage_end_pct = _COVERAGE_CN_END_PERCENT.get(_cn_coverage)
                 logger.info(
-                    "[char-gen] coverage=%s → CN (weight=%.2f, fill=%.2f)",
-                    _cn_coverage, cn_weight, _BODY_FILL_RATIO.get(_cn_coverage, 1.0),
+                    "[%s] coverage=%s → CN (weight=%.2f, fill=%.2f)",
+                    log_label, _cn_coverage, cn_weight, _BODY_FILL_RATIO.get(_cn_coverage, 1.0),
                 )
-            logger.debug("visual extract (%d imgs): %s", len(valid_images), visual)
             if visual and not visual.startswith("["):
-                has_outfit = bool(use_outfit and getattr(character, 'outfit', None))
-                has_hair_in_traits = bool(character.core_traits and
-                    any(kw in character.core_traits for kw in ("髮", "頭髮", "hair")))
+                has_outfit = bool(use_outfit and inp.outfit)
+                has_hair_in_traits = bool(inp.core_traits and
+                    any(kw in inp.core_traits for kw in ("髮", "頭髮", "hair")))
                 visual_for_llm = _filter_visual_for_llm(
                     visual,
                     strip_clothing=has_outfit,
@@ -472,19 +468,14 @@ async def generate_character_design(
                     else:
                         label = "視覺外觀提示（膚色體型風格參考）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（僅供風格參考）"
                     parts.append(f"{label}：{visual_for_llm}")
-    else:
-        all_flat = True  # no images → treat as flat, use core_traits for anchors
 
-    if use_outfit and getattr(character, 'outfit', None):
-        parts.append(f"服裝設定：{character.outfit}")
+    if use_outfit and inp.outfit:
+        parts.append(f"服裝設定：{inp.outfit}")
 
-    if character.core_traits:
-        parts.append(f"外貌與個性（優先採用）：{character.core_traits}")
+    if inp.core_traits:
+        parts.append(f"外貌與個性（優先採用）：{inp.core_traits}")
 
-    # Background colour is injected directly into the SD suffix (bg_tag) — NOT
-    # passed through Ollama compilation, to avoid duplicate background tokens and
-    # mixed-language noise in the compiled prompt.
-    bg_color_name = _hex_to_sd_color(character.color) if character.color else None
+    bg_color_name = _hex_to_sd_color(inp.color) if inp.color else None
 
     if is_expression:
         parts.append("動漫插畫風格，角色臉部特寫半身圖")
@@ -492,14 +483,11 @@ async def generate_character_design(
         parts.append("人設圖，全身正面，動漫插畫風格，清晰展示角色外觀")
 
     raw_desc = "，".join(parts)
-    logger.info("[prompt-log] raw_desc (中文，AI翻譯前): %s", raw_desc)
+    logger.info("[prompt-log] %s raw_desc (中文，AI翻譯前): %s", log_label, raw_desc)
 
-    # Color anchor source:
-    #   flat draft (single fill) → core_traits wins (vision colors are canvas fill, not character)
-    #   properly colored         → raw_desc (vision colors trusted as actual character appearance)
-    _color_anchor = character.core_traits or ""
+    _color_anchor = inp.core_traits or ""
 
-    # ── Compile character description ──────────────────────────────────────
+    # ── Compile description ────────────────────────────────────────────────
     t0 = time.perf_counter()
     art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
     style = _resolve_style(art_style)
@@ -517,14 +505,13 @@ async def generate_character_design(
     # ── Compile ai_prompt separately (placed first → higher SD attention weight) ──
     extra_prefix = ""
     _ai_prompt_compiled = ""
-    if use_ai_prompt and character.ai_prompt and character.ai_prompt.strip():
+    if use_ai_prompt and inp.ai_prompt and inp.ai_prompt.strip():
         t0 = time.perf_counter()
         await guardian.request_focus("ollama")
         try:
-            # quality_prefix_override="" prevents duplicate quality tags in final prompt
             _ai_overrides = {**_overrides, "quality_prefix_override": ""}
             extra_compiled, _ = compile_prompt(
-                character.ai_prompt.strip(), style=style, model=state.get_text_model(), **_ai_overrides,
+                inp.ai_prompt.strip(), style=style, model=state.get_text_model(), **_ai_overrides,
             )
             _ai_prompt_compiled = extra_compiled
         except RuntimeError:
@@ -539,45 +526,39 @@ async def generate_character_design(
 
     if is_expression:
         suffix = (
-            f", {expr_tags}"
-            ", bust shot, upper body, close-up portrait, face focus"
+            f", {expr_tags}, bust shot, upper body, close-up portrait, face focus"
             ", simple background, flat background" + bg_tag
         )
         width, height, steps = 512, 640, 20
     else:
-        # partial/bust: "character design sheet" causes multi-view compositions (small sketch in
-        # corner + 3/4 body main view). Use single full-body illustration mode instead.
+        # partial/bust：用單張全身插畫模式，避免 design sheet 觸發多視圖構圖
         _design_tags = (
             "character illustration, full body portrait"
             if _cn_coverage in ("partial", "bust")
             else "character design sheet, character reference sheet"
         )
+        # 變體版：partial/bust 加 solo 避免 IPA 把設計稿多視角構圖帶進來
+        _solo_tag = ", solo, single character" if (use_solo_tag and _cn_coverage in ("partial", "bust")) else ""
         suffix = (
-            f", {_design_tags}"
-            ", full body, front view"
+            f", {_design_tags}, full body, front view"
             f", {_FULLBODY_POS_TAGS}"
+            f"{_solo_tag}"
             ", simple background, flat background, no background detail, no scenery" + bg_tag
         )
-        # 畫布比例依角色身高自動匹配（高瘦更長、矮/幼態較方），減少頭/腳裁切
-        width, height = _fullbody_canvas(getattr(character, 'height', None))
+        width, height = _fullbody_canvas(inp.height)
         steps = 20
 
     # Gender/age tag anchors subject count — must be at absolute front
-    gender_tag = _age_gender_tag(character.gender, character.age)
+    gender_tag = _age_gender_tag(inp.gender, inp.age)
     gender_prefix = gender_tag + ", " if gender_tag else ""
 
-    # Age + height body proportion tags (placed right after gender anchor)
-    _age_tags = _age_body_tags(character.age)
-    _ht_tags = _height_body_tags(getattr(character, 'height', None))
+    _age_tags = _age_body_tags(inp.age)
+    _ht_tags = _height_body_tags(inp.height)
     _body_parts = [t for t in [_age_tags, _ht_tags] if t]
     body_prefix = ", ".join(_body_parts) + ", " if _body_parts else ""
 
-    # Gender-specific prompt reinforcement
     is_male = gender_tag.startswith(("1boy", "1man"))
     is_female = gender_tag.startswith(("1girl", "1woman"))
-    # "clothed, shirt" anchors clothing when core_traits lacks an explicit outfit.
-    # If core_traits already specifies clothing (e.g. jacket, robe), those tags carry
-    # higher weight and override these soft defaults.
     gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
     gender_neg_extra = (
         ", bare chest, shirtless, topless, naked upper body, no shirt"
@@ -586,37 +567,34 @@ async def generate_character_design(
         ", male face, masculine features" if is_female else ""
     )
 
-    # art_style extra_tags → 若未設定且 PERSONAL_STYLE_ENABLED，使用個人風格標籤
     style_extra = _extra_tags(art_style)
     if not style_extra and PERSONAL_STYLE_ENABLED and PERSONAL_STYLE_EXTRA_TAGS:
         style_extra = PERSONAL_STYLE_EXTRA_TAGS
     style_extra_str = f", {style_extra}" if style_extra else ""
 
-    # ai_prompt compiled tags lead the prompt for maximum enforcement
     final_positive = gender_prefix + body_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
 
     extra_neg = "detailed background, complex background, scenery, landscape, buildings, environment"
-    # 全身模式補上裁切/缺手指防護；表情特寫模式維持原樣（特寫本就允許 close-up/portrait）
     if not is_expression:
         extra_neg = f"{extra_neg}, {_FULLBODY_NEG_TAGS}"
-        # partial/bust 參考圖：禁止多視圖設計稿構圖（避免生成含草稿縮圖的設計稿格式）
         if _cn_coverage in ("partial", "bust"):
             extra_neg += ", multiple views, reference sheet, design sheet, multiple poses, chibi inset, inset image, sketch overlay"
-    # 負向：art_style 有設定 → 優先；否則若 PERSONAL_NEGATIVE_ENABLED → 使用個人負向
     base_neg = negative
     if PERSONAL_NEGATIVE_ENABLED and PERSONAL_NEGATIVE and not (art_style and art_style.negative):
         base_neg = PERSONAL_NEGATIVE
     final_negative = f"{base_neg}, {extra_neg}{gender_neg_extra}" if base_neg else f"{extra_neg}{gender_neg_extra}"
 
-    # ── Canvas Expand（Flux 2 inpainting：partial/bust → 補足下半身）──────────────
     seed = random.randint(0, 2**31 - 1)
     _canvas_expand_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_WF).exists()
-    if (not is_expression
+
+    # ── Canvas Expand 前置（角色版：partial/bust → SDXL 前對概念圖 Flux 擴圖並提早 return）──
+    if (canvas_expand_mode == "pre"
+            and not is_expression
             and _cn_coverage in ("partial", "bust")
             and _ipa_ref_bytes is not None
             and _canvas_expand_available):
         t0 = time.perf_counter()
-        logger.info("[char-gen] canvas-expand via Flux 2 (coverage=%s)", _cn_coverage)
+        logger.info("[%s] canvas-expand via Flux 2 (coverage=%s)", log_label, _cn_coverage)
         image_bytes = await _run_canvas_expand_flux(
             _ipa_ref_bytes, _cn_coverage, final_positive, width, height, seed
         )
@@ -637,376 +615,7 @@ async def generate_character_design(
             },
         )
 
-    # ── Generate（SDXL 原始路徑）────────────────────────────────────────────
-    ipa_used = False
-    active_wf = state.get_workflow()
-
-    global_lora = state.get_lora()
-    lora_list = []
-    if global_lora.get("name"):
-        lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
-    # 角色專屬 LoRA（直通欄位）：每角色一致性的主線，優先於畫風 LoRA 套用
-    if character.lora_name:
-        lora_list.append({
-            "model": character.lora_name,
-            "weight": character.lora_weight if character.lora_weight is not None else 0.8,
-        })
-    if art_style and art_style.loras:
-        lora_list.extend(art_style.loras)
-
-    logger.info("[char-gen] char_id=%s  use_ipa=%s  use_cn=%s  ipa_ref=%s  cn_ref=%s  active_workflow=%s",
-                character_id, use_ipa, use_controlnet,
-                "yes" if _ipa_ref_bytes else "no", "yes" if _cn_ref_bytes else "no", active_wf)
-    # HTTPException (e.g. UI-format workflow 422) intentionally not caught here — surfaces to user
-    wf = _load_workflow(active_wf)
-
-    # 統一注入管線：功能啟用且有參考圖 → 工作流缺節點則動態建立、已有則沿用既有；
-    #               功能停用或無參考圖 → 既有節點 bypass（少跑節點 → 生圖更快）。
-    # 此設計同時解決 checkpoint 模式（text_to_image.json 無 IPA/CN 節點）下不套用的問題。
-    need_ipa_inject = _ipa_ref_bytes is not None and not _wf_has_ipa(wf)
-    need_cn_inject = _cn_ref_bytes is not None and not _wf_has_controlnet(wf)
-    if need_ipa_inject or need_cn_inject:
-        _inject_ipa_cn_nodes(wf, inject_ipa=need_ipa_inject, inject_cn=need_cn_inject)
-        logger.info("[char-gen] 動態注入節點 ipa=%s cn=%s（工作流 '%s' 原缺節點）",
-                    need_ipa_inject, need_cn_inject, active_wf)
-
-    # IPA：有參考圖則啟用（含剛注入的節點）；否則既有 IPA 節點 bypass
-    if _ipa_ref_bytes is not None:
-        _t = time.perf_counter()
-        uploaded_ref = comfyui_client.upload_image_bytes(_ipa_ref_bytes, "char_concept_ref.png")
-        timings["upload"] = round(time.perf_counter() - _t, 1)
-        ipa_used = True
-        logger.info("[char-gen] IP-Adapter 啟用（active workflow '%s'）", active_wf)
-    elif _wf_has_ipa(wf):
-        _bypass_ipa_nodes(wf)
-        logger.info("[char-gen] IPA 停用/無參考圖 → 既有節點 bypass")
-
-    # ControlNet：無參考圖時剝離既有 CN 節點。
-    # 須在 _inject_prompts 之前，使 KSampler 條件線直連 CLIPTextEncode。
-    if _cn_ref_bytes is None and _wf_has_controlnet(wf):
-        _bypass_controlnet_nodes(wf)
-        logger.info("[char-gen] ControlNet 停用/無參考圖 → 既有節點 bypass")
-    _inject_loras(wf, lora_list)
-    _inject_prompts(wf, final_positive, final_negative)
-    for node in wf.values():
-        if not isinstance(node, dict):
-            continue
-        ct = node.get("class_type")
-        inputs = node.get("inputs", {})
-        if ct == "EmptyLatentImage":
-            inputs["width"] = width
-            inputs["height"] = height
-        elif ct == "KSampler":
-            inputs["seed"] = seed
-            inputs["steps"] = steps
-        elif ct == "IPAdapterAdvanced" and ipa_used:
-            inputs["weight"] = round(ipa_weight, 2)
-        elif ct in _CN_APPLY_TYPES and _cn_ref_bytes is not None:
-            inputs["strength"] = round(cn_weight, 2)
-            if _coverage_end_pct is not None:
-                inputs["end_percent"] = _coverage_end_pct
-    # IPA 圖片注入：BFS 回溯找正確的 LoadImage，避免打到 ControlNet 等其他節點
-    if ipa_used:
-        _inject_ipa_image(wf, uploaded_ref)
-
-    # ControlNet 圖片注入（Canny 跟隨概念圖 → 保留草圖姿勢）
-    cn_used = False
-    cn_mode = "none"
-    if _cn_ref_bytes is not None and _wf_has_controlnet(wf):
-        cn_bytes = _cn_ref_bytes
-        if not is_expression:
-            # 全身模式：先把概念圖補邊成畫布比例，避免置中裁切切掉頭/腳 → 全身完整
-            cn_bytes = _letterbox_to_aspect(_cn_ref_bytes, width, height)
-            cn_mode = "canny_fit"
-        else:
-            cn_mode = "canny"
-        _t = time.perf_counter()
-        uploaded_cn_ref = comfyui_client.upload_image_bytes(cn_bytes, "char_cn_ref.png")
-        timings["upload"] = round(timings.get("upload", 0.0) + (time.perf_counter() - _t), 1)
-        _inject_controlnet_image(wf, uploaded_cn_ref)
-        cn_used = True
-        logger.info("[char-gen] ControlNet (%s) injected, weight=%.2f", cn_mode, cn_weight)
-
-    _replace_negative_seeds(wf, seed)
-    _log_wf_snapshot(wf, label="char-gen")
-    t0 = time.perf_counter()
-    await guardian.request_focus("comfyui")
-    image_bytes = await _run_comfyui(wf)
-    timings["comfyui"] = round(time.perf_counter() - t0, 1)
-    timings["total"] = round(time.perf_counter() - t_total, 1)
-    timings["models"] = {
-        "vision": state.get_vision_model(),
-        "text": state.get_text_model(),
-        "workflow": active_wf,
-    }
-
-    hist_id = record_generation(
-        db,
-        endpoint="character_design",
-        character_id=character_id,
-        seed=seed,
-        workflow=active_wf,
-        style=style.value,
-        positive=final_positive,
-        negative=final_negative,
-        params={
-            "width": width, "height": height, "steps": steps,
-            "expression": expression, "art_style_id": art_style_id,
-            "ipa_used": ipa_used, "ipa_weight": round(ipa_weight, 2),
-            "cn_used": cn_used, "cn_weight": round(cn_weight, 2),
-            "cn_mode": cn_mode, "coverage": _cn_coverage,
-            "loras": lora_list, "use_ai_prompt": use_ai_prompt,
-            "use_outfit": use_outfit, "timings": timings,
-        },
-    )
-    return Response(
-        content=image_bytes,
-        media_type="image/png",
-        headers={
-            "X-History-Id": str(hist_id) if hist_id else "",
-            "X-Seed": str(seed),
-            "X-Style": style.value,
-            "X-Flat-Draft": "1" if all_flat else "0",
-            "X-IPA-Used": "1" if ipa_used else "0",
-            "X-CN-Used": "1" if cn_used else "0",
-            "X-CN-Mode": cn_mode,
-            "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
-            "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
-            "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
-            "X-AI-Prompt-Compiled": base64.b64encode(_ai_prompt_compiled.encode()).decode() if _ai_prompt_compiled else "",
-        },
-    )
-
-
-# ── Variant Design Sheet Generation ──────────────────────────────────────────
-
-async def generate_variant_design(
-    character_id: int,
-    slot: int,
-    expression: Optional[str] = None,
-    art_style_id: Optional[int] = None,
-    use_ai_prompt: bool = True,
-    use_outfit: bool = True,
-    use_ipa: bool = True,
-    ipa_weight: float = 0.6,
-    use_controlnet: bool = True,
-    cn_weight: float = 0.85,
-    db: Session = Depends(get_db),
-):
-    """Generate a design sheet using the variant's data instead of the main character fields."""
-    from app.api.characters import _get_variants, _slot_index
-
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    idx = _slot_index(slot)
-    variants = _get_variants(character)
-    v = variants[idx]
-
-    if expression and expression not in _EXPRESSION_MAP:
-        raise HTTPException(status_code=400, detail=f"Unknown expression. Valid: {list(_EXPRESSION_MAP)}")
-
-    # Priority: explicit param > character.art_style_id > project.art_style_id > _detect_style()
-    if art_style_id is None and character.art_style_id:
-        art_style_id = character.art_style_id
-    if art_style_id is None:
-        from app.models.project import Project as _Project
-        proj = db.get(_Project, character.project_id)
-        if proj and proj.art_style_id:
-            art_style_id = proj.art_style_id
-
-    is_expression = expression is not None
-    expr_tags, _ = _EXPRESSION_MAP[expression] if is_expression else ("", "")
-
-    timings: dict[str, float] = {}
-    t_total = time.perf_counter()
-
-    # ── Build description from variant data ────────────────────────────────
-    parts = [f"角色名稱：{character.name}"]
-
-    concept_imgs = list(v.get("concept_images") or [])
-    all_flat = True  # default: no images → use core_traits anchors
-    _ipa_ref_bytes: bytes | None = None       # concept image for IP-Adapter
-    _cn_ref_bytes: bytes | None = None        # concept image for ControlNet
-    _coverage_end_pct: float | None = None   # CN end_percent override (partial/bust early-exit)
-    _cn_coverage: str = "full"               # detected body coverage of concept image
-    if concept_imgs:
-        valid_images: list[bytes] = []
-        for img_filename in concept_imgs[:3]:
-            img_path = _PORTRAIT_DIR / img_filename
-            if img_path.exists():
-                try:
-                    valid_images.append(img_path.read_bytes())
-                except Exception:
-                    pass
-        if valid_images:
-            all_flat = all(_is_flat_color_draft(img) for img in valid_images)
-            logger.info("[prompt-log] variant concept images flat_draft=%s (%d imgs)", all_flat, len(valid_images))
-            if use_ipa:
-                _ipa_ref_bytes = valid_images[0]
-            if use_controlnet:
-                _cn_ref_bytes = valid_images[0]
-
-            # Merge coverage detection + visual extraction into one Ollama call
-            # (cached by image hash — repeat generations skip the vision call)
-            t0 = time.perf_counter()
-            need_coverage = use_controlnet and not is_expression
-            coverage, visual = await _vision_extract_cached(valid_images, need_coverage)
-            timings["vision_extract"] = round(time.perf_counter() - t0, 1)
-            if need_coverage:
-                _exp_w, _exp_h = _fullbody_canvas(v.get("height"))
-                _cn_coverage = coverage
-                # CN≥0.7 限制條件：所有 coverage 一律保留 CN，不再 bypass。
-                # partial/bust 透過 _shrink_for_full_body 縮到畫布上半，下半留空補腿；
-                # CN 以 AnimeLineArt（非 Canny）引導上半身，單 pass 無接縫。
-                _cn_ref_bytes = _shrink_for_full_body(valid_images[0], _exp_w, _exp_h, coverage)
-                _override_cn_w = _COVERAGE_CN_WEIGHT.get(coverage)
-                if _override_cn_w is not None:
-                    cn_weight = _override_cn_w
-                _coverage_end_pct = _COVERAGE_CN_END_PERCENT.get(coverage)
-                logger.info(
-                    "[variant-gen] coverage=%s → CN (weight=%.2f, fill=%.2f)",
-                    coverage, cn_weight, _BODY_FILL_RATIO.get(coverage, 1.0),
-                )
-            if visual and not visual.startswith("["):
-                v_outfit_check = v.get("outfit")
-                has_outfit = bool(use_outfit and v_outfit_check)
-                v_core = v.get("core_traits") or ""
-                has_hair_in_traits = bool(v_core and
-                    any(kw in v_core for kw in ("髮", "頭髮", "hair")))
-                visual_for_llm = _filter_visual_for_llm(
-                    visual,
-                    strip_clothing=has_outfit,
-                    strip_hairstyle=has_hair_in_traits,
-                )
-                if visual_for_llm:
-                    if len(valid_images) > 1:
-                        label = "視覺參考特徵（多圖共同，服裝髮型以設定欄位為準）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（多圖共同特徵）"
-                    else:
-                        label = "視覺外觀提示（膚色體型風格參考）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（僅供風格參考）"
-                    parts.append(f"{label}：{visual_for_llm}")
-
-    v_outfit = v.get("outfit")
-    if use_outfit and v_outfit:
-        parts.append(f"服裝設定：{v_outfit}")
-
-    core_traits = v.get("core_traits")
-    if core_traits:
-        parts.append(f"外貌與個性（優先採用）：{core_traits}")
-
-    v_color = v.get("color")
-    bg_color_name = _hex_to_sd_color(v_color) if v_color else None
-
-    if is_expression:
-        parts.append("動漫插畫風格，角色臉部特寫半身圖")
-    else:
-        parts.append("人設圖，全身正面，動漫插畫風格，清晰展示角色外觀")
-
-    raw_desc = "，".join(parts)
-    logger.info("[prompt-log] variant raw_desc (中文，AI翻譯前): %s", raw_desc)
-
-    _color_anchor = core_traits or ""
-
-    # ── Compile ───────────────────────────────────────────────────────────
-    t0 = time.perf_counter()
-    art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
-    style = _resolve_style(art_style)
-    _overrides = _compile_overrides(art_style)
-    await guardian.request_focus("ollama")
-
-    v_gender = v.get("gender")
-    v_age = v.get("age")
-    v_ai_prompt = v.get("ai_prompt")
-
-    try:
-        positive, negative = compile_prompt(
-            raw_desc, style=style, model=state.get_text_model(),
-            anchor_text=_color_anchor, **_overrides,
-        )
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=f"Ollama 文字模型失敗，請確認 {state.get_text_model()} 已安裝：{e}")
-    timings["compile_prompt"] = round(time.perf_counter() - t0, 1)
-
-    extra_prefix = ""
-    _ai_prompt_compiled = ""
-    if use_ai_prompt and v_ai_prompt and v_ai_prompt.strip():
-        t0 = time.perf_counter()
-        await guardian.request_focus("ollama")
-        try:
-            _ai_overrides = {**_overrides, "quality_prefix_override": ""}
-            extra_compiled, _ = compile_prompt(v_ai_prompt.strip(), style=style, model=state.get_text_model(), **_ai_overrides)
-            _ai_prompt_compiled = extra_compiled
-        except RuntimeError:
-            extra_compiled = ""
-            _ai_prompt_compiled = "[compilation_failed]"
-        timings["compile_ai_prompt"] = round(time.perf_counter() - t0, 1)
-        if extra_compiled:
-            extra_prefix = extra_compiled + ", "
-
-    bg_tag = f", {bg_color_name} background" if bg_color_name else ", gradient background"
-
-    if is_expression:
-        suffix = (
-            f", {expr_tags}, bust shot, upper body, close-up portrait, face focus"
-            ", simple background, flat background" + bg_tag
-        )
-        width, height, steps = 512, 640, 20
-    else:
-        _design_tags = (
-            "character illustration, full body portrait"
-            if _cn_coverage in ("partial", "bust")
-            else "character design sheet, character reference sheet"
-        )
-        # partial/bust 參考圖時加 solo 避免 IPA 把設計稿的多視角構圖帶進來
-        _solo_tag = ", solo, single character" if _cn_coverage in ("partial", "bust") else ""
-        suffix = (
-            f", {_design_tags}, full body, front view"
-            f", {_FULLBODY_POS_TAGS}"
-            f"{_solo_tag}"
-            ", simple background, flat background, no background detail, no scenery" + bg_tag
-        )
-        width, height = _fullbody_canvas(v.get("height"))
-        steps = 20
-
-    gender_tag = _age_gender_tag(v_gender, v_age)
-    gender_prefix = gender_tag + ", " if gender_tag else ""
-    is_male = gender_tag.startswith(("1boy", "1man"))
-    is_female = gender_tag.startswith(("1girl", "1woman"))
-    gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
-    gender_neg_extra = (
-        ", bare chest, shirtless, topless, naked upper body, no shirt"
-        ", skirt, dress, miniskirt, female clothes, feminine clothing, thighhighs, sailor uniform"
-        if is_male else
-        ", male face, masculine features" if is_female else ""
-    )
-
-    # Age + height body proportion tags
-    _age_tags = _age_body_tags(v_age)
-    _ht_tags = _height_body_tags(v.get("height"))
-    _body_parts = [t for t in [_age_tags, _ht_tags] if t]
-    body_prefix = ", ".join(_body_parts) + ", " if _body_parts else ""
-
-    style_extra = _extra_tags(art_style)
-    if not style_extra and PERSONAL_STYLE_ENABLED and PERSONAL_STYLE_EXTRA_TAGS:
-        style_extra = PERSONAL_STYLE_EXTRA_TAGS
-    style_extra_str = f", {style_extra}" if style_extra else ""
-
-    final_positive = gender_prefix + body_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
-    extra_neg = "detailed background, complex background, scenery, landscape, buildings, environment"
-    if not is_expression:
-        extra_neg = f"{extra_neg}, {_FULLBODY_NEG_TAGS}"
-        if _cn_coverage in ("partial", "bust"):
-            extra_neg += ", multiple views, reference sheet, design sheet, multiple poses, chibi inset, inset image, sketch overlay"
-    base_neg = negative
-    if PERSONAL_NEGATIVE_ENABLED and PERSONAL_NEGATIVE and not (art_style and art_style.negative):
-        base_neg = PERSONAL_NEGATIVE
-    final_negative = f"{base_neg}, {extra_neg}{gender_neg_extra}" if base_neg else f"{extra_neg}{gender_neg_extra}"
-
-    seed = random.randint(0, 2**31 - 1)
-    _canvas_expand_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_WF).exists()
-
-    # ── Generate（SDXL 先生成完整風格圖）────────────────────────────────────────────
+    # ── Generate（SDXL）────────────────────────────────────────────────────
     ipa_used = False
     active_wf = state.get_workflow()
 
@@ -1023,34 +632,34 @@ async def generate_variant_design(
     if art_style and art_style.loras:
         lora_list.extend(art_style.loras)
 
-    logger.info("[variant-gen] char_id=%s  slot=%s  use_ipa=%s  ipa_ref_bytes=%s  active_workflow=%s",
-                character_id, slot, use_ipa, "yes" if _ipa_ref_bytes else "no", active_wf)
-    # HTTPException intentionally not caught here — surfaces to user
+    logger.info("[%s] char_id=%s slot=%s use_ipa=%s use_cn=%s ipa_ref=%s cn_ref=%s active_workflow=%s",
+                log_label, character.id, slot, use_ipa, use_controlnet,
+                "yes" if _ipa_ref_bytes else "no", "yes" if _cn_ref_bytes else "no", active_wf)
+    # HTTPException (e.g. UI-format workflow 422) intentionally not caught here — surfaces to user
     wf = _load_workflow(active_wf)
 
-    # 統一注入管線（同 generate-design）：啟用且有圖 → 缺節點則建、有則沿用；
-    # 停用或無圖 → 既有節點 bypass。同時解決 checkpoint 模式不套用問題。
+    # 統一注入管線：啟用且有圖 → 缺節點則建、有則沿用；停用或無圖 → 既有節點 bypass。
     need_ipa_inject = _ipa_ref_bytes is not None and not _wf_has_ipa(wf)
     need_cn_inject = _cn_ref_bytes is not None and not _wf_has_controlnet(wf)
     if need_ipa_inject or need_cn_inject:
         _inject_ipa_cn_nodes(wf, inject_ipa=need_ipa_inject, inject_cn=need_cn_inject)
-        logger.info("[variant-gen] 動態注入節點 ipa=%s cn=%s（工作流 '%s' 原缺節點）",
-                    need_ipa_inject, need_cn_inject, active_wf)
+        logger.info("[%s] 動態注入節點 ipa=%s cn=%s（工作流 '%s' 原缺節點）",
+                    log_label, need_ipa_inject, need_cn_inject, active_wf)
 
     if _ipa_ref_bytes is not None:
         _t = time.perf_counter()
         uploaded_ref = comfyui_client.upload_image_bytes(_ipa_ref_bytes, "char_concept_ref.png")
         timings["upload"] = round(time.perf_counter() - _t, 1)
         ipa_used = True
-        logger.info("[variant-gen] IP-Adapter 啟用（active workflow '%s'）", active_wf)
+        logger.info("[%s] IP-Adapter 啟用（active workflow '%s'）", log_label, active_wf)
     elif _wf_has_ipa(wf):
         _bypass_ipa_nodes(wf)
-        logger.info("[variant-gen] IPA 停用/無參考圖 → 既有節點 bypass")
+        logger.info("[%s] IPA 停用/無參考圖 → 既有節點 bypass", log_label)
 
     # ControlNet：無參考圖時剝離既有 CN 節點（須在 _inject_prompts 之前）
     if _cn_ref_bytes is None and _wf_has_controlnet(wf):
         _bypass_controlnet_nodes(wf)
-        logger.info("[variant-gen] ControlNet 停用/無參考圖 → 既有節點 bypass")
+        logger.info("[%s] ControlNet 停用/無參考圖 → 既有節點 bypass", log_label)
     _inject_loras(wf, lora_list)
     _inject_prompts(wf, final_positive, final_negative)
     for node in wf.values():
@@ -1087,24 +696,24 @@ async def generate_variant_design(
         timings["upload"] = round(timings.get("upload", 0.0) + (time.perf_counter() - _t), 1)
         _inject_controlnet_image(wf, uploaded_cn_ref)
         cn_used = True
-        logger.info("[variant-gen] ControlNet (%s) injected, weight=%.2f", cn_mode, cn_weight)
+        logger.info("[%s] ControlNet (%s) injected, weight=%.2f", log_label, cn_mode, cn_weight)
 
     _replace_negative_seeds(wf, seed)
-    _log_wf_snapshot(wf, label="variant-gen")
+    _log_wf_snapshot(wf, label=log_label)
     t0 = time.perf_counter()
     await guardian.request_focus("comfyui")
     image_bytes = await _run_comfyui(wf)
     timings["comfyui"] = round(time.perf_counter() - t0, 1)
 
-    # ── Canvas Expand（Flux 2 inpainting：SDXL 輸出 → 補足下半身）──────────────
+    # ── Canvas Expand 後置（變體版：full → SDXL 後對輸出 Flux 擴圖，try/except 回退）──
     # 只有 coverage=full 時 SDXL 有 CN 引導、輸出穩定為單人全身圖，才安全做 canvas expand
-    # partial/bust 時 CN bypass → SDXL 可能生成設計稿多視角，canvas expand 會拼接錯誤
     cn_mode_out = cn_mode
-    if (not is_expression
+    if (canvas_expand_mode == "post"
+            and not is_expression
             and _cn_coverage == "full"
             and _canvas_expand_available):
         t0_expand = time.perf_counter()
-        logger.info("[variant-gen] canvas-expand via Flux 2 on SDXL output (coverage=%s)", _cn_coverage)
+        logger.info("[%s] canvas-expand via Flux 2 on SDXL output (coverage=%s)", log_label, _cn_coverage)
         try:
             image_bytes = await _run_canvas_expand_flux(
                 image_bytes, _cn_coverage, final_positive, width, height, seed
@@ -1112,7 +721,7 @@ async def generate_variant_design(
             timings["canvas_expand"] = round(time.perf_counter() - t0_expand, 1)
             cn_mode_out = "canvas_expand"
         except Exception as e:
-            logger.warning("[variant-gen] canvas-expand 失敗，使用 SDXL 輸出: %s", e)
+            logger.warning("[%s] canvas-expand 失敗，使用 SDXL 輸出: %s", log_label, e)
 
     timings["total"] = round(time.perf_counter() - t_total, 1)
     timings["models"] = {
@@ -1123,8 +732,8 @@ async def generate_variant_design(
 
     hist_id = record_generation(
         db,
-        endpoint="variant_design",
-        character_id=character_id,
+        endpoint=record_endpoint,
+        character_id=character.id,
         variant_slot=slot,
         seed=seed,
         workflow=active_wf,
@@ -1157,4 +766,94 @@ async def generate_variant_design(
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
             "X-AI-Prompt-Compiled": base64.b64encode(_ai_prompt_compiled.encode()).decode() if _ai_prompt_compiled else "",
         },
+    )
+
+
+# ── Character / Variant Design Sheet（薄轉接 → _generate_design_core，2026-06-13 項3 去重）──
+
+async def generate_character_design(
+    character_id: int,
+    expression: Optional[str] = None,  # None=full body; key from _EXPRESSION_MAP = bust shot
+    art_style_id: Optional[int] = None,
+    use_ai_prompt: bool = True,
+    use_outfit: bool = True,
+    use_ipa: bool = True,
+    ipa_weight: float = 0.6,
+    use_controlnet: bool = True,
+    cn_weight: float = 0.85,
+    db: Session = Depends(get_db),
+):
+    """
+    expression=None  → full-body character design sheet (768×1024)
+    expression=<key> → bust/face close-up with that expression (512×640)
+    Returns PNG bytes.
+    """
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    concept_imgs = list(character.concept_images or [])
+    if not concept_imgs and character.portrait_path:
+        concept_imgs = [character.portrait_path]
+    inp = _DesignInputs(
+        name=character.name,
+        concept_imgs=concept_imgs,
+        outfit=getattr(character, "outfit", None),
+        core_traits=character.core_traits,
+        color=character.color,
+        gender=character.gender,
+        age=character.age,
+        ai_prompt=character.ai_prompt,
+        height=getattr(character, "height", None),
+    )
+    return await _generate_design_core(
+        character=character, inp=inp, db=db, slot=None,
+        expression=expression, art_style_id=art_style_id,
+        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit,
+        use_ipa=use_ipa, ipa_weight=ipa_weight,
+        use_controlnet=use_controlnet, cn_weight=cn_weight,
+        canvas_expand_mode="pre", use_pixel_override=True, use_solo_tag=False,
+        log_label="char-gen", record_endpoint="character_design",
+    )
+
+
+async def generate_variant_design(
+    character_id: int,
+    slot: int,
+    expression: Optional[str] = None,
+    art_style_id: Optional[int] = None,
+    use_ai_prompt: bool = True,
+    use_outfit: bool = True,
+    use_ipa: bool = True,
+    ipa_weight: float = 0.6,
+    use_controlnet: bool = True,
+    cn_weight: float = 0.85,
+    db: Session = Depends(get_db),
+):
+    """Generate a design sheet using the variant's data instead of the main character fields."""
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    idx = _slot_index(slot)
+    v = _get_variants(character)[idx]
+    inp = _DesignInputs(
+        name=character.name,
+        concept_imgs=list(v.get("concept_images") or []),
+        outfit=v.get("outfit"),
+        core_traits=v.get("core_traits"),
+        color=v.get("color"),
+        gender=v.get("gender"),
+        age=v.get("age"),
+        ai_prompt=v.get("ai_prompt"),
+        height=v.get("height"),
+    )
+    return await _generate_design_core(
+        character=character, inp=inp, db=db, slot=slot,
+        expression=expression, art_style_id=art_style_id,
+        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit,
+        use_ipa=use_ipa, ipa_weight=ipa_weight,
+        use_controlnet=use_controlnet, cn_weight=cn_weight,
+        canvas_expand_mode="post", use_pixel_override=False, use_solo_tag=True,
+        log_label="variant-gen", record_endpoint="variant_design",
     )
