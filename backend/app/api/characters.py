@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import shutil
 import uuid
 from pathlib import Path
@@ -19,6 +18,10 @@ from app.models.character import Character
 from app.models.project import Project
 from app.schemas.character import CharacterCreate, CharacterUpdate, CharacterResponse
 from app.services.ai import character_service
+from app.services.ai.variant_helpers import (
+    _get_variants,
+    _slot_index,
+)
 
 router = APIRouter(tags=["characters"])
 DbDep = Annotated[Session, Depends(get_db)]
@@ -285,32 +288,6 @@ def get_ai_image(character_id: int, index: int, db: DbDep):
     if not path.exists():
         raise HTTPException(status_code=404, detail="AI 圖檔案不存在")
     return FileResponse(str(path))
-
-
-# ── Variant helpers ───────────────────────────────────────────────────────────
-
-_MAX_VARIANT_SLOTS = 2  # slots 1 and 2 (Tab 2 and Tab 3)
-
-_EMPTY_VARIANT: dict = {
-    "color": None, "core_traits": None, "behavior_rules": None,
-    "voice_style": None, "notes": None, "ai_prompt": None, "outfit": None, "ai_summary": None,
-    "age": None, "height": None, "birthday": None, "gender": None,
-    "concept_images": [], "ai_generated_images": [],
-}
-
-
-def _get_variants(character: Character) -> list[dict]:
-    """Return a mutable 2-element list of variant dicts (never None)."""
-    raw = list(character.variants or [])
-    while len(raw) < _MAX_VARIANT_SLOTS:
-        raw.append(copy.deepcopy(_EMPTY_VARIANT))
-    return raw
-
-
-def _slot_index(slot: int) -> int:
-    if slot < 1 or slot > _MAX_VARIANT_SLOTS:
-        raise HTTPException(status_code=400, detail=f"slot must be 1–{_MAX_VARIANT_SLOTS}")
-    return slot - 1
 
 
 # ── Variant text-field CRUD ───────────────────────────────────────────────────
