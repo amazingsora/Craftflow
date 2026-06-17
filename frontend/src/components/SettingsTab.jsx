@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { notifyEnabled, soundEnabled, setNotifyEnabled, setSoundEnabled, ensureNotifyPermission, notifyPermission, requestNotifyPermission } from '../notify.js'
 
 const S = {
   root: { display: 'flex', flexDirection: 'column', gap: 24 },
@@ -160,6 +161,10 @@ export default function SettingsTab({
     }).catch(() => {})
   }
 
+  const [notifyOn, setNotifyOn] = useState(notifyEnabled())
+  const [soundOn, setSoundOn] = useState(soundEnabled())
+  const [notifPerm, setNotifPerm] = useState(notifyPermission())
+
   return (
     <div style={S.root}>
       {/* ComfyUI 連線狀態 */}
@@ -172,6 +177,31 @@ export default function SettingsTab({
               : comfyStatus ? 'ComfyUI 已連線 (localhost:8188)'
               : 'ComfyUI 離線 — 請啟動後重新整理頁面'}
           </span>
+        </div>
+      </div>
+
+      {/* 生成完成通知 */}
+      <div style={S.section}>
+        <div style={S.sectionTitle}>生成完成通知</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text)' }}>
+          <input type="checkbox" checked={notifyOn} onChange={e => { const v = e.target.checked; setNotifyOn(v); setNotifyEnabled(v); if (v) ensureNotifyPermission() }} />
+          桌面通知（生成 / 訓練完成時，螢幕右下角彈出）
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text)' }}>
+          <input type="checkbox" checked={soundOn} onChange={e => { const v = e.target.checked; setSoundOn(v); setSoundEnabled(v) }} />
+          通知音
+        </label>
+        <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span>桌面通知權限：{notifPerm === 'granted' ? '已授權' : notifPerm === 'denied' ? '已封鎖（請到瀏覽器/系統通知設定開啟）' : notifPerm === 'unsupported' ? '瀏覽器不支援' : '未授權'}</span>
+          {notifPerm !== 'granted' && notifPerm !== 'unsupported' && (
+            <button
+              style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)', fontSize: 12, cursor: 'pointer' }}
+              onClick={async () => { const p = await requestNotifyPermission(); setNotifPerm(p) }}
+            >要求授權</button>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+          註：app 內右下角提示一定會顯示；OS 桌面通知需授權，且 Windows「專注輔助 / 勿擾」開啟時會被系統隱藏。
         </div>
       </div>
 

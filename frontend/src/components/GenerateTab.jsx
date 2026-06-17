@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { apiPostForm, apiPostJson, request } from '../api/client'
+import { apiPostForm, apiPostJson, request, apiUrl } from '../api/client'
 import { EP } from '../api/endpoints'
 import { useAsync } from '../api/useAsync'
 
@@ -137,6 +137,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
   const [seed, setSeed] = useState(-1)
   const [size, setSize] = useState('1024x1024')
   const [result, setResult] = useState(null)
+  const [genPct, setGenPct] = useState(null)
   const generateTask = useAsync()
   const optimizeTask = useAsync()
   const loading = generateTask.loading
@@ -223,6 +224,33 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
     clearInterval(elapsedTimer.current)
   }
 
+  // B1：訂閱 job 進度 SSE，回傳完成後的圖片 blob
+  const streamJobProgress = (jobId, onPct) => new Promise((resolve, reject) => {
+    const es = new EventSource(apiUrl(`/art/jobs/${jobId}/progress`))
+    es.onmessage = async (e) => {
+      let d
+      try { d = JSON.parse(e.data) } catch { return }
+      if (d.heartbeat) return
+      if (d.event === 'done') {
+        es.close()
+        try {
+          const r = await fetch(apiUrl(`/art/jobs/${jobId}/result?index=0`))
+          if (!r.ok) throw new Error('取圖失敗')
+          resolve(await r.blob())
+        } catch (err) { reject(err) }
+      } else if (d.event === 'error') {
+        es.close()
+        try {
+          const j = await fetch(apiUrl(`/art/jobs/${jobId}`)).then(r => r.json())
+          reject(new Error(j.error || '生成失敗'))
+        } catch { reject(new Error('生成失敗')) }
+      } else if (typeof d.pct === 'number') {
+        onPct(d.pct)
+      }
+    }
+    es.onerror = () => { es.close(); reject(new Error('進度連線中斷，請重試')) }
+  })
+
   const onGenerate = async () => {
     if (!finalPrompt.trim() || loading) return
     if (refEnabled && !refFile) { setError('請上傳參考圖片'); return }
@@ -234,7 +262,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
     const actualSeed = seed < 0 ? Math.floor(Math.random() * 2 ** 31) : seed
     setLastSeed(actualSeed)
     try {
-      let resp
+      let blob
       if (refEnabled && refFile && refMode === 'ipadapter') {
         const fd = new FormData()
         fd.append('file', refFile)
@@ -246,7 +274,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
         fd.append('steps', String(steps))
         fd.append('seed', String(actualSeed))
         if (artStyleId) fd.append('art_style_id', artStyleId)
-        resp = await generateTask.run(() => apiPostForm(EP.ipadapter, fd))
+        blob = await (await generateTask.run(() => apiPostForm(EP.ipadapter, fd))).blob()
       } else if (refEnabled && refFile) {
         const fd = new FormData()
         fd.append('file', refFile)
@@ -257,23 +285,28 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
         fd.append('steps', String(steps))
         fd.append('seed', String(actualSeed))
         if (artStyleId) fd.append('art_style_id', artStyleId)
-        resp = await generateTask.run(() => apiPostForm(EP.imgGuide, fd))
+        blob = await (await generateTask.run(() => apiPostForm(EP.imgGuide, fd))).blob()
       } else {
-        resp = await generateTask.run(() => request(EP.generate, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: finalPrompt.trim(),
-            negative_prompt: negPrompt.trim() || DEFAULT_NEGATIVE,
-            width,
-            height,
-            steps,
-            seed: actualSeed,
-            art_style_id: artStyleId ? Number(artStyleId) : null,
-          }),
-        }))
+        // txt2img：async job + SSE 即時進度（同步 /art/generate 仍保留為後端 fallback）
+        blob = await generateTask.run(async () => {
+          const startResp = await request('/art/generate-async', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt: finalPrompt.trim(),
+              negative_prompt: negPrompt.trim() || DEFAULT_NEGATIVE,
+              width,
+              height,
+              steps,
+              seed: actualSeed,
+              art_style_id: artStyleId ? Number(artStyleId) : null,
+              batch_size: 1,
+            }),
+          })
+          const { job_id } = await startResp.json()
+          return await streamJobProgress(job_id, setGenPct)
+        })
       }
-      const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
       setResult(url)
       stopProgress()
@@ -285,6 +318,8 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
       })
     } catch (e) {
       clearInterval(elapsedTimer.current)
+    } finally {
+      setGenPct(null)
     }
   }
 
@@ -549,9 +584,11 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
           <div style={S.loading}>
             <div style={S.spinner} />
             <div style={{ width: '100%', maxWidth: 300, background: 'var(--border)', height: 6, borderRadius: 3, overflow: 'hidden', position: 'relative', marginTop: 12 }}>
-              <div style={{ position: 'absolute', height: '100%', background: 'var(--accent)', borderRadius: 3, animation: 'indeterminate 1.6s ease-in-out infinite' }} />
+              {genPct == null
+                ? <div style={{ position: 'absolute', height: '100%', background: 'var(--accent)', borderRadius: 3, animation: 'indeterminate 1.6s ease-in-out infinite' }} />
+                : <div style={{ height: '100%', width: `${genPct}%`, background: 'var(--accent)', borderRadius: 3, transition: 'width .2s' }} />}
             </div>
-            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4 }}>ComfyUI 正在繪圖中...</div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4 }}>{genPct == null ? 'ComfyUI 正在繪圖中...' : `繪圖中 ${genPct}%`}</div>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>已耗時：{elapsed}s</div>
           </div>
         )}

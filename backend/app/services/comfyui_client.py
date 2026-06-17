@@ -31,7 +31,7 @@ def upload_image_bytes(image_bytes: bytes, filename: str) -> str:
     return r.json()["name"]
 
 
-def submit_workflow(workflow: dict) -> str:
+def submit_workflow(workflow: dict, client_id: str | None = None) -> str:
     """Submit a workflow dict and return its prompt_id."""
     # Build a synthetic UI-format workflow so that custom nodes which call
     # extra_pnginfo["workflow"]["nodes"] (e.g. KJNodes GetWidgetValue,
@@ -53,7 +53,7 @@ def submit_workflow(workflow: dict) -> str:
         })
     payload = {
         "prompt": workflow,
-        "client_id": str(uuid.uuid4()),
+        "client_id": client_id or str(uuid.uuid4()),
         "extra_data": {"extra_pnginfo": {"workflow": {"nodes": synthetic_nodes}}},
     }
     r = requests.post(f"{COMFYUI_BASE}/prompt", json=payload, timeout=30)

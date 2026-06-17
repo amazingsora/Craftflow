@@ -28,11 +28,11 @@ backend/app/
              vram_manager(條件式卸載) ollama_client prompt_engine/ lora_trainer/
   models/ schemas/  ORM+Pydantic（chapter_revision=章節快照；generation_history=生成可重現）
   core/      config(.env/PERSONAL_STYLE) database backup(定時VACUUM INTO)
-             state(執行期全域設定，重啟重置)
+             state(執行期全域設定，A4後持久化 data/runtime_state.json，重啟保留)
 frontend/src/
   App.jsx        側欄佈局殼層(196px) + 服務狀態燈 + 底部歷史 + settings modal
-  components/    ProcessTab GenerateTab ComposeTab NovelTab CharacterTab(2431行→A2待拆)
-                 ArtStyleTab SettingsTab TrainingTab
+  components/    ProcessTab GenerateTab ComposeTab NovelTab ArtStyleTab SettingsTab TrainingTab
+                 CharacterTab(A2已拆:113行shell)→ characterTabStyles/Parts/Shared/Views + CharacterDetailView(1380行)
   index.css      雙主題 token：:root=淺色預設、[data-theme="dark"]；localStorage craftflow_theme
 data/custom_workflows/  ComfyUI workflow（須 API 格式；Standard_V35 / _EyeFix=眼睛強化A/B）
 tools/Craftflow/        legacy CLI（遷移目標 → services/ai/）
@@ -41,7 +41,7 @@ doc/                    每日開發記錄 · 規劃文件
 
 ## 機制速查
 - 畫風 = art_styles DB（LoRA+tags）；`.env` PERSONAL_STYLE_* 寫死個人畫風 tags（角色畫風 extra_tags 為空才套用）
-- checkpoint/workflow/LoRA/模型 全域切換存 core/state（執行期，重啟回 .env）
+- checkpoint/workflow/LoRA/模型 全域切換存 core/state（A4後持久化 data/runtime_state.json，重啟保留；檔案缺失才回 .env 預設）
 - 生圖：同步 `/art/generate` + 非同步 `/art/generate-async`（job+polling）；參數記錄 generation_history
 
 ## Coding Rules

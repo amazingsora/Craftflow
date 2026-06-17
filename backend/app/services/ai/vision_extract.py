@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+from pathlib import Path
 
 from starlette.concurrency import run_in_threadpool
 
@@ -16,6 +18,9 @@ from app.services.ai import ollama_client as _oc
 from app.services.ai.vram_manager import guardian
 
 logger = logging.getLogger(__name__)
+
+# ── Persistent cache file ─────────────────────────────────────────────────────
+_VISION_CACHE_FILE = Path(__file__).resolve().parents[3] / "data" / "vision_cache.json"
 
 
 def _detect_body_coverage(image_bytes: bytes) -> str:
@@ -231,8 +236,37 @@ def _visual_extract_prompt(n: int) -> str:
 # concept images 不變 → vision 抽取結果不變。以 image bytes hash + 模式 + 模型為
 # key 快取，重複生成同角色時跳過最貴的 Ollama vision 呼叫（5~20s）。
 # 錯誤結果（"[...]" 開頭）不快取。dict 依插入序淘汰最舊項目。
-_VISION_CACHE: dict[str, tuple[str, str]] = {}
+# 快取持久化至 data/vision_cache.json，重啟後仍命中（避免 LLM 非確定性導致行為飄移）。
 _VISION_CACHE_MAX = 32
+
+
+def _load_vision_cache() -> dict[str, tuple[str, str]]:
+    """Load persisted vision cache from disk; return empty dict on any error."""
+    try:
+        if _VISION_CACHE_FILE.exists():
+            raw = json.loads(_VISION_CACHE_FILE.read_text(encoding="utf-8"))
+            # raw: {key: [coverage, visual]}
+            cache = {k: (v[0], v[1]) for k, v in raw.items() if isinstance(v, list) and len(v) == 2}
+            logger.info("[vision-cache] loaded %d entries from disk", len(cache))
+            return cache
+    except Exception as e:
+        logger.warning("[vision-cache] could not load from disk: %s", e)
+    return {}
+
+
+def _save_vision_cache(cache: dict[str, tuple[str, str]]) -> None:
+    """Persist vision cache to disk; silently skip on any error."""
+    try:
+        _VISION_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _VISION_CACHE_FILE.write_text(
+            json.dumps({k: list(v) for k, v in cache.items()}, ensure_ascii=False, indent=None),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.warning("[vision-cache] could not save to disk: %s", e)
+
+
+_VISION_CACHE: dict[str, tuple[str, str]] = _load_vision_cache()
 
 
 def _vision_cache_key(images_bytes: list[bytes], mode: str) -> str:
@@ -277,4 +311,5 @@ async def _vision_extract_cached(
         _VISION_CACHE[key] = (coverage, visual)
         while len(_VISION_CACHE) > _VISION_CACHE_MAX:
             _VISION_CACHE.pop(next(iter(_VISION_CACHE)))
+        _save_vision_cache(_VISION_CACHE)
     return coverage, visual

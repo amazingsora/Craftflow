@@ -1,14 +1,15 @@
 """
 Runtime settings endpoints (in-memory, reset on restart):
-  GET  /api/v1/settings/checkpoints  — list available checkpoints from ComfyUI
-  GET  /api/v1/settings/checkpoint   — active checkpoint name
-  POST /api/v1/settings/checkpoint   — switch active checkpoint
-  GET  /api/v1/settings/workflows    — list workflow JSON files
-  GET  /api/v1/settings/workflow     — active workflow filename
-  POST /api/v1/settings/workflow     — switch active workflow
-  GET  /api/v1/settings/loras        — list LoRA models + active global LoRA
-  GET  /api/v1/settings/lora         — active global LoRA {name, strength}
-  POST /api/v1/settings/lora         — set global LoRA
+  GET  /api/v1/settings/checkpoints   — list available checkpoints from ComfyUI
+  GET  /api/v1/settings/checkpoint    — active checkpoint name
+  POST /api/v1/settings/checkpoint    — switch active checkpoint
+  GET  /api/v1/settings/workflows     — list workflow JSON files
+  GET  /api/v1/settings/workflow      — active workflow filename
+  POST /api/v1/settings/workflow      — switch active workflow
+  GET  /api/v1/settings/capabilities  — IPA/CN capability for current mode+checkpoint
+  GET  /api/v1/settings/loras         — list LoRA models + active global LoRA
+  GET  /api/v1/settings/lora          — active global LoRA {name, strength}
+  POST /api/v1/settings/lora          — set global LoRA
 """
 from __future__ import annotations
 
@@ -20,6 +21,8 @@ from pydantic import BaseModel
 
 from app.core.config import COMFYUI_BASE, OLLAMA_BASE, CUSTOM_WORKFLOWS_DIR, DEFAULT_VISION_MODEL, DEFAULT_TEXT_MODEL
 from app.core import state
+from app.services.ai.wf_node_ops import _wf_has_controlnet
+from app.services.ai.capability import resolve_capability
 
 _CUSTOM_DIR = CUSTOM_WORKFLOWS_DIR
 _SYSTEM_DIR = Path("/app/tools/Craftflow/diffusion/workflows")
@@ -104,6 +107,19 @@ def _wf_is_ui_format(name: str) -> bool:
     return False
 
 
+def _wf_load_dict(name: str) -> dict:
+    """Load workflow JSON as dict; returns {} on error."""
+    for base in (_CUSTOM_DIR, _SYSTEM_DIR):
+        path = base / name
+        if path.exists():
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+    return {}
+
+
 @router.get("/workflows", summary="列出使用者自訂 workflow JSON 檔案")
 def list_workflows():
     _CUSTOM_DIR.mkdir(parents=True, exist_ok=True)
@@ -113,15 +129,38 @@ def list_workflows():
         "active": state.get_workflow(),
         "dir": str(_CUSTOM_DIR),
         "ipa_support": {w: _wf_has_ipa(w) for w in workflows},
+        "cn_support":  {w: _wf_has_controlnet(_wf_load_dict(w)) for w in workflows},
         # invalid=true 代表該檔是 UI 格式、不可用，前端可標記並提示重新匯出
         "invalid": {w: _wf_is_ui_format(w) for w in workflows},
+    }
+
+
+@router.get("/capabilities", summary="取得目前 checkpoint/workflow 的 IPA/CN 能力")
+def get_capabilities():
+    """
+    回傳目前生效的 checkpoint + workflow 能力組合。
+    前端切換 checkpoint / workflow / 生成模式後應重抓此端點。
+    """
+    ckpt = state.get_checkpoint()
+    wf_name = state.get_workflow()
+    wf_dict = _wf_load_dict(wf_name)
+    cap = resolve_capability(wf_dict, ckpt)
+    return {
+        "ipa_supported": cap["ipa_supported"],
+        "cn_supported":  cap["cn_supported"],
+        "family":        cap["family"],
     }
 
 
 @router.get("/workflow", summary="取得目前使用的 workflow")
 def get_workflow():
     wf = state.get_workflow()
-    return {"workflow": wf, "ipa_supported": _wf_has_ipa(wf)}
+    wf_dict = _wf_load_dict(wf)
+    return {
+        "workflow":      wf,
+        "ipa_supported": _wf_has_ipa(wf),
+        "cn_supported":  _wf_has_controlnet(wf_dict),
+    }
 
 
 class SetWorkflowRequest(BaseModel):

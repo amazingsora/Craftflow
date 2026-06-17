@@ -7,6 +7,7 @@ import ArtStyleTab from './components/ArtStyleTab.jsx'
 import TrainingTab from './components/TrainingTab.jsx'
 import SettingsTab from './components/SettingsTab.jsx'
 import NovelTab from './components/NovelTab.jsx'
+import { ensureNotifyPermission, notifyDone } from './notify.js'
 
 const _HISTORY_KEY = 'craftflow_history_v2'
 const _MAX_HISTORY = 100
@@ -105,6 +106,7 @@ const S = {
   sidebar: {
     width: 196,
     flexShrink: 0,
+    transition: 'width .2s ease',
     display: 'flex',
     flexDirection: 'column',
     gap: 4,
@@ -116,6 +118,8 @@ const S = {
     height: '100vh',
     overflowY: 'auto',
   },
+  sidebarCollapsed: { width: 0, padding: 0, borderRight: 'none', overflow: 'hidden' },
+  hamburgerBtn: { border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--muted)', fontSize: 16, lineHeight: 1, cursor: 'pointer', padding: '4px 9px' },
   brand: { fontSize: 18, fontWeight: 700, letterSpacing: .5, color: 'var(--text)', padding: '0 10px' },
   brandSub: { fontSize: 11, color: 'var(--muted)', padding: '0 10px', marginBottom: 16 },
   navItem: {
@@ -372,7 +376,8 @@ export default function App() {
   const [activeCheckpoint, setActiveCheckpoint] = useState('')
   const [workflows, setWorkflows] = useState([])
   const [activeWorkflow, setActiveWorkflow] = useState('text_to_image.json')
-  const [workflowIpaSupported, setWorkflowIpaSupported] = useState(false)
+  // capability: { ipa_supported, cn_supported, family }（由 /settings/capabilities 統一取得）
+  const [capability, setCapability] = useState({ ipa_supported: true, cn_supported: true, family: 'sdxl' })
   const [generationMode, setGenerationMode] = useState(
     () => localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint'
   )
@@ -451,18 +456,22 @@ export default function App() {
           ? savedWorkflow
           : (list.includes(data.active) ? data.active : (list[0] ?? 'text_to_image.json'))
         setActiveWorkflow(target)
-        setWorkflowIpaSupported(!!(data.ipa_support?.[target]))
         // checkpoint 模式永遠讓後端用 text_to_image.json；workflow 模式才套用自訂 workflow
         const backendWorkflow = (localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint') === 'workflow'
           ? target
           : 'text_to_image.json'
-        if (backendWorkflow !== data.active) {
-          fetch('/api/v1/settings/workflow', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ workflow: backendWorkflow }),
-          }).catch(() => {})
-        }
+        const syncNeeded = backendWorkflow !== data.active
+        const doSync = syncNeeded
+          ? fetch('/api/v1/settings/workflow', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ workflow: backendWorkflow }),
+            }).catch(() => {})
+          : Promise.resolve()
+        // 等 workflow 同步後再抓 capability（確保後端 state 已更新）
+        doSync.then(() => fetch('/api/v1/settings/capabilities').then(r => r.ok ? r.json() : null).then(cap => {
+          if (cap) setCapability({ ipa_supported: !!cap.ipa_supported, cn_supported: !!cap.cn_supported, family: cap.family ?? 'sdxl' })
+        }).catch(() => {}))
       })
       .catch(() => {})
 
@@ -528,6 +537,21 @@ export default function App() {
     }).catch(() => {})
   }
 
+  // 重抓 capability（切 checkpoint / workflow / 生成模式後呼叫）
+  const fetchCapability = async () => {
+    try {
+      const r = await fetch('/api/v1/settings/capabilities')
+      if (r.ok) {
+        const data = await r.json()
+        setCapability({
+          ipa_supported: !!data.ipa_supported,
+          cn_supported:  !!data.cn_supported,
+          family:        data.family ?? 'sdxl',
+        })
+      }
+    } catch {}
+  }
+
   const onCheckpointChange = async (name) => {
     setActiveCheckpoint(name)
     localStorage.setItem('craftflow_checkpoint', name)
@@ -536,20 +560,18 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ checkpoint: name }),
     }).catch(() => {})
+    fetchCapability()
   }
 
   const onWorkflowChange = async (name) => {
     setActiveWorkflow(name)
     localStorage.setItem('craftflow_workflow', name)
-    const res = await fetch('/api/v1/settings/workflow', {
+    await fetch('/api/v1/settings/workflow', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workflow: name }),
-    }).catch(() => null)
-    if (res?.ok) {
-      const data = await res.json().catch(() => null)
-      if (data) setWorkflowIpaSupported(!!data.ipa_supported)
-    }
+    }).catch(() => {})
+    fetchCapability()
   }
 
   const onGenerationModeChange = async (mode) => {
@@ -562,6 +584,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ workflow: workflowToSync }),
     }).catch(() => {})
+    fetchCapability()
   }
 
   const switchTab = (id) => {
@@ -574,6 +597,33 @@ export default function App() {
     switchTab('generate')
   }
 
+  useEffect(() => { ensureNotifyPermission() }, [])
+
+  // D3 側欄響應式收合（手動切換持久化；視窗跨 880px 門檻時自動收/展）
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    const saved = localStorage.getItem('craftflow_sidebar_collapsed')
+    if (saved !== null) return saved === 'true'
+    return typeof window !== 'undefined' && window.innerWidth < 880
+  })
+  const toggleSidebar = () => setSidebarCollapsed(v => {
+    const nv = !v
+    localStorage.setItem('craftflow_sidebar_collapsed', String(nv))
+    return nv
+  })
+  useEffect(() => {
+    let lastNarrow = window.innerWidth < 880
+    const onResize = () => {
+      const narrow = window.innerWidth < 880
+      if (narrow !== lastNarrow) {
+        lastNarrow = narrow
+        setSidebarCollapsed(narrow)
+        localStorage.setItem('craftflow_sidebar_collapsed', String(narrow))
+      }
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
   const addHistory = async (item) => {
     const thumbnail = await _makeThumbnail(item.url)
     setHistory(prev => {
@@ -585,6 +635,7 @@ export default function App() {
       _saveHistory(updated)
       return updated
     })
+    notifyDone('生成完成', item?.label || '圖片已生成')
   }
 
   const deleteHistory = (id) => {
@@ -609,7 +660,7 @@ export default function App() {
 
   return (
     <div style={S.app}>
-      <aside style={S.sidebar}>
+      <aside style={{ ...S.sidebar, ...(sidebarCollapsed ? S.sidebarCollapsed : {}) }}>
         <div style={S.brand}>Craftflow</div>
         <div style={S.brandSub}>本地創作助手</div>
         {TABS.filter(t => !t.hidden).map((t) => (
@@ -640,7 +691,10 @@ export default function App() {
 
       <div style={S.main}>
       <div style={S.topbar}>
-        <div style={S.topbarTitle}>{TABS.find(t => t.id === tab)?.label}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button style={S.hamburgerBtn} onClick={toggleSidebar} title="收合 / 展開側欄" aria-label="收合或展開側欄">≡</button>
+          <div style={S.topbarTitle}>{TABS.find(t => t.id === tab)?.label}</div>
+        </div>
         <div style={S.topbarInfo}>
           {generationMode === 'workflow' ? 'Workflow' : 'Checkpoint'} ·{' '}
           {generationMode === 'workflow'
@@ -666,7 +720,7 @@ export default function App() {
           <ComposeTab
             onAddHistory={addHistory}
             activeVisionModel={activeVisionModel}
-            ipaSupported={generationMode === 'checkpoint' || workflowIpaSupported}
+            capability={capability}
             onSendToGenerate={onSendToGenerate}
           />
         </div>
@@ -674,7 +728,7 @@ export default function App() {
           <NovelTab />
         </div>
         <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
-          <CharacterTab onAddHistory={addHistory} onSendToGenerate={onSendToGenerate} />
+          <CharacterTab onAddHistory={addHistory} onSendToGenerate={onSendToGenerate} capability={capability} />
         </div>
         <div style={{ display: tab === 'artstyle' ? 'block' : 'none' }}>
           <ArtStyleTab />
@@ -860,3 +914,4 @@ export default function App() {
     </div>
   )
 }
+

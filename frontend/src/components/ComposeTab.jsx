@@ -128,7 +128,10 @@ const PLACEHOLDER_QUESTIONS = [
   '主角位置太居中，怎麼調整讓畫面更有張力？',
 ]
 
-export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupported = true, onSendToGenerate }) {
+export default function ComposeTab({ onAddHistory, activeVisionModel, capability = { ipa_supported: true, cn_supported: true }, onSendToGenerate }) {
+  const ipaSupported = capability.ipa_supported
+  const cnSupported  = capability.cn_supported
+
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [question, setQuestion] = useState(() => sessionStorage.getItem('compose_question') ?? '')
@@ -196,11 +199,11 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
       const body = new FormData()
       body.append('file', file)
       if (question.trim()) body.append('question', question.trim())
-      if (ipaEnabled) {
+      if (ipaSupported && ipaEnabled) {
         body.append('use_sketch_as_ref', 'true')
         body.append('ipa_weight', String(ipaWeight))
       }
-      if (cnEnabled) {
+      if (cnSupported && cnEnabled) {
         body.append('use_cn', 'true')
         body.append('cn_weight', String(cnWeight))
       }
@@ -270,31 +273,23 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
           onChange={(e) => handleFile(e.target.files[0])}
         />
 
-        {/* IP-Adapter 角色外觀參考 */}
+        {/* IP-Adapter 角色外觀參考：不支援時完全隱藏（非停用變灰） */}
+        {ipaSupported && (
         <div style={{
           border: '1px solid var(--border)', borderRadius: 10,
           padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10,
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-              角色外觀參考
-              {!ipaSupported && (
-                <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400, marginLeft: 6 }}>
-                  （目前 workflow 不支援 IP-Adapter）
-                </span>
-              )}
-            </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>角色外觀參考</span>
             <button
-              disabled={!ipaSupported}
               style={{
                 fontSize: 12, padding: '3px 10px', borderRadius: 6,
                 border: ipaEnabled ? 'none' : '1px solid var(--border)',
-                cursor: ipaSupported ? 'pointer' : 'not-allowed',
-                opacity: ipaSupported ? 1 : 0.4,
+                cursor: 'pointer',
                 background: ipaEnabled ? 'var(--accent)' : 'transparent',
                 color: ipaEnabled ? 'var(--accent-contrast)' : 'var(--muted)',
               }}
-              onClick={() => { if (ipaSupported) { setIpaEnabled(v => !v); setIpaFile(null); setIpaPreview(null) } }}
+              onClick={() => { setIpaEnabled(v => !v); setIpaFile(null); setIpaPreview(null) }}
             >
               {ipaEnabled ? '已啟用' : '未啟用'}
             </button>
@@ -318,8 +313,10 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
             </div>
           )}
         </div>
+        )}
 
-        {/* ControlNet 草圖引導 */}
+        {/* ControlNet 草圖引導：不支援時完全隱藏 */}
+        {cnSupported && (
         <div style={{
           border: '1px solid var(--border)', borderRadius: 10,
           padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10,
@@ -358,6 +355,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, ipaSupport
             </div>
           )}
         </div>
+        )}
 
         <div>
           <label style={S.label}>你的問題 <span style={{ opacity: 0.5 }}>（選填，空白則 AI 自動分析）</span></label>
