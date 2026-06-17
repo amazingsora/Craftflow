@@ -48,3 +48,5 @@ data/training_images/
 
 # ── Vite 暫存檔（不進 git）──────────────
 vite.config.js.timestamp-*.mjs
+data/runtime_state.json
+data/runtime_state.json.tmp

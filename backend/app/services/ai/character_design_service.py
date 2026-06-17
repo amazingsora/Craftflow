@@ -57,6 +57,7 @@ from app.services.ai.image_ops import (
     _pixel_coverage_check,
     _shrink_for_full_body,
 )
+from app.services.ai.capability import resolve_capability
 from app.services.ai.wf_node_ops import (
     _CN_APPLY_TYPES,
     _bypass_controlnet_nodes,
@@ -642,7 +643,10 @@ async def _generate_design_core(
     need_ipa_inject = _ipa_ref_bytes is not None and not _wf_has_ipa(wf)
     need_cn_inject = _cn_ref_bytes is not None and not _wf_has_controlnet(wf)
     if need_ipa_inject or need_cn_inject:
-        _inject_ipa_cn_nodes(wf, inject_ipa=need_ipa_inject, inject_cn=need_cn_inject)
+        _inject_models = resolve_capability(wf, state.get_checkpoint())["models"]
+        _inject_ipa_cn_nodes(
+            wf, inject_ipa=need_ipa_inject, inject_cn=need_cn_inject, models=_inject_models
+        )
         logger.info("[%s] 動態注入節點 ipa=%s cn=%s（工作流 '%s' 原缺節點）",
                     log_label, need_ipa_inject, need_cn_inject, active_wf)
 

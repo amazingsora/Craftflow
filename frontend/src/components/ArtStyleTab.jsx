@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { notifyDone } from '../notify.js'
 
 const BASE_STYLES = ['sdxl', 'pony', 'flux', 'noobai', 'illustrious', 'anythingxl']
 
@@ -208,6 +209,7 @@ export default function ArtStyleTab() {
       const blob = await genRes.blob()
       const url = URL.createObjectURL(blob)
       setTestResult({ url, prompt: compiled.positive, style, seed })
+      notifyDone('生成完成', '畫風測試圖')
       setTimeout(() => testImgRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50)
     } catch (e) {
       setTestError(e.message)

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { notifyDone } from '../notify.js'
 
 const API = '/api/v1/training'
 
@@ -99,6 +100,19 @@ export default function TrainingTab() {
     const t = setInterval(loadJobs, 5000)
     return () => clearInterval(t)
   }, [jobs, loadJobs])
+
+  // 訓練完成 → 桌面通知（偵測 job 由非 done 轉為 done；首次載入只記錄不通知）
+  const _notifiedJobsRef = useRef(null)
+  useEffect(() => {
+    const seen = _notifiedJobsRef.current
+    if (seen === null) { _notifiedJobsRef.current = new Map(jobs.map(j => [j.id, j.status])); return }
+    for (const j of jobs) {
+      if (seen.get(j.id) !== 'done' && j.status === 'done') {
+        notifyDone('LoRA 訓練完成', j.output_lora_name ? `LoRA：${j.output_lora_name}` : `Job ${j.id}`)
+      }
+      seen.set(j.id, j.status)
+    }
+  }, [jobs])
 
   // SSE subscription for a running job
   const subscribeSSE = useCallback((jobId) => {

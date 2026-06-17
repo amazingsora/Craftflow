@@ -30,9 +30,32 @@ class GenJob:
     images: list[bytes] = field(default_factory=list)
     error: Optional[str] = None
     meta: dict = field(default_factory=dict)  # seed / style / workflow / batch_size / history_id
+    progress: dict = field(default_factory=lambda: {"pct": 0, "value": 0, "max": 0, "node": None, "status": "queued"})
 
 
 _JOBS: dict[str, GenJob] = {}
+
+_progress_queues: dict[str, list] = {}
+
+
+def subscribe_progress(job_id: str) -> asyncio.Queue:
+    q: asyncio.Queue = asyncio.Queue()
+    _progress_queues.setdefault(job_id, []).append(q)
+    return q
+
+
+def unsubscribe_progress(job_id: str, q) -> None:
+    qs = _progress_queues.get(job_id, [])
+    if q in qs:
+        qs.remove(q)
+
+
+def _push_progress(job_id: str, event) -> None:
+    for q in list(_progress_queues.get(job_id, [])):
+        try:
+            q.put_nowait(event)
+        except Exception:
+            pass
 
 
 def create_job(meta: dict) -> GenJob:
@@ -71,11 +94,31 @@ async def run_txt2img_job(job: GenJob, wf: dict, record_kwargs: dict) -> None:
     from app.services.ai.vram_manager import guardian
 
     job.status = "running"
+    job.progress["status"] = "running"
+    prog_task = None
     try:
         if not await asyncio.to_thread(comfyui_client.is_available):
             raise RuntimeError("ComfyUI 未啟動，請先執行 ComfyUI (host.docker.internal:8188)。")
         await guardian.request_focus("comfyui")
-        prompt_id = await asyncio.to_thread(comfyui_client.submit_workflow, wf)
+        import uuid as _uuid
+        from app.services.ai import comfyui_progress
+        client_id = _uuid.uuid4().hex
+        prompt_id = await asyncio.to_thread(comfyui_client.submit_workflow, wf, client_id)
+
+        def _on_event(ev):
+            # 只推 progress / node；ws 的 done/error 不推（完成以 job finally 終結事件為準，避免混淆）
+            et = ev.get("type")
+            if et == "progress":
+                job.progress.update(value=ev["value"], max=ev["max"], pct=ev["pct"], status="running")
+                _push_progress(job.id, {**job.progress, "event": "progress"})
+            elif et == "node":
+                job.progress["node"] = ev["node"]
+                _push_progress(job.id, {**job.progress, "event": "node"})
+
+        # ws 進度為 best-effort 疊加；完成/輸出仍以 wait_for_result 為準
+        prog_task = asyncio.create_task(
+            comfyui_progress.stream_progress(client_id, prompt_id, _on_event, timeout=_COMFYUI_JOB_TIMEOUT)
+        )
         filenames = await asyncio.to_thread(
             comfyui_client.wait_for_result, prompt_id, _COMFYUI_JOB_TIMEOUT
         )
@@ -96,10 +139,16 @@ async def run_txt2img_job(job: GenJob, wf: dict, record_kwargs: dict) -> None:
             logger.warning("[gen-job] history 記錄失敗（不影響結果）：%s", e)
 
         job.status = "done"
+        job.progress.update(pct=100, status="done")
         logger.info("[gen-job] %s done — %d image(s)", job.id, len(job.images))
     except Exception as e:
         job.status = "error"
+        job.progress["status"] = "error"
         job.error = str(e)
         logger.error("[gen-job] %s failed: %s", job.id, e)
     finally:
+        if prog_task is not None:
+            prog_task.cancel()
         job.finished_at = time.time()
+        _push_progress(job.id, {**job.progress, "event": job.status})
+        _push_progress(job.id, None)  # 哨兵：通知 SSE 結束

@@ -185,7 +185,9 @@ def _find_main_ksampler_id(wf: dict) -> str | None:
     return ks_ids[0]
 
 
-def _inject_ipa_cn_nodes(wf: dict, *, inject_ipa: bool, inject_cn: bool) -> None:
+def _inject_ipa_cn_nodes(
+    wf: dict, *, inject_ipa: bool, inject_cn: bool, models: dict | None = None
+) -> None:
     """當工作流缺少 IPA / ControlNet 節點時，依 Standard_V35 模板動態建立並接線。
 
     - IPA：在「現有 model 來源 → KSampler.model」之間插入 IPAdapterAdvanced 鏈。
@@ -193,7 +195,16 @@ def _inject_ipa_cn_nodes(wf: dict, *, inject_ipa: bool, inject_cn: bool) -> None
 
     僅在對應功能啟用且工作流本身沒有該節點時呼叫（由端點判斷）；既有節點不重複注入。
     節點 id 從現有最大數字 +1 起遞增，確保不衝突。圖片由後續 _inject_*_image 注入。
+
+    Args:
+        models: capability.INJECT_MODELS[family]，提供家族對應的模型檔名。
+                None 時回退模組層級常數（全 SDXL，維持既有行為）。
     """
+    # 解析模型檔名：優先用 models 參數（多家族支援），次用模組常數（backward compat）
+    _ipa_cv  = (models or {}).get("ipa_clipvision", _IPA_CLIPVISION_MODEL)
+    _ipa_adp = (models or {}).get("ipa_adapter",    _IPA_ADAPTER_MODEL)
+    _cn_mdl  = (models or {}).get("cn_model",       _CN_MODEL)
+    _cn_type = (models or {}).get("cn_union_type",  _CN_UNION_TYPE)
     ks_id = _find_main_ksampler_id(wf)
     if ks_id is None:
         logger.warning("[wf-inject] 找不到 KSampler，略過節點注入")
@@ -215,11 +226,11 @@ def _inject_ipa_cn_nodes(wf: dict, *, inject_ipa: bool, inject_cn: bool) -> None
         )
         wf[clipvision_id] = {
             "class_type": "CLIPVisionLoader",
-            "inputs": {"clip_name": _IPA_CLIPVISION_MODEL},
+            "inputs": {"clip_name": _ipa_cv},
         }
         wf[ipamodel_id] = {
             "class_type": "IPAdapterModelLoader",
-            "inputs": {"ipadapter_file": _IPA_ADAPTER_MODEL},
+            "inputs": {"ipadapter_file": _ipa_adp},
         }
         wf[loadimg_id] = {
             "class_type": "LoadImage",
@@ -251,11 +262,11 @@ def _inject_ipa_cn_nodes(wf: dict, *, inject_ipa: bool, inject_cn: bool) -> None
         )
         wf[cnloader_id] = {
             "class_type": "ControlNetLoader",
-            "inputs": {"control_net_name": _CN_MODEL},
+            "inputs": {"control_net_name": _cn_mdl},
         }
         wf[settype_id] = {
             "class_type": "SetUnionControlNetType",
-            "inputs": {"control_net": [cnloader_id, 0], "type": _CN_UNION_TYPE},
+            "inputs": {"control_net": [cnloader_id, 0], "type": _cn_type},
         }
         wf[loadimg_id] = {
             "class_type": "LoadImage",

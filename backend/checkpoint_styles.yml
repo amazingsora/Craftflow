@@ -37,3 +37,36 @@ checkpoints:
   illustriousXL:    illustrious
   IllustriousXL:    illustrious
   illustrious-xl:   illustrious    # Illustrious-XL-v2.0 等帶連字號命名
+
+# ── Checkpoint → 架構家族對照（IPA/CN 能力閘控用）──────────────────────────
+# key   = checkpoint 檔名關鍵字（同 checkpoints 區段，大小寫不分）
+# value = 架構家族；用於查 services/ai/capability.py INJECT_MODELS 表
+# 未列  = fallback sdxl（零行為變更）；flux 不支援注入（前端隱藏 IPA/CN）
+families:
+  # ── SDXL 原生 ───────────────────────────────────────────────────────────────
+  AnythingXL:       sdxl
+  anythingXL:       sdxl
+  BluePencilXL:     sdxl
+  CounterfeitXL:    sdxl
+  DreamShaperXL:    sdxl
+  JuggernautXL:     sdxl
+  RealVisXL:        sdxl
+
+  # ── Pony（SDXL 架構，沿用 SDXL 注入模型）──────────────────────────────────
+  ponyDiffusion:    pony
+  autismmixSDXL:    pony
+  prefectPonyXL:    pony
+
+  # ── Illustrious（SDXL 架構）────────────────────────────────────────────────
+  illustriousXL:    illustrious
+  IllustriousXL:    illustrious
+  illustrious-xl:   illustrious
+
+  # ── NoobAI（SDXL 架構）─────────────────────────────────────────────────────
+  noobaiXL:         noobai
+  noobAI:           noobai
+
+  # ── Flux（不支援 IPA/CN 注入）──────────────────────────────────────────────
+  flux1-dev:        flux
+  flux1-schnell:    flux
+  fluxDev:          flux

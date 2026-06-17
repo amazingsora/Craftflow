@@ -32,6 +32,7 @@ from app.services.ai.generation_recorder import record_generation
 from app.services.ai import generation_jobs
 from app.services.ai import character_design_service
 from app.services.ai import image_edit_service
+from app.services.ai.capability import resolve_capability
 from app.schemas.art_generate import (
     CompilePromptRequest,
     GenerateRequest,
@@ -71,6 +72,22 @@ from app.services.ai.wf_node_ops import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["art-generate"])
+
+
+def _current_capability(wf_name: str | None = None) -> dict:
+    """B5 守門用：取得目前 checkpoint + workflow 的能力。
+
+    wf_name 預設使用 state.get_workflow()；caller 可傳入實際要用的 workflow 名稱。
+    若 workflow 無法載入（檔案不存在）則以空 dict 計算，僅依家族查表。
+    """
+    ckpt = state.get_checkpoint()
+    name = wf_name or state.get_workflow()
+    try:
+        wf = _load_workflow(name)
+    except Exception:
+        wf = {}
+    return resolve_capability(wf, ckpt)
+
 
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
@@ -333,6 +350,14 @@ async def compose(
     use_cn: bool = Form(False, description="以草圖作為 ControlNet hint"),
     cn_weight: float = Form(0.85, ge=0.1, le=1.5, description="ControlNet 強度"),
 ):
+    # B5 能力守門：前端隱藏選項時不應送旗標，但後端雙重確認，避免家族不支援時意外注入
+    _cap = _current_capability()
+    if not _cap["ipa_supported"]:
+        use_sketch_as_ref = False
+        character_ref = None
+    if not _cap["cn_supported"]:
+        use_cn = False
+
     image_bytes = await file.read()
     width, height = _image_dimensions(image_bytes)
     effective_model = model.strip() or state.get_vision_model()
@@ -382,7 +407,7 @@ async def compose(
 
         # CN 注入 / bypass
         if use_cn and not _wf_has_controlnet(wf):
-            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True)
+            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True, models=_cap["models"])
         elif not use_cn and _wf_has_controlnet(wf):
             _bypass_controlnet_nodes(wf)
 
@@ -413,7 +438,7 @@ async def compose(
 
         # CN 注入 / bypass
         if use_cn and not _wf_has_controlnet(wf):
-            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True)
+            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True, models=_cap["models"])
         elif not use_cn and _wf_has_controlnet(wf):
             _bypass_controlnet_nodes(wf)
 
@@ -465,6 +490,12 @@ async def generate_character_design(
     db: Session = Depends(get_db),
 ):
     """主流程見 services/ai/character_design_service.py。"""
+    # B5 能力守門
+    _cap = _current_capability()
+    if not _cap["ipa_supported"]:
+        use_ipa = False
+    if not _cap["cn_supported"]:
+        use_controlnet = False
     return await character_design_service.generate_character_design(
         character_id=character_id, expression=expression, art_style_id=art_style_id,
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit,
@@ -488,6 +519,12 @@ async def generate_variant_design(
     db: Session = Depends(get_db),
 ):
     """主流程見 services/ai/character_design_service.py。"""
+    # B5 能力守門
+    _cap = _current_capability()
+    if not _cap["ipa_supported"]:
+        use_ipa = False
+    if not _cap["cn_supported"]:
+        use_controlnet = False
     return await character_design_service.generate_variant_design(
         character_id=character_id, slot=slot, expression=expression, art_style_id=art_style_id,
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit,
@@ -722,5 +759,3 @@ async def ipadapter(
             "X-History-Id": str(hist_id) if hist_id else "",
         },
     )
-
-
