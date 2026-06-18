@@ -15,12 +15,14 @@ API_PREFIX = "/api/v1"
 APP_TITLE = "Craftflow API"
 APP_VERSION = "0.1.0"
 
-# AI 服務設定（由環境變數覆寫，預設值適用於 Docker 環境）
-OLLAMA_BASE = os.getenv("OLLAMA_BASE", "http://host.docker.internal:11434")
-COMFYUI_BASE = os.getenv("COMFYUI_BASE", "http://host.docker.internal:8188")
+# AI 服務設定（由環境變數覆寫，預設值適用於本機直跑環境）
+# Docker 環境需在 .env 明確設定 host.docker.internal
+OLLAMA_BASE = os.getenv("OLLAMA_BASE", "http://localhost:11434")
+COMFYUI_BASE = os.getenv("COMFYUI_BASE", "http://localhost:8188")
 COMFYUI_CHECKPOINT = os.getenv("COMFYUI_CHECKPOINT", "")  # overrides ckpt_name in all workflows
-DEFAULT_TEXT_MODEL = os.getenv("TEXT_MODEL", "dolphin-llama3")
-DEFAULT_VISION_MODEL = os.getenv("VISION_MODEL", "qwen2.5vl:7b")
+# 啟動預設模型（可在前端「設定」頁面即時切換，無需重啟或修改 .env）
+DEFAULT_TEXT_MODEL = os.getenv("TEXT_MODEL", "llama3.2:3b")
+DEFAULT_VISION_MODEL = os.getenv("VISION_MODEL", "moondream")
 
 # ── LoRA 訓練設定 ─────────────────────────────────────────────────
 TRAINING_RUNNER_MODE = os.getenv("TRAINING_RUNNER_MODE", "local")  # "local" | "remote"
