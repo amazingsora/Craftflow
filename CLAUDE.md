@@ -10,7 +10,7 @@
 |---|---|
 | Backend | FastAPI · SQLAlchemy 2.0 · Pydantic v2 · SQLite · Python 3.11 |
 | Frontend | React 18 · Vite 5 · Vanilla CSS-in-JS |
-| LLM | `dolphin-llama3`（文字/翻譯）· `qwen2.5vl:7b`（視覺，可全域切換） |
+| LLM | 文字/翻譯 + 視覺模型皆由設定 UI 切換（清單來自 Ollama `/api/tags`，存 core/state→runtime_state.json）。下方為 **fallback 預設**（UI 未選且 `.env` 未覆蓋時才用）：文字 `dolphin-llama3`、視覺 `qwen2.5vl:7b` |
 | Image | ComfyUI @ `host.docker.internal:8188`（SDXL · CN Union ProMax · IPA） |
 | Ollama | `host.docker.internal:11434` |
 | LoRA 訓練 | kohya_ss（subprocess） |

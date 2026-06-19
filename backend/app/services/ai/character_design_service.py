@@ -11,6 +11,7 @@ import colorsys
 import io
 import json
 import logging
+import os
 import random
 import time
 from typing import Optional
@@ -111,11 +112,15 @@ def _hex_to_sd_color(hex_color: str) -> str:
         return "colored"
 
 
-# CN weight override (None = 維持使用者設定)
+# CN weight 上限（None = 不設限，沿用使用者滑桿值）
+# partial/bust：概念圖為半身，下半身需由 SDXL 在留白區腦補。CN 過強會把「下半留空」
+# 也當成硬約束 → 腿生不出來（實測 0.50 可完整補腿、≥0.70 失敗）。故對需腦補下半的
+# coverage 設上限，cn_weight = min(滑桿值, 上限)，保證任何滑桿值都能補出全身。
+# bust 露出較少、需腦補更多 → 上限比 partial 再低。
 _COVERAGE_CN_WEIGHT: dict[str, float | None] = {
     "full":    None,
-    "partial": None,
-    "bust":    None,
+    "partial": 0.6,
+    "bust":    0.5,
 }
 # CN end_percent override
 _COVERAGE_CN_END_PERCENT: dict[str, float | None] = {
@@ -301,6 +306,10 @@ def _inject_img2img_node(wf: dict, canvas_filename: str, denoise: float = 0.70) 
 
 
 _CANVAS_EXPAND_WF = "canvas_expand_flux.json"
+_CANVAS_EXPAND_SDXL_WF = "canvas_expand_sdxl.json"   # 方案3：SDXL inpaint 外擴（重用主生成 checkpoint，免載 Flux）
+# 方案3（pre-ref 外擴）預設關閉 → 走穩定的方案1（CN 夾 0.5 單段 SDXL）。
+# 設環境變數 CRAFTFLOW_PRE_REF_EXPAND=1 才啟用（實驗性，高貼合但較慢、偶有破圖風險）。
+_PRE_REF_ENABLED = os.getenv("CRAFTFLOW_PRE_REF_EXPAND", "1").strip() == "1"
 
 
 async def _run_canvas_expand_flux(
@@ -345,6 +354,65 @@ async def _run_canvas_expand_flux(
         return await _run_comfyui(wf)
     except Exception as e:
         logger.error("[canvas-expand] ComfyUI 執行失敗: %s: %s", type(e).__name__, e)
+        raise
+
+
+async def _run_canvas_expand_sdxl(
+    sketch_bytes: bytes,
+    coverage: str,
+    positive: str,
+    negative: str,
+    width: int,
+    height: int,
+    seed: int,
+    ckpt_name: str | None,
+) -> bytes:
+    """方案3：用 SDXL inpaint 外擴（取代 Flux,免載大模型）。
+
+    概念圖置於畫布上半、下半留白為 mask → VAEEncodeForInpaint + denoise=1 補下半身。
+    checkpoint 設為主生成同一顆 → 不換模型。用主 seed（非固定）→ 重生可換姿勢、不鎖死。
+    外擴 prompt 強制 solo/full body/simple background 並抑制 reference-sheet，避免破圖/inset。
+    """
+    # 外擴專用 prompt：聚焦單人全身、簡單背景；抑制 reference sheet/多視圖/inset（破圖主因）
+    expand_pos = (
+        "solo, full body, standing, straight legs, normal body proportions, "
+        "anatomically correct, simple background, " + positive
+    )
+    expand_neg = (
+        negative
+        + ", reference sheet, character sheet, multiple views, multiple poses, "
+          "inset, split image, border, frame, cropped, disconnected body, "
+          "long legs, elongated body, wide stance, spread legs, disproportionate"
+    )
+    canvas_bytes, mask_bytes = _create_inpaint_canvas_and_mask(
+        sketch_bytes, width, height, coverage
+    )
+    canvas_fn = comfyui_client.upload_image_bytes(canvas_bytes, "canvas_expand_sdxl_input.png")
+    mask_fn = comfyui_client.upload_image_bytes(mask_bytes, "canvas_expand_sdxl_mask.png")
+
+    wf = _load_workflow(_CANVAS_EXPAND_SDXL_WF)
+    for nid, node in wf.items():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type")
+        inputs = node.get("inputs", {})
+        if ct == "CheckpointLoaderSimple" and ckpt_name:
+            inputs["ckpt_name"] = ckpt_name
+        elif ct == "LoadImage" and inputs.get("image") == "":
+            inputs["image"] = canvas_fn
+        elif ct == "LoadImageMask" and inputs.get("image") == "":
+            inputs["image"] = mask_fn
+        elif ct == "CLIPTextEncode":
+            inputs["text"] = expand_neg if "Negative" in node.get("_meta", {}).get("title", "") else expand_pos
+        elif ct == "KSampler":
+            inputs["seed"] = seed
+
+    _log_wf_snapshot(wf, label="canvas-expand-sdxl")
+    await guardian.request_focus("comfyui")
+    try:
+        return await _run_comfyui(wf)
+    except Exception as e:
+        logger.error("[canvas-expand-sdxl] ComfyUI 執行失敗: %s: %s", type(e).__name__, e)
         raise
 
 
@@ -409,6 +477,9 @@ async def _generate_design_core(
     _cn_ref_bytes: bytes | None = None
     _cn_coverage: str = "full"
     _coverage_end_pct: float | None = None
+    _cn_weight_user = cn_weight        # 方案3：保留使用者原始 CN 強度（夾制前）
+    _pre_ref = False                   # 方案3：是否要在 SDXL 前 Flux 外擴概念圖成全身 ref
+    _pre_ref_done = False              # 方案3：pre-ref 外擴成功（成功則跳過 post 外擴、還原 CN）
 
     if inp.concept_imgs:
         valid_images: list[bytes] = []
@@ -445,14 +516,28 @@ async def _generate_design_core(
                 # CN≥0.7 限制條件：所有 coverage 一律保留 CN，不再 bypass。
                 # partial/bust 透過 _shrink_for_full_body 縮到畫布上半，下半留空補腿；
                 # CN 以 AnimeLineArt（非 Canny）引導上半身，單 pass 無接縫。
+                # 方案3：變體 partial/bust 且有 Flux 擴圖 → 稍後在 SDXL 前外擴成全身 ref
+                _pre_ref = (
+                    _PRE_REF_ENABLED
+                    and canvas_expand_mode == "post"
+                    and _cn_coverage in ("partial", "bust")
+                    and _ipa_ref_bytes is not None
+                    and (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_SDXL_WF).exists()
+                )
+                # 安全基線（方案1）：先縮圖 + 夾 CN 上限；pre-ref 成功時後段會覆寫為全身 ref 並還原 CN。
                 _cn_ref_bytes = _shrink_for_full_body(valid_images[0], _exp_w, _exp_h, _cn_coverage)
-                _override_cn_w = _COVERAGE_CN_WEIGHT.get(_cn_coverage)
-                if _override_cn_w is not None:
-                    cn_weight = _override_cn_w
+                _cn_w_ceiling = _COVERAGE_CN_WEIGHT.get(_cn_coverage)
+                if _cn_w_ceiling is not None and cn_weight > _cn_w_ceiling:
+                    logger.info(
+                        "[%s] coverage=%s：CN 強度 %.2f 超過補腿安全上限，夾到 %.2f",
+                        log_label, _cn_coverage, cn_weight, _cn_w_ceiling,
+                    )
+                    cn_weight = _cn_w_ceiling
                 _coverage_end_pct = _COVERAGE_CN_END_PERCENT.get(_cn_coverage)
                 logger.info(
-                    "[%s] coverage=%s → CN (weight=%.2f, fill=%.2f)",
-                    log_label, _cn_coverage, cn_weight, _BODY_FILL_RATIO.get(_cn_coverage, 1.0),
+                    "[%s] coverage=%s pre_ref=%s → CN (weight=%.2f, fill=%.2f)",
+                    log_label, _cn_coverage, _pre_ref, cn_weight,
+                    _BODY_FILL_RATIO.get(_cn_coverage, 1.0),
                 )
             if visual and not visual.startswith("["):
                 has_outfit = bool(use_outfit and inp.outfit)
@@ -587,6 +672,44 @@ async def _generate_design_core(
 
     seed = random.randint(0, 2**31 - 1)
     _canvas_expand_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_WF).exists()
+    _canvas_expand_sdxl_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_SDXL_WF).exists()
+
+    # ── 方案3：變體 partial/bust → SDXL 前先用 SDXL inpaint 外擴概念圖成全身，當 CN 結構參考 ──
+    # 成功後 coverage 視為 full：CN 還原使用者完整強度、不縮圖；全身結構已具備 → 補得出腿且貼合度高。
+    # IPA 仍用原始概念圖（保身分）；CN 用外擴全身圖（保結構）。外擴用主生成同一顆 checkpoint，
+    # 不換模型、不載 Flux。失敗則沿用方案1 基線（縮圖+夾 CN）。
+    if _pre_ref and _canvas_expand_sdxl_available:
+        t0_pre = time.perf_counter()
+        # 取主生成 workflow 的 checkpoint，讓外擴用同一顆 → 避免模型 swap
+        _main_ckpt = None
+        try:
+            _mwf = _load_workflow(state.get_workflow())
+            _main_ckpt = next(
+                (n["inputs"].get("ckpt_name") for n in _mwf.values()
+                 if isinstance(n, dict) and n.get("class_type") == "CheckpointLoaderSimple"),
+                None,
+            )
+        except Exception:
+            pass
+        logger.info("[%s] 方案3 pre-ref 外擴（SDXL inpaint, ckpt=%s, coverage=%s → full, CN 還原 %.2f）",
+                    log_label, _main_ckpt, _cn_coverage, _cn_weight_user)
+        try:
+            _cn_ref_bytes = await _run_canvas_expand_sdxl(
+                _ipa_ref_bytes, _cn_coverage, final_positive, final_negative,
+                width, height, seed, _main_ckpt,
+            )
+            cn_weight = _cn_weight_user
+            _cn_coverage = "full"
+            _pre_ref_done = True
+            timings["canvas_expand"] = round(time.perf_counter() - t0_pre, 1)
+        except HTTPException as he:
+            if he.status_code == 504:
+                # 外擴逾時：ComfyUI 多半仍在背景處理該 job，回退再送主 SDXL 會 double submit → 串行。
+                logger.error("[%s] 方案3 pre-ref 外擴逾時(504)，中止以避免 double submit", log_label)
+                raise
+            logger.warning("[%s] 方案3 pre-ref 外擴失敗(HTTP %s)，回退方案1: %s", log_label, he.status_code, he.detail)
+        except Exception as e:
+            logger.warning("[%s] 方案3 pre-ref 外擴失敗，回退方案1（縮圖+夾 CN）: %s", log_label, e)
 
     # ── Canvas Expand 前置（角色版：partial/bust → SDXL 前對概念圖 Flux 擴圖並提早 return）──
     if (canvas_expand_mode == "pre"
@@ -715,6 +838,7 @@ async def _generate_design_core(
     if (canvas_expand_mode == "post"
             and not is_expression
             and _cn_coverage == "full"
+            and not _pre_ref_done
             and _canvas_expand_available):
         t0_expand = time.perf_counter()
         logger.info("[%s] canvas-expand via Flux 2 on SDXL output (coverage=%s)", log_label, _cn_coverage)

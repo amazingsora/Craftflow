@@ -179,7 +179,8 @@ def compile(
     raw_response = ollama_client.generate(
         prompt,
         model=model,
-        options={"num_predict": 250, "temperature": 0.3}
+        options={"num_predict": 250, "temperature": 0.3},
+        keep_alive=-1,  # 常駐 VRAM：免每次提示詞編譯冷載入文字模型（vram_manager 仍會在 VRAM 不足時驅逐）
     )
     if raw_response.startswith("["):
         raise RuntimeError(raw_response)

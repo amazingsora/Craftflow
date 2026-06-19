@@ -3,6 +3,7 @@ Thin wrapper around the ComfyUI REST API for use by FastAPI endpoints.
 Mirrors tools/Craftflow/diffusion/comfyui_provider.py but accepts raw bytes
 for image uploads (suitable for UploadFile data).
 """
+import logging
 import time
 import uuid
 from io import BytesIO
@@ -10,6 +11,8 @@ from io import BytesIO
 import requests
 
 from app.core.config import COMFYUI_BASE
+
+logger = logging.getLogger(__name__)
 
 def is_available() -> bool:
     try:
@@ -124,15 +127,22 @@ def _poll_history(prompt_id: str, timeout: int, extract) -> list[str]:
     deadline = time.time() + timeout
     interval = 0.5
     while time.time() < deadline:
-        r = requests.get(f"{COMFYUI_BASE}/history/{prompt_id}", timeout=10)
-        data = r.json()
+        try:
+            r = requests.get(f"{COMFYUI_BASE}/history/{prompt_id}", timeout=60)
+            data = r.json()
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            # ComfyUI 載入大模型（如 Flux GGUF 冷啟動）期間 HTTP 會暫時無回應，單次 poll 逾時
+            # 屬暫時性、非任務失敗 → 記錄後繼續輪詢，撐到外層 deadline 才放棄。
+            logger.warning("[comfyui] poll %s 暫時逾時（%s），繼續等待", prompt_id, type(e).__name__)
+            time.sleep(interval)
+            interval = min(interval * 1.5, 3)
+            continue
         if prompt_id in data:
             entry = data[prompt_id]
             status = entry.get("status", {})
             if status.get("status_str") == "error":
                 msgs = [str(m) for m in status.get("messages", [])]
-                import logging as _log
-                _log.getLogger(__name__).error("[comfyui] job %s failed: %s", prompt_id, "; ".join(msgs))
+                logger.error("[comfyui] job %s failed: %s", prompt_id, "; ".join(msgs))
                 raise ValueError(f"ComfyUI 執行錯誤: {'; '.join(msgs)}")
             outputs = entry.get("outputs", {})
             return extract(outputs)
