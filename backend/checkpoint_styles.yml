@@ -37,6 +37,7 @@ checkpoints:
   illustriousXL:    illustrious
   IllustriousXL:    illustrious
   illustrious-xl:   illustrious    # Illustrious-XL-v2.0 等帶連字號命名
+  fabricatedXL:     illustrious    # Fabricated XL v7.0（Illustrious 衍生；V36 主底模）
 
 # ── Checkpoint → 架構家族對照（IPA/CN 能力閘控用）──────────────────────────
 # key   = checkpoint 檔名關鍵字（同 checkpoints 區段，大小寫不分）
@@ -61,6 +62,7 @@ families:
   illustriousXL:    illustrious
   IllustriousXL:    illustrious
   illustrious-xl:   illustrious
+  fabricatedXL:     illustrious
 
   # ── NoobAI（SDXL 架構）─────────────────────────────────────────────────────
   noobaiXL:         noobai

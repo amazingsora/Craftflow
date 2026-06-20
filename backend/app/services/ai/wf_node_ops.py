@@ -186,7 +186,8 @@ def _find_main_ksampler_id(wf: dict) -> str | None:
 
 
 def _inject_ipa_cn_nodes(
-    wf: dict, *, inject_ipa: bool, inject_cn: bool, models: dict | None = None
+    wf: dict, *, inject_ipa: bool, inject_cn: bool, models: dict | None = None,
+    cn_preprocessor: dict | None = None,
 ) -> None:
     """當工作流缺少 IPA / ControlNet 節點時，依 Standard_V35 模板動態建立並接線。
 
@@ -272,13 +273,14 @@ def _inject_ipa_cn_nodes(
             "class_type": "LoadImage",
             "inputs": {"image": _CN_PLACEHOLDER_IMAGE, "upload": "image"},
         }
-        wf[prep_id] = {
-            "class_type": "AnimeLineArtPreprocessor",
-            "inputs": {
-                "image": [loadimg_id, 0],
-                "resolution": _CANNY_RES,
-            },
-        }
+        # CN preprocessor 由 profile 決定（預設 AnimeLineArt；canny=V35 proven）
+        _pp = cn_preprocessor or {"type": "AnimeLineArtPreprocessor", "resolution": _CANNY_RES}
+        _pp_type = _pp.get("type", "AnimeLineArtPreprocessor")
+        _pp_inputs = {"image": [loadimg_id, 0], "resolution": _pp.get("resolution", _CANNY_RES)}
+        if _pp_type == "CannyEdgePreprocessor":
+            _pp_inputs["low_threshold"] = _pp.get("low_threshold", 100)
+            _pp_inputs["high_threshold"] = _pp.get("high_threshold", 200)
+        wf[prep_id] = {"class_type": _pp_type, "inputs": _pp_inputs}
         wf[cnapply_id] = {
             "class_type": "ControlNetApplyAdvanced",
             "inputs": {

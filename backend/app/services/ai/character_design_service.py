@@ -59,6 +59,7 @@ from app.services.ai.image_ops import (
     _shrink_for_full_body,
 )
 from app.services.ai.capability import resolve_capability
+from app.services.ai.gen_profile import resolve_profile_for_workflow
 from app.services.ai.wf_node_ops import (
     _CN_APPLY_TYPES,
     _bypass_controlnet_nodes,
@@ -112,22 +113,7 @@ def _hex_to_sd_color(hex_color: str) -> str:
         return "colored"
 
 
-# CN weight 上限（None = 不設限，沿用使用者滑桿值）
-# partial/bust：概念圖為半身，下半身需由 SDXL 在留白區腦補。CN 過強會把「下半留空」
-# 也當成硬約束 → 腿生不出來（實測 0.50 可完整補腿、≥0.70 失敗）。故對需腦補下半的
-# coverage 設上限，cn_weight = min(滑桿值, 上限)，保證任何滑桿值都能補出全身。
-# bust 露出較少、需腦補更多 → 上限比 partial 再低。
-_COVERAGE_CN_WEIGHT: dict[str, float | None] = {
-    "full":    None,
-    "partial": 0.6,
-    "bust":    0.5,
-}
-# CN end_percent override
-_COVERAGE_CN_END_PERCENT: dict[str, float | None] = {
-    "full":    None,
-    "partial": None,
-    "bust":    None,
-}
+# coverage→CN 上限/end_percent 已移至 gen_profile.GEN_PROFILE（R3 2026-06-20，per-family 單一真相）。
 
 
 
@@ -189,126 +175,13 @@ def _create_inpaint_canvas_and_mask(
     return canvas_out.getvalue(), mask_out.getvalue()
 
 
-def _inject_inpaint_nodes(wf: dict, canvas_filename: str, mask_filename: str) -> None:
-    """
-    Replace EmptyLatentImage with VAEEncodeForInpaint (canvas image + mask).
-    Sets KSampler denoise=1.0 so only the masked lower-body region is regenerated.
-    """
-    empty_latent_id: str | None = None
-    for nid, node in wf.items():
-        if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage":
-            empty_latent_id = nid
-            break
-    if empty_latent_id is None:
-        logger.warning("[inpaint-inject] EmptyLatentImage not found — inpaint skipped")
-        return
-
-    vae_ref: list | None = None
-    for nid, node in wf.items():
-        if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":
-            vae_ref = [nid, 2]
-            break
-    if vae_ref is None:
-        logger.warning("[inpaint-inject] CheckpointLoaderSimple not found — inpaint skipped")
-        return
-
-    max_id = max((int(k) for k in wf if k.isdigit()), default=500)
-    canvas_load_id = str(max_id + 1)
-    mask_load_id = str(max_id + 2)
-    vae_encode_id = str(max_id + 3)
-
-    wf[canvas_load_id] = {
-        "class_type": "LoadImage",
-        "inputs": {"image": canvas_filename, "upload": "image"},
-    }
-    wf[mask_load_id] = {
-        "class_type": "LoadImageMask",
-        "inputs": {"image": mask_filename, "channel": "red", "upload": "image"},
-    }
-    wf[vae_encode_id] = {
-        "class_type": "VAEEncodeForInpaint",
-        "inputs": {
-            "pixels": [canvas_load_id, 0],
-            "vae": vae_ref,
-            "mask": [mask_load_id, 0],
-            "grow_mask_by": 6,
-        },
-    }
-
-    for nid, node in wf.items():
-        if not isinstance(node, dict) or nid == empty_latent_id:
-            continue
-        for key, val in node.get("inputs", {}).items():
-            if isinstance(val, list) and val and str(val[0]) == empty_latent_id:
-                node["inputs"][key] = [vae_encode_id, 0]
-
-    wf.pop(empty_latent_id, None)
-
-    for node in wf.values():
-        if isinstance(node, dict) and node.get("class_type") == "KSampler":
-            node.get("inputs", {})["denoise"] = 1.0
-
-    logger.info("[inpaint-inject] VAEEncodeForInpaint injected (canvas=%s)", canvas_filename)
-
-
-def _inject_img2img_node(wf: dict, canvas_filename: str, denoise: float = 0.70) -> None:
-    """
-    Replace EmptyLatentImage with VAEEncode (img2img).
-    The full canvas (sketch in upper portion) is encoded as the starting latent;
-    KSampler denoise=0.70 re-renders the whole image in a unified style while
-    preserving the sketch structure — no hard seam between original and generated.
-    """
-    empty_latent_id: str | None = None
-    for nid, node in wf.items():
-        if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage":
-            empty_latent_id = nid
-            break
-    if empty_latent_id is None:
-        logger.warning("[img2img-inject] EmptyLatentImage not found — img2img skipped")
-        return
-
-    vae_ref: list | None = None
-    for nid, node in wf.items():
-        if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":
-            vae_ref = [nid, 2]
-            break
-    if vae_ref is None:
-        logger.warning("[img2img-inject] CheckpointLoaderSimple not found — img2img skipped")
-        return
-
-    max_id = max((int(k) for k in wf if k.isdigit()), default=500)
-    load_id = str(max_id + 1)
-    encode_id = str(max_id + 2)
-
-    wf[load_id] = {
-        "class_type": "LoadImage",
-        "inputs": {"image": canvas_filename, "upload": "image"},
-    }
-    wf[encode_id] = {
-        "class_type": "VAEEncode",
-        "inputs": {"pixels": [load_id, 0], "vae": vae_ref},
-    }
-
-    for nid, node in wf.items():
-        if not isinstance(node, dict) or nid == empty_latent_id:
-            continue
-        for key, val in node.get("inputs", {}).items():
-            if isinstance(val, list) and val and str(val[0]) == empty_latent_id:
-                node["inputs"][key] = [encode_id, 0]
-
-    wf.pop(empty_latent_id, None)
-
-    for node in wf.values():
-        if isinstance(node, dict) and node.get("class_type") == "KSampler":
-            node.get("inputs", {})["denoise"] = denoise
-
-    logger.info("[img2img-inject] VAEEncode injected (canvas=%s, denoise=%.2f)", canvas_filename, denoise)
+# _inject_inpaint_nodes / _inject_img2img_node 已移除（死代碼，無呼叫端；2026-06-20 R1）。
 
 
 _CANVAS_EXPAND_WF = "canvas_expand_flux.json"
 _CANVAS_EXPAND_SDXL_WF = "canvas_expand_sdxl.json"   # 方案3：SDXL inpaint 外擴（重用主生成 checkpoint，免載 Flux）
-# 方案3（pre-ref 外擴）預設關閉 → 走穩定的方案1（CN 夾 0.5 單段 SDXL）。
-# 設環境變數 CRAFTFLOW_PRE_REF_EXPAND=1 才啟用（實驗性，高貼合但較慢、偶有破圖風險）。
+# 方案3（pre-ref 外擴）為 v36 變體半身→全身正式路線（06-19 定版），預設啟用。
+# 設 CRAFTFLOW_PRE_REF_EXPAND=0 可關閉、退回方案1（CN 夾上限單段 SDXL，較快但貼合較鬆）。
 _PRE_REF_ENABLED = os.getenv("CRAFTFLOW_PRE_REF_EXPAND", "1").strip() == "1"
 
 
@@ -384,8 +257,13 @@ async def _run_canvas_expand_sdxl(
           "inset, split image, border, frame, cropped, disconnected body, "
           "long legs, elongated body, wide stance, spread legs, disproportionate"
     )
+    # 外擴用較小解析度：CN preprocessor 重描到 resolution=1024，不需與主生成同解析度。
+    # 75% 線性縮小 + 64 對齊 + 最小 512 → latent token ~44% 減少。
+    _exp_scale = 0.75
+    _exp_w = max(512, round(width  * _exp_scale / 64) * 64)
+    _exp_h = max(512, round(height * _exp_scale / 64) * 64)
     canvas_bytes, mask_bytes = _create_inpaint_canvas_and_mask(
-        sketch_bytes, width, height, coverage
+        sketch_bytes, _exp_w, _exp_h, coverage
     )
     canvas_fn = comfyui_client.upload_image_bytes(canvas_bytes, "canvas_expand_sdxl_input.png")
     mask_fn = comfyui_client.upload_image_bytes(mask_bytes, "canvas_expand_sdxl_mask.png")
@@ -469,6 +347,11 @@ async def _generate_design_core(
     timings: dict[str, float] = {}
     t_total = time.perf_counter()
 
+    active_wf = state.get_workflow()
+    _profile, _gen_family = resolve_profile_for_workflow(active_wf)
+    logger.info("[%s] gen profile: family=%s steps=%s full_cn_weight=%s",
+                log_label, _gen_family, _profile.steps, _profile.full_cn_weight)
+
     # ── Build Chinese description ──────────────────────────────────────────
     parts = [f"角色名稱：{inp.name}"]
 
@@ -526,14 +409,17 @@ async def _generate_design_core(
                 )
                 # 安全基線（方案1）：先縮圖 + 夾 CN 上限；pre-ref 成功時後段會覆寫為全身 ref 並還原 CN。
                 _cn_ref_bytes = _shrink_for_full_body(valid_images[0], _exp_w, _exp_h, _cn_coverage)
-                _cn_w_ceiling = _COVERAGE_CN_WEIGHT.get(_cn_coverage)
+                _cn_w_ceiling = (
+                    _profile.full_cn_weight if _cn_coverage == "full"
+                    else _profile.coverage_cn_weight.get(_cn_coverage)
+                )
                 if _cn_w_ceiling is not None and cn_weight > _cn_w_ceiling:
                     logger.info(
                         "[%s] coverage=%s：CN 強度 %.2f 超過補腿安全上限，夾到 %.2f",
                         log_label, _cn_coverage, cn_weight, _cn_w_ceiling,
                     )
                     cn_weight = _cn_w_ceiling
-                _coverage_end_pct = _COVERAGE_CN_END_PERCENT.get(_cn_coverage)
+                _coverage_end_pct = _profile.coverage_cn_end_pct.get(_cn_coverage)
                 logger.info(
                     "[%s] coverage=%s pre_ref=%s → CN (weight=%.2f, fill=%.2f)",
                     log_label, _cn_coverage, _pre_ref, cn_weight,
@@ -576,7 +462,7 @@ async def _generate_design_core(
     # ── Compile description ────────────────────────────────────────────────
     t0 = time.perf_counter()
     art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
-    style = _resolve_style(art_style)
+    style = _resolve_style(art_style, active_wf)
     _overrides = _compile_overrides(art_style)
     await guardian.request_focus("ollama")
     try:
@@ -632,7 +518,7 @@ async def _generate_design_core(
             ", simple background, flat background, no background detail, no scenery" + bg_tag
         )
         width, height = _fullbody_canvas(inp.height)
-        steps = 20
+        steps = _profile.steps
 
     # Gender/age tag anchors subject count — must be at absolute front
     gender_tag = _age_gender_tag(inp.gender, inp.age)
@@ -741,7 +627,6 @@ async def _generate_design_core(
 
     # ── Generate（SDXL）────────────────────────────────────────────────────
     ipa_used = False
-    active_wf = state.get_workflow()
 
     global_lora = state.get_lora()
     lora_list = []
@@ -762,16 +647,39 @@ async def _generate_design_core(
     # HTTPException (e.g. UI-format workflow 422) intentionally not caught here — surfaces to user
     wf = _load_workflow(active_wf)
 
+    # 方案3 + Canny 相容修：pre-ref 外擴輸出為彩色 SDXL 圖；Canny 會把陰影/布料全提取為
+    # 密集 noise 邊緣 → CN 被 noise 引導 → 破圖（V35 CannyEdgePreprocessor 實測）。
+    # pre-ref 成功時，記憶體中將 CannyEdgePreprocessor 換成 AnimeLineArtPreprocessor，
+    # AnimeLineArt 從彩圖提取乾淨線稿，與外擴輸出相容。不改磁碟 workflow 檔。
+    if _pre_ref_done:
+        for _n in wf.values():
+            if isinstance(_n, dict) and _n.get("class_type") == "CannyEdgePreprocessor":
+                _n["class_type"] = "AnimeLineArtPreprocessor"
+                _inp = _n.get("inputs", {})
+                _inp.pop("low_threshold", None)
+                _inp.pop("high_threshold", None)
+                if "resolution" not in _inp:
+                    _inp["resolution"] = 1024
+                logger.info("[%s] 方案3：CannyEdgePreprocessor → AnimeLineArtPreprocessor（pre-ref 外擴圖相容）", log_label)
+
     # 統一注入管線：啟用且有圖 → 缺節點則建、有則沿用；停用或無圖 → 既有節點 bypass。
     need_ipa_inject = _ipa_ref_bytes is not None and not _wf_has_ipa(wf)
     need_cn_inject = _cn_ref_bytes is not None and not _wf_has_controlnet(wf)
     if need_ipa_inject or need_cn_inject:
         _inject_models = resolve_capability(wf, state.get_checkpoint())["models"]
+        # CN preprocessor：依 profile（illustrious=canny，復刻 V35 附件三品質）；
+        # pre-ref 外擴為彩色圖 → Canny 會抓雜訊 → 強制 AnimeLineArt。
+        if _pre_ref_done or _profile.cn_preprocessor != "canny":
+            _cn_pp = {"type": "AnimeLineArtPreprocessor", "resolution": _profile.cn_resolution}
+        else:
+            _cn_pp = {"type": "CannyEdgePreprocessor", "low_threshold": _profile.cn_canny_low,
+                      "high_threshold": _profile.cn_canny_high, "resolution": _profile.cn_resolution}
         _inject_ipa_cn_nodes(
-            wf, inject_ipa=need_ipa_inject, inject_cn=need_cn_inject, models=_inject_models
+            wf, inject_ipa=need_ipa_inject, inject_cn=need_cn_inject,
+            models=_inject_models, cn_preprocessor=_cn_pp,
         )
-        logger.info("[%s] 動態注入節點 ipa=%s cn=%s（工作流 '%s' 原缺節點）",
-                    log_label, need_ipa_inject, need_cn_inject, active_wf)
+        logger.info("[%s] 動態注入節點 ipa=%s cn=%s preproc=%s（工作流 '%s' 原缺節點）",
+                    log_label, need_ipa_inject, need_cn_inject, _cn_pp["type"], active_wf)
 
     if _ipa_ref_bytes is not None:
         _t = time.perf_counter()
@@ -803,7 +711,11 @@ async def _generate_design_core(
         elif ct == "IPAdapterAdvanced" and ipa_used:
             inputs["weight"] = round(ipa_weight, 2)
         elif ct in _CN_APPLY_TYPES and _cn_ref_bytes is not None:
-            inputs["strength"] = round(cn_weight, 2)
+            # 內建 CN（V35 等 workflow JSON 已校準 strength）→ 保留 JSON 值，不讓滑桿蓋掉；
+            # 動態注入（V36 等無內建 CN）→ 才吃使用者滑桿值。
+            # end_percent 兩者都設（coverage 引導，不影響校準強度）。
+            if need_cn_inject:
+                inputs["strength"] = round(cn_weight, 2)
             if _coverage_end_pct is not None:
                 inputs["end_percent"] = _coverage_end_pct
     if ipa_used:
@@ -833,13 +745,16 @@ async def _generate_design_core(
     timings["comfyui"] = round(time.perf_counter() - t0, 1)
 
     # ── Canvas Expand 後置（變體版：full → SDXL 後對輸出 Flux 擴圖，try/except 回退）──
-    # 只有 coverage=full 時 SDXL 有 CN 引導、輸出穩定為單人全身圖，才安全做 canvas expand
+    # 只有 coverage=full 且 CN 實際啟用時，SDXL 輸出才穩定為單人全身圖，才安全做 canvas expand。
+    # cn_used=False（IPA/CN 關閉）時 _cn_coverage 停在預設 "full" 但未做 coverage 偵測，
+    # 若不排除會誤觸發 Flux（17GB 載入），造成異常慢。
     cn_mode_out = cn_mode
     if (canvas_expand_mode == "post"
             and not is_expression
             and _cn_coverage == "full"
             and not _pre_ref_done
-            and _canvas_expand_available):
+            and _canvas_expand_available
+            and cn_used):
         t0_expand = time.perf_counter()
         logger.info("[%s] canvas-expand via Flux 2 on SDXL output (coverage=%s)", log_label, _cn_coverage)
         try:

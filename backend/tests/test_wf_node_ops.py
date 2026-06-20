@@ -147,3 +147,43 @@ def test_inject_prompts_title_fallback():
     _inject_prompts(wf, "POS_TEXT", "NEG_TEXT")
     assert wf["2"]["inputs"]["text"] == "POS_TEXT"
     assert wf["3"]["inputs"]["text"] == "NEG_TEXT"
+
+
+# ── _inject_ipa_cn_nodes：CN preprocessor 可選（canny / anime_lineart）──────────
+
+def _min_wf_for_inject():
+    return {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "x.safetensors"}},
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "p", "clip": ["1", 1]}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "n", "clip": ["1", 1]}},
+        "4": {"class_type": "KSampler", "inputs": {
+            "model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "denoise": 1.0,
+        }},
+    }
+
+
+def _preproc_types(wf):
+    return [n.get("class_type") for n in wf.values()
+            if isinstance(n, dict) and "Preprocessor" in n.get("class_type", "")]
+
+
+def test_inject_cn_default_is_anime_lineart():
+    from app.services.ai import wf_node_ops as ops
+    wf = _min_wf_for_inject()
+    ops._inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True)
+    assert "AnimeLineArtPreprocessor" in _preproc_types(wf)
+
+
+def test_inject_cn_canny_when_requested():
+    from app.services.ai import wf_node_ops as ops
+    wf = _min_wf_for_inject()
+    ops._inject_ipa_cn_nodes(
+        wf, inject_ipa=False, inject_cn=True,
+        cn_preprocessor={"type": "CannyEdgePreprocessor", "low_threshold": 100,
+                         "high_threshold": 200, "resolution": 1024},
+    )
+    canny = [n for n in wf.values()
+             if isinstance(n, dict) and n.get("class_type") == "CannyEdgePreprocessor"]
+    assert len(canny) == 1
+    assert canny[0]["inputs"]["low_threshold"] == 100
+    assert canny[0]["inputs"]["high_threshold"] == 200
