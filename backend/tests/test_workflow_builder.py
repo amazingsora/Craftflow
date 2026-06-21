@@ -167,3 +167,47 @@ def test_detect_style_via_mapping(wf_dirs, monkeypatch):
 def test_detect_style_fallback_sdxl(wf_dirs, monkeypatch):
     monkeypatch.setattr(wb, "_load_checkpoint_styles", lambda: {})
     assert wb._detect_style("missing.json") == PromptStyle.SDXL
+
+
+# ── _inject_loras：model/clip 路徑經中介節點時仍要接上（2026-06-20 回歸）──────
+
+def test_inject_loras_through_intermediary_node():
+    """model/clip 先經過內建的 'Lora Loader (LoraManager)' 再到 KSampler 時，
+    注入的 LoRA 必須仍接上 pipeline（舊版型別比對會漏接 → 孤兒節點）。"""
+    wf = {
+        "30": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "base.safetensors"}},
+        "5":  {"class_type": "Lora Loader (LoraManager)", "inputs": {"model": ["30", 0], "clip": ["30", 1]}},
+        "43": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["5", 1]}},
+        "46": {"class_type": "KSampler", "inputs": {"model": ["5", 0]}},
+    }
+    wb._inject_loras(wf, [{"model": "extra.safetensors", "weight": 0.8}])
+    # 注入的 _lora_0 必須被某節點引用（真的生效，非孤兒）
+    used = any(
+        isinstance(n, dict) and any(
+            isinstance(v, list) and v and str(v[0]) == "_lora_0"
+            for v in n.get("inputs", {}).values()
+        )
+        for n in wf.values()
+    )
+    assert used, "_lora_0 應接上 pipeline"
+    # LoraManager#5 的 model/clip 應改成吃 _lora_0；vae 不受影響
+    assert wf["5"]["inputs"]["model"] == ["_lora_0", 0]
+    assert wf["5"]["inputs"]["clip"] == ["_lora_0", 1]
+    # _lora_0 的根仍是 checkpoint
+    assert wf["_lora_0"]["inputs"]["model"] == ["30", 0]
+
+
+def test_inject_loras_direct_consumer_still_works():
+    """既有情境（KSampler.model 直接指向 checkpoint）不可退化。"""
+    wf = _api_wf()
+    wb._inject_loras(wf, [{"model": "x.safetensors", "weight": 0.7}])
+    assert wf["3"]["inputs"]["model"] == ["_lora_0", 0]
+
+
+# ── _is_custom_workflow：自訂 Workflow 模式判定（2026-06-20 全域 LoRA 閘控）──────
+
+def test_is_custom_workflow(tmp_path, monkeypatch):
+    (tmp_path / "Standard_V36.json").write_text("{}")
+    monkeypatch.setattr(wb, "CUSTOM_WORKFLOWS_DIR", tmp_path)
+    assert wb._is_custom_workflow("Standard_V36.json") is True      # 在 custom 目錄 → workflow 模式
+    assert wb._is_custom_workflow("text_to_image.json") is False    # 不在 → checkpoint 模式（系統）

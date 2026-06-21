@@ -49,9 +49,7 @@ def test_resolve_profile_total_failure_is_safe(monkeypatch):
     assert family == "sdxl" and profile.steps == 20
 
 
-def test_illustrious_uses_canny_preprocessor():
-    # 復刻 V35 附件三品質：illustrious 走 Canny；其餘家族維持 anime_lineart
-    assert gp.get_profile("illustrious").cn_preprocessor == "canny"
-    assert gp.get_profile("illustrious").cn_canny_low == 100
-    assert gp.get_profile("illustrious").cn_canny_high == 200
+def test_illustrious_uses_anime_lineart_like_v35():
+    # 對齊真 V35(data/custom_workflows)內建鏈：AnimeLineArt（非 Canny）
+    assert gp.get_profile("illustrious").cn_preprocessor == "anime_lineart"
     assert gp.get_profile("sdxl").cn_preprocessor == "anime_lineart"

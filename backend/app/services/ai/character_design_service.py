@@ -45,6 +45,7 @@ from app.services.ai.workflow_builder import (
     _replace_negative_seeds,
     _resolve_style,
     _run_comfyui,
+    _is_custom_workflow,
 )
 from app.services.ai.image_ops import (
     _BODY_FILL_RATIO,
@@ -630,7 +631,9 @@ async def _generate_design_core(
 
     global_lora = state.get_lora()
     lora_list = []
-    if global_lora.get("name"):
+    # 全域 LoRA 僅 Checkpoint 模式生效；自訂 workflow 模式「LoRA 由 workflow 決定」→ 不注入。
+    # （角色 / 畫風 LoRA 屬個別實體設定，仍注入。）
+    if global_lora.get("name") and not _is_custom_workflow(active_wf):
         lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
     # 角色專屬 LoRA（直通欄位）：變體沿用主角色的 LoRA 以維持一致性
     if character.lora_name:

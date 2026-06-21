@@ -264,7 +264,7 @@
   },
   "30": {
     "inputs": {
-      "ckpt_name": "AnythingXL_xl.safetensors"
+      "ckpt_name": "fabricatedXL_v70.safetensors"
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
