@@ -50,3 +50,4 @@ data/training_images/
 vite.config.js.timestamp-*.mjs
 data/runtime_state.json
 data/runtime_state.json.tmp
+backend/logs/

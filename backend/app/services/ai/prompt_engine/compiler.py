@@ -180,7 +180,7 @@ def compile(
         prompt,
         model=model,
         options={"num_predict": 250, "temperature": 0.3},
-        keep_alive=-1,  # 常駐 VRAM：免每次提示詞編譯冷載入文字模型（vram_manager 仍會在 VRAM 不足時驅逐）
+        keep_alive=0,  # 2026-06-21：編完即退 VRAM，避免 9b 殘留餓死 ComfyUI 主 pass（16GB 上主 pass 80s→~35s 穩定）。代價：每次編譯冷載 ~3-5s。
     )
     if raw_response.startswith("["):
         raise RuntimeError(raw_response)
