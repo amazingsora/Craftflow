@@ -7,6 +7,7 @@ parents 索引依本檔深度調整（services/ai/ 比 api/ 深一層）；Docke
 from __future__ import annotations
 
 import json
+import struct
 import logging
 from pathlib import Path
 from typing import Optional
@@ -19,7 +20,7 @@ import random
 
 from sqlalchemy.orm import Session
 
-from app.core.config import CUSTOM_WORKFLOWS_DIR
+from app.core.config import CUSTOM_WORKFLOWS_DIR, COMFYUI_LORAS_DIR
 from app.core import state
 from app.models.art_style import ArtStyle
 from app.services import comfyui_client
@@ -69,6 +70,31 @@ def _extra_tags(art_style: Optional[ArtStyle]) -> str:
     return (art_style.extra_tags or "").strip() if art_style else ""
 
 
+_LORA_ARCH_CACHE: dict = {}
+
+def _lora_arch(lora_name: str):
+    """從 safetensors __metadata__ 的 ss_base_model_version 推 LoRA 訓練底模架構。
+    回 'sdxl'/'sd15'/None(未知→不警告)。best-effort，任何失敗→None。"""
+    if lora_name in _LORA_ARCH_CACHE:
+        return _LORA_ARCH_CACHE[lora_name]
+    arch = None
+    try:
+        path = COMFYUI_LORAS_DIR / lora_name
+        if path.exists():
+            with open(path, "rb") as f:
+                n = struct.unpack("<Q", f.read(8))[0]
+                hdr = json.loads(f.read(n))
+            base = str(hdr.get("__metadata__", {}).get("ss_base_model_version", "")).lower()
+            if "xl" in base:
+                arch = "sdxl"
+            elif base.startswith("sd_v1") or "v1-5" in base or "sd1" in base:
+                arch = "sd15"
+    except Exception:
+        arch = None
+    _LORA_ARCH_CACHE[lora_name] = arch
+    return arch
+
+
 def _inject_loras(wf: dict, loras: list) -> None:
     """Insert a LoraLoader chain into the workflow (mutates wf in place).
 
@@ -88,6 +114,19 @@ def _inject_loras(wf: dict, loras: list) -> None:
     if ckpt_id is None:
         logger.warning("[lora] CheckpointLoaderSimple not found — skipping LoRA injection")
         return
+
+    # 架構健檢（警告為主，不阻擋）：LoRA 訓練底模與 checkpoint family 不符 → 多半靜默失效。
+    try:
+        from app.services.ai.capability import resolve_family
+        _ckpt_name = wf[ckpt_id].get("inputs", {}).get("ckpt_name", "")
+        _ckpt_arch = "sd15" if resolve_family(_ckpt_name) == "sd15" else "sdxl"
+        for _l in valid:
+            _la = _lora_arch(_l["model"].strip())
+            if _la and _la != _ckpt_arch:
+                logger.warning("[lora] 架構不符：LoRA '%s'(%s) vs checkpoint '%s'(%s) → 多半靜默失效，請確認",
+                               _l["model"], _la, _ckpt_name, _ckpt_arch)
+    except Exception as _e:
+        logger.debug("[lora] arch check skipped: %s", _e)
 
     prev_id = ckpt_id
     for i, lora in enumerate(valid):

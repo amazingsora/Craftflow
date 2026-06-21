@@ -27,6 +27,7 @@ from app.core.config import (
     UPLOAD_DIR, CUSTOM_WORKFLOWS_DIR,
     PERSONAL_STYLE_ENABLED, PERSONAL_STYLE_EXTRA_TAGS,
     PERSONAL_NEGATIVE_ENABLED, PERSONAL_NEGATIVE,
+    IPA_FLAT_DRAFT_SCALE,
 )
 from app.core import state
 from app.core.database import get_db
@@ -169,6 +170,8 @@ def _create_inpaint_canvas_and_mask(
             break
         draw.rectangle([0, y, target_w - 1, y], fill=int(dy / blend_px * 255))
 
+    logger.info("[expand-canvas] coverage=%s fill=%.2f canvas=%dx%d sketch=%dx%d@top%d bottom=%d (下半 inpaint 區=%d px)",
+                coverage, fill, target_w, target_h, new_w, new_h, top, sketch_bottom, max(0, target_h - sketch_bottom))
     canvas_out = io.BytesIO()
     canvas.save(canvas_out, format="PNG")
     mask_out = io.BytesIO()
@@ -703,6 +706,12 @@ async def _generate_design_core(
         logger.info("[%s] ControlNet 停用/無參考圖 → 既有節點 bypass", log_label)
     _inject_loras(wf, lora_list)
     _inject_prompts(wf, final_positive, final_negative)
+    # flat_draft（線稿/平塗概念圖）當 IPA 參考易把成像拉平 → 自動降 IPA 權重（下限 0.1）。
+    _ipa_weight_eff = ipa_weight
+    if ipa_used and all_flat and IPA_FLAT_DRAFT_SCALE < 1.0:
+        _ipa_weight_eff = max(0.1, round(ipa_weight * IPA_FLAT_DRAFT_SCALE, 2))
+        logger.info("[%s] flat_draft 概念圖 → IPA 權重 %.2f→%.2f（IPA_FLAT_DRAFT_SCALE=%.2f，避免平塗拉平）",
+                    log_label, ipa_weight, _ipa_weight_eff, IPA_FLAT_DRAFT_SCALE)
     for node in wf.values():
         if not isinstance(node, dict):
             continue
@@ -715,7 +724,7 @@ async def _generate_design_core(
             inputs["seed"] = seed
             inputs["steps"] = steps
         elif ct == "IPAdapterAdvanced" and ipa_used:
-            inputs["weight"] = round(ipa_weight, 2)
+            inputs["weight"] = round(_ipa_weight_eff, 2)
         elif ct in _CN_APPLY_TYPES and _cn_ref_bytes is not None:
             # 內建 CN（V35 等 workflow JSON 已校準 strength）→ 保留 JSON 值，不讓滑桿蓋掉；
             # 動態注入（V36 等無內建 CN）→ 才吃使用者滑桿值。

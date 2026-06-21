@@ -1,9 +1,21 @@
 import logging
+import logging.handlers
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+_LOG_DIR = Path(__file__).resolve().parent / "logs"
+_log_handlers = [logging.StreamHandler()]
+try:
+    _LOG_DIR.mkdir(exist_ok=True)
+    _log_handlers.append(logging.handlers.RotatingFileHandler(
+        _LOG_DIR / "backend.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"))
+except Exception:
+    pass  # 落檔失敗不影響啟動，至少保留 console
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s:%(name)s:%(message)s",
+                    handlers=_log_handlers)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -13,9 +25,23 @@ from app.core.database import init_db
 from app.api import projects, chapters, volumes, characters, illustrations, analysis, ai_text, ai_art, status, art_generate, factions, settings, art_styles, training, export, generation_history
 
 
+def _startup_healthcheck():
+    """啟動時檢查預期工作流檔在位，缺則明確 WARNING（避免功能靜默退化，如方案3 外擴）。"""
+    from app.core.config import CUSTOM_WORKFLOWS_DIR
+    log = logging.getLogger("startup")
+    expected = ["canvas_expand_sdxl.json", "canvas_expand_flux.json"]
+    missing = [f for f in expected if not (CUSTOM_WORKFLOWS_DIR / f).exists()]
+    if missing:
+        log.warning("[healthcheck] 預期工作流缺失於 %s：%s → 相關功能將靜默退化，請確認",
+                    CUSTOM_WORKFLOWS_DIR, ", ".join(missing))
+    else:
+        log.info("[healthcheck] 預期工作流齊備（%d 檔）", len(expected))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    _startup_healthcheck()
     import asyncio
     backup_task = asyncio.create_task(backup_loop())
     yield
