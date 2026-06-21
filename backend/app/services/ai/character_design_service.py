@@ -258,8 +258,8 @@ async def _run_canvas_expand_sdxl(
           "inset, split image, border, frame, cropped, disconnected body, "
           "long legs, elongated body, wide stance, spread legs, disproportionate"
     )
-    # 外擴用較小解析度：CN preprocessor 重描到 resolution=1024，不需與主生成同解析度。
-    # 75% 線性縮小 + 64 對齊 + 最小 512 → latent token ~44% 減少。
+    # 外擴輸出僅作 CN 結構參考（preprocessor 重描到 resolution=1024、主 pass 再全解析度重繪），
+    # 故外擴解析度對 final 品質近乎無影響 → 用 75% 省時省 VRAM（64 對齊、最小 512）。
     _exp_scale = 0.75
     _exp_w = max(512, round(width  * _exp_scale / 64) * 64)
     _exp_h = max(512, round(height * _exp_scale / 64) * 64)
@@ -547,7 +547,10 @@ async def _generate_design_core(
 
     final_positive = gender_prefix + body_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
 
-    extra_neg = "detailed background, complex background, scenery, landscape, buildings, environment"
+    extra_neg = ("detailed background, complex background, scenery, landscape, buildings, environment"
+                 # 2026-06-21：抑制無端能量/火焰/光暈假影（不放 plain "glowing" 以免壓掉異色瞳/眼神光）
+                 ", energy aura, glowing aura, flames, fire, burning, embers, magic effect, spell effect"
+                 ", particle effects, glowing hands, energy effect, smoke")
     if not is_expression:
         extra_neg = f"{extra_neg}, {_FULLBODY_NEG_TAGS}"
         if _cn_coverage in ("partial", "bust"):
