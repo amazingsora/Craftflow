@@ -106,21 +106,22 @@ def _inject_loras(wf: dict, loras: list) -> None:
         logger.debug("[lora] injected %s (weight=%.2f)", lora["model"], weight)
         prev_id = node_id
 
-    # Rewire KSampler.model and CLIPTextEncode.clip to the last LoRA node
-    for node in wf.values():
-        if not isinstance(node, dict):
+    # Rewire every consumer of the checkpoint's model (slot 0) / clip (slot 1) outputs to
+    # the LoRA chain, so the LoRA applies even when the model/clip path first runs through
+    # other nodes (e.g. a workflow's built-in "Lora Loader (LoraManager)"). Edge-based, not
+    # type-based: the old type-list missed those intermediaries → injected LoRA dangled unused.
+    # VAE output (slot 2) is left on the checkpoint. The injected LoRA nodes are skipped to
+    # avoid rewiring the chain's own root reference into a cycle.
+    lora_ids = {f"_lora_{i}" for i in range(len(valid))}
+    for nid, node in wf.items():
+        if nid in lora_ids or not isinstance(node, dict):
             continue
-        inputs = node.get("inputs", {})
-        ct = node.get("class_type")
-        if ct == "KSampler":
-            if isinstance(inputs.get("model"), list) and inputs["model"][0] == ckpt_id:
-                inputs["model"] = [prev_id, 0]
-        elif ct == "IPAdapterAdvanced":
-            if isinstance(inputs.get("model"), list) and inputs["model"][0] == ckpt_id:
-                inputs["model"] = [prev_id, 0]
-        elif ct == "CLIPTextEncode":
-            if isinstance(inputs.get("clip"), list) and inputs["clip"][0] == ckpt_id:
-                inputs["clip"] = [prev_id, 1]
+        for key, val in node.get("inputs", {}).items():
+            if isinstance(val, list) and len(val) >= 2 and str(val[0]) == str(ckpt_id):
+                if val[1] == 0:
+                    node["inputs"][key] = [prev_id, 0]
+                elif val[1] == 1:
+                    node["inputs"][key] = [prev_id, 1]
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -176,6 +177,16 @@ def _load_workflow(name: str) -> dict:
             embedded_ckpt, global_ckpt,
         )
     return wf
+
+
+def _is_custom_workflow(name: str) -> bool:
+    """True = 工作流位於使用者 CUSTOM_WORKFLOWS_DIR（即前端「自訂 Workflow 模式」）。
+
+    此模式下 Checkpoint/全域 LoRA「由 workflow 本身決定」，後端不注入全域 LoRA；
+    Checkpoint 模式（系統 text_to_image.json）才注入全域 LoRA。
+    角色 / 畫風 LoRA 屬個別實體設定，不受此模式影響。
+    """
+    return (CUSTOM_WORKFLOWS_DIR / name).exists()
 
 
 def _load_checkpoint_styles() -> dict:
@@ -302,7 +313,8 @@ def _build_txt2img(req: "GenerateRequest", db: Session, batch_size: int = 1):
     # global LoRA（settings 頁設定）優先注入，art_style LoRA 疊加在後
     global_lora = state.get_lora()
     lora_list = []
-    if global_lora.get("name"):
+    # 全域 LoRA 僅 Checkpoint 模式（系統工作流）生效；自訂 workflow 模式由 workflow 決定。
+    if global_lora.get("name") and not _is_custom_workflow(state.get_workflow()):
         lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
     if art_style and art_style.loras:
         lora_list.extend(art_style.loras)

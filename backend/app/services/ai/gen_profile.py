@@ -54,7 +54,8 @@ GEN_PROFILE: dict[str, GenProfile] = {
     "noobai":      GenProfile(family="noobai"),
     # Illustrious（含 fabricatedXL_v70，即 V36 主路線）：
     # steps 略增 20→26（fabricatedXL 建議 18–30；補臉/細節），其餘沿用 SDXL 基線。
-    "illustrious": GenProfile(family="illustrious", steps=26, cn_preprocessor="canny"),
+    # illustrious(fabricatedXL_v70=V36/V35 主底模):對齊真 V35 內建鏈→AnimeLineArt(預設)
+    "illustrious": GenProfile(family="illustrious", steps=26),
     # 未來 Anima（非 SDXL，無 IPA，CN 僅 LLLite）：佔位，待 F4 落地。
     # "anima":     GenProfile(family="anima", ipa_enabled=False, cn_enabled=False),
 }
