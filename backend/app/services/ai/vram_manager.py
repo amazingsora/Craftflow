@@ -83,6 +83,9 @@ class VRAMGuardian:
         try:
             if tool == "comfyui":
                 gpu_free, torch_reserved = self._comfyui_vram()
+                logger.info("VRAM[comfyui] free=%.1fG reserved=%.1fG (resident_th=%.0fG req=%.0fG)",
+                            gpu_free / _GIB, torch_reserved / _GIB,
+                            _COMFYUI_RESIDENT_BYTES / _GIB, COMFYUI_REQUIRED_VRAM_GB)
                 # checkpoint 仍駐留 ComfyUI → 不需額外空間
                 if torch_reserved >= _COMFYUI_RESIDENT_BYTES:
                     return True

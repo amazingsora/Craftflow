@@ -54,3 +54,7 @@ PERSONAL_STYLE_ENABLED: bool = os.getenv("PERSONAL_STYLE_ENABLED", "false").lowe
 PERSONAL_STYLE_EXTRA_TAGS: str = os.getenv("PERSONAL_STYLE_EXTRA_TAGS", "")
 PERSONAL_NEGATIVE_ENABLED: bool = os.getenv("PERSONAL_NEGATIVE_ENABLED", "false").lower() == "true"
 PERSONAL_NEGATIVE: str = os.getenv("PERSONAL_NEGATIVE", "")
+
+# ── 生圖微調旋鈕 ──────────────────────────────────────────────
+# flat_draft(線稿/平塗概念圖)當 IPA 參考會把成像拉平 → 自動把 IPA 權重乘此係數(下限0.1)。1.0=不降。
+IPA_FLAT_DRAFT_SCALE: float = float(os.getenv("IPA_FLAT_DRAFT_SCALE", "0.5"))

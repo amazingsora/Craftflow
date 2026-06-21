@@ -7,6 +7,7 @@ CN 參考圖縮放（為 SD 補腿留空）、像素級 coverage 後備檢查。
 from __future__ import annotations
 
 import io
+import os
 import logging
 import statistics
 import struct
@@ -40,8 +41,18 @@ _FULLBODY_TALL_CM = 170
 _FULLBODY_SHORT_CM = 150
 _FULLBODY_WIDTH, _FULLBODY_HEIGHT = _FULLBODY_CANVAS_STD
 
-_BODY_FILL_RATIO = {"full": 1.0, "partial": 0.58, "bust": 0.42}
-_BODY_TOP_OFFSET = {"full": 0.0, "partial": 0.02, "bust": 0.02}
+# 半身→全身外擴的畫布幾何：概念圖佔畫布高度比例。可由 env 覆寫做 A/B(預設＝定版值，行為不變)。
+def _env_float(key: str, default: float) -> float:
+    try:
+        return float(os.getenv(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+_BODY_FILL_RATIO = {"full": 1.0,
+                    "partial": _env_float("BODY_FILL_PARTIAL", 0.58),
+                    "bust": _env_float("BODY_FILL_BUST", 0.42)}
+_BODY_TOP_OFFSET = {"full": 0.0,
+                    "partial": _env_float("BODY_TOP_OFFSET_PARTIAL", 0.02),
+                    "bust": _env_float("BODY_TOP_OFFSET_BUST", 0.02)}
 
 
 def _border_color(im) -> tuple[int, int, int]:
