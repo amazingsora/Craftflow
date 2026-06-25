@@ -93,7 +93,9 @@ def _inject_heterochromia(tags: list[str], text: str, anchor_source: str = "") -
             eng = lexicon.COLOR_MAP.get(m.group(1))
             if eng:
                 tag = f"{eng} eye ({side})"
-                if tag not in tag_lowers:
+                # 比對需與 tag_lowers 同樣正規化（去括號/空白），否則帶括號的 tag 永遠
+                # 判定為「不存在」→ 重複注入（眼睛標籤出現兩份的根因）。
+                if tag.lower().strip("() ") not in tag_lowers:
                     to_prepend.append(tag)
 
     # Remove any single-color eye tag that would conflict (e.g. LLM picked one color)
@@ -119,6 +121,27 @@ def _clean_clothing_hallucinations(tags: list[str], text_to_check: str) -> list[
         }
         return [t for t in tags if t.strip().lower().strip("()") not in formal_banned]
     return tags
+
+
+_PALE_SKIN_RE = re.compile(r'^(?:very |deathly |sickly )?pale(?: skin| complexion)?$', re.IGNORECASE)
+
+
+def _normalize_skin_tone(tags: list[str]) -> list[str]:
+    """膚色正規化：人設圖工作流不適用「死白」膚色（多由視覺參考圖帶入）。
+    把 pale / pale skin 等替換成自然的 light skin；tan、dark skin 等其他膚色不動。
+    """
+    result: list[str] = []
+    has_light = any(t.strip().lower() == "light skin" for t in tags)
+    for t in tags:
+        core = t.strip().lower().strip("()")
+        if _PALE_SKIN_RE.match(core):
+            if not has_light:
+                result.append("light skin")
+                has_light = True
+            # 重複的 pale 變體直接丟棄
+        else:
+            result.append(t)
+    return result
 
 
 _CONTEXT_BLOCKERS: list[tuple[set[str], set[str], str]] = [
@@ -194,35 +217,43 @@ def compile(
     if style is not PromptStyle.FLUX:
         combined_text = f"{text} {anchor_text} {extracted}"
         
-        # 【新增】服飾防幻覺過濾
-        cleaned_tags = _clean_clothing_hallucinations(cleaned_tags, combined_text)
-        
-        # 【新增】語義特徵強制注入（處理下垂眼、大小姐等神韻詞，並阻斷女僕幻覺）
-        cleaned_tags, _extra_neg = _inject_traits(cleaned_tags, text, anchor_source=anchor_text)
+        # ── [停用] Group A 內容腦補類過濾（2026-06-24 改用較強視覺/翻譯模型，保留模型原始輸出）──
+        # 還原：取消下方對應區塊註解即可。各 helper 函式本體保留未刪。
+        #
+        # A2 服飾防幻覺過濾（偵測背心/連帽→拔西裝）
+        # cleaned_tags = _clean_clothing_hallucinations(cleaned_tags, combined_text)
+        #
+        # A1 膚色正規化：死白 pale skin → light skin（先前已停用）
+        # cleaned_tags = _normalize_skin_tone(cleaned_tags)
+        #
+        # A3 語義特徵強制注入（下垂眼、大小姐等神韻詞）＋ 女僕幻覺阻斷（_CONTEXT_BLOCKERS）
+        # cleaned_tags, _extra_neg = _inject_traits(cleaned_tags, text, anchor_source=anchor_text)
+        #
+        # A4 情緒/微笑強制召回機制
+        # if any(kw in combined_text for kw in ["笑", "微笑", "高興", "smile", "happy"]):
+        #     if "smile" not in [t.lower().strip() for t in cleaned_tags]:
+        #         cleaned_tags.insert(0, "smile")
+        #
+        # A5 異色瞳：無來源清除 LLM 幻覺 heterochromia ＋ 有來源強制注入方向眼色
+        # if not _HETERO_DETECT_RE.search(f"{text} {anchor_text}"):
+        #     cleaned_tags = [t for t in cleaned_tags
+        #                     if t.lower().strip("() ") not in {"heterochromia", "odd eyes"}]
+        # cleaned_tags = _inject_heterochromia(cleaned_tags, text, anchor_source=anchor_text)
 
-        # 【新增】情緒/微笑強制召回機制
-        if any(kw in combined_text for kw in ["笑", "微笑", "高興", "smile", "happy"]):
-            if "smile" not in [t.lower().strip() for t in cleaned_tags]:
-                cleaned_tags.insert(0, "smile")
+        # ── [停用] Group B Anchor 系統（抽髮/眼色→清衝突→重排並 :1.1 加權，強制覆蓋模型）──
+        # 還原：取消下列三段註解，並改回 final_body = _reorder_tags(cleaned_tags, anchors)。
+        #
+        # B1 Extract authoritative anchors
+        # anchors = _extract_color_anchors(text, anchor_source=anchor_text)
+        # if _HETERO_DETECT_RE.search(f"{text} {anchor_text}"):
+        #     anchors = [a for a in anchors if not a.endswith(" eyes")]
+        # B2 Clean conflicts
+        # cleaned_tags = _remove_conflicting_tags(cleaned_tags, anchors)
+        # B3 Reorder and weight
+        # final_body = _reorder_tags(cleaned_tags, anchors)
 
-        # 【新增】異色瞳強制注入
-        cleaned_tags = _inject_heterochromia(cleaned_tags, text, anchor_source=anchor_text)
-
-        # Extract authoritative anchors
-        anchors = _extract_color_anchors(text, anchor_source=anchor_text)
-
-        # When heterochromia is present, single-color eye anchors extracted from the
-        # vision-extract portion of text are wrong (they reflect the reference image,
-        # not the actual character). Remove them so _reorder_tags doesn't re-inject
-        # e.g. "(purple eyes:1.1)" after _inject_heterochromia already cleaned it.
-        if _HETERO_DETECT_RE.search(f"{text} {anchor_text}"):
-            anchors = [a for a in anchors if not a.endswith(" eyes")]
-
-        # Clean conflicts
-        cleaned_tags = _remove_conflicting_tags(cleaned_tags, anchors)
-        
-        # Reorder and weight
-        final_body = _reorder_tags(cleaned_tags, anchors)
+        # A+B 停用後：直接採用清洗後的 tag 原序（仍保留 Group C 結構清理：sanitize/dedup）。
+        final_body = ", ".join(cleaned_tags)
     else:
         final_body = extracted
 
@@ -239,9 +270,36 @@ def compile(
 
 
 def _extract_output(raw: str) -> str:
-    if "Output:" in raw:
-        return raw.split("Output:")[-1].strip()
+    # [RESULT] = template end-marker（LLM 在此之後輸出）；"Output:" = few-shot 示例格式
+    for marker in ("[RESULT]", "Output:"):
+        if marker in raw:
+            return raw.split(marker)[-1].strip()
     return raw.strip()
+
+
+# ── Sanitize helpers ──────────────────────────────────────────────────────────
+
+# 單一 SD tag 合理上限：超過此長度 = LLM 推理文字洩漏（非合法 tag）
+_MAX_TAG_LEN = 80
+
+# 括號替代說明過濾：排除含 `:` 的（SD 權重 (tag:1.1) 不受影響）
+# 7+ 字元的無冒號括號 = LLM 替代說明（e.g. "(or horse boots)"）→ 清除
+# <7 字元保留：(left)=4, (right)=5 等方向標
+_ALT_PAREN_RE = re.compile(r'\s*\([^):]{7,}\)')
+
+# 行尾 dash 推理：" - wait...", " - note:" 等說明 → 清除到行尾
+_INLINE_DASH_RE = re.compile(r'\s+-\s+.+$')
+
+# Meta-label：以 `:` 結尾（e.g. "Conflict Resolution:", "Note:"）→ 丟棄整個 tag
+_META_LABEL_RE = re.compile(r':\s*$')
+
+# 數字年齡短語（"10 year old", "5 years old"）= 由 _age_body_tags 確定性處理；
+# LLM 翻譯版本會與 body_prefix 衝突，且可能產生不適當的外觀描述
+_AGE_PHRASE_RE = re.compile(r'\b\d+\s+years?\s+old\b', re.IGNORECASE)
+
+# CJK（中日韓）偵測：含這些字元的 tag = LLM 未完成翻譯／角色名／few-shot 範例反芻洩漏。
+# SD 模型對中文 token 無概念 → 丟棄整個 tag。通用安全網,model-agnostic。
+_CJK_RE = re.compile(r'[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]')
 
 
 def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
@@ -252,6 +310,42 @@ def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
         t_clean = t.strip().strip('."\'')
         if not t_clean:
             continue
+
+        # 斜線替代選項：取第一項（"a/b" → "a"）
+        if '/' in t_clean:
+            t_clean = t_clean.split('/')[0].strip()
+            if not t_clean:
+                continue
+
+        # 行尾 dash 推理（" - wait", " - note:"）
+        t_clean = _INLINE_DASH_RE.sub('', t_clean).strip()
+
+        # 括號替代說明（7+ 字元無冒號：(or horse boots) → 清除）
+        # 保留：(left)/(right)=短方向標；(golden eyes:1.1)=含冒號不受影響
+        t_clean = _ALT_PAREN_RE.sub('', t_clean).strip()
+        if not t_clean:
+            continue
+
+        # 超過長度上限 → LLM 推理文字洩漏，丟棄
+        if len(t_clean) > _MAX_TAG_LEN:
+            continue
+
+        # 含雙引號 → LLM meta-commentary（e.g. 'but let\'s stick to input: "金眼"'）
+        if '"' in t_clean:
+            continue
+
+        # 含 CJK（中日韓）→ LLM 未完成翻譯／角色名／範例反芻洩漏，丟棄整個 tag
+        if _CJK_RE.search(t_clean):
+            continue
+
+        # Meta-label 以 ":" 結尾（e.g. "Conflict Resolution:"）
+        if _META_LABEL_RE.search(t_clean):
+            continue
+
+        # 數字年齡短語 → 由 _age_body_tags 確定性處理，LLM 版本一律丟棄
+        if _AGE_PHRASE_RE.search(t_clean):
+            continue
+
         normalized = t_clean.lower().strip("()")
         if normalized in banned_set or normalized in seen:
             continue
@@ -275,7 +369,9 @@ def _remove_conflicting_tags(tags: list[str], anchors: list[str]) -> list[str]:
         tag_lower = tag.lower()
         conflict = False
         for c_eng, category in anchor_colors:
-            if category in tag_lower and c_eng not in tag_lower:
+            # 同時匹配複數與單數（eyes/eye），避免 LLM 生成 "red eye (left)" 形式漏網
+            category_variants = {category, category.rstrip('s')} if category.endswith('s') else {category}
+            if any(cv in tag_lower for cv in category_variants) and c_eng not in tag_lower:
                 conflict = True
                 break
         if not conflict:

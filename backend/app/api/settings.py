@@ -181,15 +181,54 @@ def set_workflow(req: SetWorkflowRequest):
     return {"workflow": state.get_workflow(), "ipa_supported": _wf_has_ipa(name)}
 
 
-@router.get("/vision-models", summary="列出 Ollama 已安裝的模型")
+# ── Ollama 模型能力分類 ───────────────────────────────
+# 用 /api/show 的 capabilities 欄位（如 ["completion","vision","tools","thinking"]）
+# 區隔「視覺模型」與「文字/提示詞模型」，避免把純文字模型誤設為視覺模型
+# （Ollama 對非視覺模型會靜默忽略圖片 → 模型純靠 prompt 腦補 → 幻覺）。
+_MODEL_CAPS_CACHE: dict[str, list[str]] = {}
+# 舊版 Ollama 無 capabilities 欄位時的名稱 fallback，至少不漏判常見 VL 模型
+_VISION_NAME_HINTS = ("vl", "vision", "llava", "moondream", "minicpm-v", "bakllava")
+
+
+def _model_capabilities(name: str) -> list[str]:
+    """查詢單一模型的 capabilities；結果以程序內快取避免重複呼叫。
+    /api/show 取不到或無此欄位（舊版 Ollama）時，退回名稱推斷視覺能力。"""
+    if name in _MODEL_CAPS_CACHE:
+        return _MODEL_CAPS_CACHE[name]
+    caps: list[str] = []
+    try:
+        r = requests.post(f"{OLLAMA_BASE}/api/show", json={"model": name}, timeout=8)
+        r.raise_for_status()
+        caps = r.json().get("capabilities") or []
+    except Exception:
+        caps = []
+    if not caps:
+        low = name.lower()
+        caps = ["vision", "completion"] if any(h in low for h in _VISION_NAME_HINTS) else ["completion"]
+    _MODEL_CAPS_CACHE[name] = caps
+    return caps
+
+
+def _is_vision_model(name: str) -> bool:
+    return "vision" in _model_capabilities(name)
+
+
+@router.get("/vision-models", summary="列出 Ollama 已安裝的模型（含能力分類）")
 def list_vision_models():
     try:
         r = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=5)
         r.raise_for_status()
-        models = [m["name"] for m in r.json().get("models", [])]
-        return {"models": models, "default": DEFAULT_VISION_MODEL}
+        names = [m["name"] for m in r.json().get("models", [])]
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"無法連接 Ollama：{e}")
+    caps = {n: _model_capabilities(n) for n in names}
+    vision_models = [n for n in names if "vision" in caps[n]]
+    return {
+        "models": names,                    # 向後相容：完整清單（文字欄沿用）
+        "vision_models": vision_models,     # 僅具視覺能力者（視覺欄專用）
+        "caps": caps,                       # {name: [capabilities]}，供前端標籤
+        "default": DEFAULT_VISION_MODEL,
+    }
 
 
 @router.get("/vision-model", summary="取得目前全域視覺模型")
@@ -203,9 +242,16 @@ class SetVisionModelRequest(BaseModel):
 
 @router.post("/vision-model", summary="切換全域視覺模型（執行期，重啟後回到 .env 設定）")
 def set_vision_model(req: SetVisionModelRequest):
-    if not req.model.strip():
+    name = req.model.strip()
+    if not name:
         raise HTTPException(status_code=400, detail="model 不可為空")
-    state.set_vision_model(req.model.strip())
+    # 守門：無視覺能力的模型設為視覺模型會導致圖片被靜默忽略、輸出幻覺
+    if not _is_vision_model(name):
+        raise HTTPException(
+            status_code=400,
+            detail=f"模型「{name}」不具備視覺能力（capabilities 無 vision），無法設為視覺模型。",
+        )
+    state.set_vision_model(name)
     return {"model": state.get_vision_model()}
 
 

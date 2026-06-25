@@ -385,6 +385,8 @@ export default function App() {
   const [pendingGenPrompt, setPendingGenPrompt] = useState('')
   const [historyFilter, setHistoryFilter] = useState('all')
   const [visionModels, setVisionModels] = useState([])
+  const [visionOnlyModels, setVisionOnlyModels] = useState([])  // 具視覺能力者，視覺欄專用
+  const [modelCaps, setModelCaps] = useState({})                // {name: [capabilities]}，供能力標籤
   const [activeVisionModel, setActiveVisionModel] = useState(
     () => localStorage.getItem('craftflow_vision_model') ?? ''
   )
@@ -480,10 +482,14 @@ export default function App() {
       .then(data => {
         if (!data) return
         const models = data.models ?? []
+        const visionOnly = data.vision_models ?? models   // 後端未升級時退回完整清單
         setVisionModels(models)
-        const target = (savedVisionModel && models.includes(savedVisionModel))
+        setVisionOnlyModels(visionOnly)
+        setModelCaps(data.caps ?? {})
+        // 視覺欄只能選具視覺能力者：優先記憶值 → .env 預設（須具視覺能力）→ 第一個視覺模型
+        const target = (savedVisionModel && visionOnly.includes(savedVisionModel))
           ? savedVisionModel
-          : (data.default ?? models[0] ?? '')
+          : (visionOnly.includes(data.default) ? data.default : (visionOnly[0] ?? ''))
         setActiveVisionModel(target)
         if (target) {
           fetch('/api/v1/settings/vision-model', {
@@ -754,6 +760,8 @@ export default function App() {
                 activeWorkflow={activeWorkflow}
                 onWorkflowChange={onWorkflowChange}
                 visionModels={visionModels}
+                visionOnlyModels={visionOnlyModels}
+                modelCaps={modelCaps}
                 activeVisionModel={activeVisionModel}
                 onVisionModelChange={onVisionModelChange}
                 activeTextModel={activeTextModel}

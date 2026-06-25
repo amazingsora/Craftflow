@@ -85,9 +85,16 @@ export default function SettingsTab({
   generationMode, setGenerationMode,
   checkpoints, activeCheckpoint, onCheckpointChange,
   workflows, activeWorkflow, onWorkflowChange,
-  visionModels, activeVisionModel, onVisionModelChange,
+  visionModels, visionOnlyModels, modelCaps,
+  activeVisionModel, onVisionModelChange,
   activeTextModel, onTextModelChange,
 }) {
+  // 後端未升級（無 vision_models 欄位）時退回完整清單，行為不破壞
+  const _visionList = (visionOnlyModels && visionOnlyModels.length > 0) ? visionOnlyModels : visionModels
+  const _caps = modelCaps ?? {}
+  const _hasVision = (m) => (_caps[m] ?? []).includes('vision')
+  // 文字欄沿用完整清單，但把多模態模型標出來，方便辨識
+  const _textLabel = (m) => _hasVision(m) ? `${m}（多模態）` : m
   const [comfyStatus, setComfyStatus] = useState(null)
   const [manualCheckpoint, setManualCheckpoint] = useState(activeCheckpoint)
   const [ckptSaved, setCkptSaved] = useState(false)
@@ -205,42 +212,44 @@ export default function SettingsTab({
         </div>
       </div>
 
-      {/* 視覺模型 */}
+      {/* 視覺模型 — 僅列具視覺能力（capabilities 含 vision）的模型 */}
       <div style={S.section}>
         <div style={S.sectionTitle}>視覺模型（Ollama）</div>
         <div style={S.configArea}>
-          {visionModels && visionModels.length > 0 ? (
+          {_visionList && _visionList.length > 0 ? (
             <div>
-              <span style={S.fieldLabel}>選擇模型（草圖問答、角色概念圖分析）</span>
+              <span style={S.fieldLabel}>選擇模型（草圖問答、角色概念圖分析）— 僅顯示支援視覺的模型</span>
               <select
                 style={S.select}
                 value={activeVisionModel}
                 onChange={e => onVisionModelChange(e.target.value)}
               >
-                {visionModels.map(m => <option key={m} value={m}>{m}</option>)}
+                {_visionList.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
           ) : (
             <div style={S.infoBox}>
-              無法連接 Ollama，模型清單不可用。請確認 Ollama 正在執行。
+              {visionModels && visionModels.length > 0
+                ? '目前已安裝的模型皆不支援視覺。請先 ollama pull 一顆 VL 模型（如 huihui_ai/qwen3-vl-abliterated）。'
+                : '無法連接 Ollama，模型清單不可用。請確認 Ollama 正在執行。'}
             </div>
           )}
         </div>
       </div>
 
-      {/* 翻譯文字模型 */}
+      {/* 文字／提示詞模型 — 文字分析、prompt 生成、翻譯共用 */}
       <div style={S.section}>
-        <div style={S.sectionTitle}>翻譯文字模型（Ollama）</div>
+        <div style={S.sectionTitle}>文字／提示詞模型（Ollama）</div>
         <div style={S.configArea}>
           {visionModels && visionModels.length > 0 ? (
             <div>
-              <span style={S.fieldLabel}>選擇模型（中文描述 → SD 英文 tag）</span>
+              <span style={S.fieldLabel}>選擇模型（中文描述 → SD 英文 tag、角色文字分析）</span>
               <select
                 style={S.select}
                 value={activeTextModel}
                 onChange={e => onTextModelChange(e.target.value)}
               >
-                {visionModels.map(m => <option key={m} value={m}>{m}</option>)}
+                {visionModels.map(m => <option key={m} value={m}>{_textLabel(m)}</option>)}
               </select>
             </div>
           ) : (

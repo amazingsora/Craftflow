@@ -39,6 +39,7 @@ function _initVariant(v = {}, charId = null, slot = null) {
     ipaWeight: 0.6,
     cnEnabled: true,
     cnWeight: 0.85,
+    visionEnabled: true,
   })
   return {
     color: v.color ?? '', traits: v.core_traits ?? '',
@@ -50,6 +51,7 @@ function _initVariant(v = {}, charId = null, slot = null) {
     ipaWeight: prefs.ipaWeight,
     cnEnabled: prefs.cnEnabled,
     cnWeight: prefs.cnWeight,
+    visionEnabled: prefs.visionEnabled,
     age: v.age != null ? String(v.age) : '', height: v.height != null ? String(v.height) : '', birthday: v.birthday ?? '',
     gender: v.gender ?? null, aiSummary: v.ai_summary ?? null,
     conceptImages: v.concept_images ?? [], aiImages: v.ai_generated_images ?? [],
@@ -117,6 +119,10 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   )
   const [cnWeight, setCnWeight] = useState(
     () => _loadGenPrefs(initChar.id, null, { cnWeight: 0.85 }).cnWeight
+  )
+  // 草圖視覺特徵：是否用視覺模型從概念圖抽特徵進 prompt（CN coverage 偵測不受影響）
+  const [visionEnabled, setVisionEnabled] = useState(
+    () => _loadGenPrefs(initChar.id, null, { visionEnabled: true }).visionEnabled
   )
   const [showDebugPrompt, setShowDebugPrompt] = useState(false)
   const [lastDebugPrompt, setLastDebugPrompt] = useState(null)
@@ -223,6 +229,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       const params = new URLSearchParams({
         use_ai_prompt: aiPromptEnabled ? '1' : '0',
         use_outfit: outfitEnabled ? '1' : '0',
+        use_vision: visionEnabled ? '1' : '0',
         use_ipa: (ipaSupported && ipaEnabled) ? '1' : '0',
         ipa_weight: String(ipaWeight),
         use_controlnet: (cnSupported && cnEnabled) ? '1' : '0',
@@ -436,6 +443,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       const vParams = new URLSearchParams({
         use_ai_prompt: vState.aiPromptEnabled ? '1' : '0',
         use_outfit: vState.outfitEnabled ? '1' : '0',
+        use_vision: (vState.visionEnabled ?? true) ? '1' : '0',
         use_ipa: (ipaSupported && vState.ipaEnabled) ? '1' : '0',
         ipa_weight: String(vState.ipaWeight ?? 0.6),
         use_controlnet: (cnSupported && (vState.cnEnabled ?? true)) ? '1' : '0',
@@ -938,6 +946,18 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
             <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input
                 type="checkbox"
+                checked={visionEnabled}
+                onChange={e => { setVisionEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'visionEnabled', e.target.checked) }}
+                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+              />
+              <span style={{ color: 'var(--accent)' }}>✦ </span>草圖視覺特徵
+            </label>
+            <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>開啟時用視覺模型從概念圖抽取特徵加入提示詞；關閉則僅靠欄位設定，交由 CN／畫風主導（CN 結構偵測不受影響）</p>
+          </div>
+          <div>
+            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
                 checked={outfitEnabled}
                 onChange={e => { setOutfitEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'outfitEnabled', e.target.checked) }}
                 style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
@@ -1292,6 +1312,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           <div>
             <label style={S.label}>說話風格</label>
             <textarea style={{ ...S.textarea, minHeight: 50 }} value={vState.voice} onChange={e => setV(activeTab, { voice: e.target.value })} placeholder="語氣、口頭禪..." />
+          </div>
+          <div>
+            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="checkbox" checked={vState.visionEnabled ?? true} onChange={e => { setV(activeTab, { visionEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'visionEnabled', e.target.checked) }}
+                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
+              <span style={{ color: 'var(--accent)' }}>✦ </span>草圖視覺特徵
+            </label>
+            <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>開啟時用視覺模型從概念圖抽取特徵加入提示詞；關閉則僅靠欄位設定，交由 CN／畫風主導</p>
           </div>
           <div>
             <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>

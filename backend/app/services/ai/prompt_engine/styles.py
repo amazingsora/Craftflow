@@ -69,6 +69,16 @@ _QUALITY_TAGS_ANYTHINGXL = {
     "normal quality", "low quality", "worst quality",
 }
 
+# 線稿／未上色參考圖的視覺屬性：這些描述的是輸入素材，不是期望生成的彩色人設圖。
+# 加入 banned_tags 防止 vision 抽取結果洩漏到 prompt 導致彩圖品質下降。
+_LINEART_ARTIFACT_TAGS = {
+    "uncolored", "uncolored skin tone", "uncolored skin",
+    "no color tone on skin", "no color tone", "no skin color",
+    "line-art style", "lineart style", "line art style",
+    "line-art style legs", "lineart legs",
+    "pencil sketch", "sketch style", "monochrome sketch",
+}
+
 _SD_SYNTAX_TAGS = {
     "masterpiece", "best quality", "score_9", "ultra detailed",
     "1girl", "1boy", "source_anime", "source_furry",
@@ -214,11 +224,18 @@ Convert Chinese descriptions into anime semantic tags for Illustrious XL.
 
 [CRITICAL RULES]
 - VOCABULARY: Use anime-appropriate semantic vocabulary.
+- ANTI-LEAK: Translate ONLY what the input states. NEVER copy vocabulary, effects, props, or settings from the EXAMPLES below into your output (e.g. do not add magic, glowing, particles, forest, fantasy) unless the input itself mentions them.
 {_DANBOORU_COMMON_RULES}
 
 [EXAMPLES]
-Input: 森林中的精靈，手中散發著魔法光芒
-Output: 1girl, solo, elf, long hair, pointed ears, forest, glowing hands, magic, particle effects, soft lighting, fantasy art style
+Input: 白色長捲髮，金色眼睛，天使氣質的少女
+Output: 1girl, solo, white hair, long hair, curly hair, golden eyes, angel, angelic, gentle expression
+
+Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮，灰色戰鬥服
+Output: 1girl, solo, heterochromia, red eye (left), green eye (right), brown hair, short hair, grey combat suit, tactical vest
+
+Input: 銀髮紫瞳的魔法師少年
+Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
 
 [INPUT]
 {{prompt}}
@@ -230,12 +247,15 @@ Output: 1girl, solo, elf, long hair, pointed ears, forest, glowing hands, magic,
 
 STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
     PromptStyle.SDXL: StyleConfig(
-        quality_prefix="masterpiece, best quality, high quality",
+        # 2026-06-23：對齊實測有效組合（amazing quality, absurdres）；原 high quality 偏弱。
+        quality_prefix="masterpiece, best quality, amazing quality, absurdres",
+        # 補強手指/解剖/壓縮假影防護（原版缺 bad hands/fingers/jpeg → 爛手與死白膚色擋不住）。
         negative=(
-            "low quality, blurry, watermark, text, signature, bad anatomy, "
-            "extra limbs, deformed, ugly, duplicate, worst quality"
+            "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, "
+            "missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, "
+            "signature, watermark, username, text, blurry, cropped, extra limbs, deformed"
         ),
-        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
+        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS | _LINEART_ARTIFACT_TAGS,
         llm_template=_SDXL_TEMPLATE,
     ),
     PromptStyle.PONY: StyleConfig(
@@ -260,9 +280,16 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
         llm_template=_NOOBAI_TEMPLATE,
     ),
     PromptStyle.ILLUSTRIOUS: StyleConfig(
-        quality_prefix="masterpiece, best quality, newest, highres",
-        negative="lowres, worst quality, low quality, ugly, watermark",
-        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_ILLUSTRIOUS | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
+        # 2026-06-23：fabricatedXL/Illustrious 主路。原 newest, highres 偏弱、negative 過薄；
+        # 換成實測有效組合並補強手指/解剖/壓縮假影。newest/highres 仍留在 banned_tags
+        # （_QUALITY_TAGS_ILLUSTRIOUS）阻止 LLM 自行吐出。
+        quality_prefix="masterpiece, best quality, amazing quality, absurdres",
+        negative=(
+            "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, "
+            "missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, "
+            "signature, watermark, username, text, blurry, cropped, extra limbs"
+        ),
+        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_ILLUSTRIOUS | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS | _LINEART_ARTIFACT_TAGS,
         llm_template=_ILLUSTRIOUS_TEMPLATE,
     ),
     PromptStyle.ANYTHINGXL: StyleConfig(
