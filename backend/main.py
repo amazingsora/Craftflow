@@ -5,10 +5,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 
-_LOG_DIR = Path(__file__).resolve().parent / "logs"
+# log 落檔放在 repo-root 的 data/logs（在 backend/ 之外），避免落在 uvicorn --reload
+# 的監看樹內、每寫一行就觸發 watchfiles「change detected」洗版（reload 不會真的發生，
+# 但 INFO log 會在排除規則前就印出）。
+_LOG_DIR = Path(__file__).resolve().parent.parent / "data" / "logs"
 _log_handlers = [logging.StreamHandler()]
 try:
-    _LOG_DIR.mkdir(exist_ok=True)
+    _LOG_DIR.mkdir(parents=True, exist_ok=True)
     _log_handlers.append(logging.handlers.RotatingFileHandler(
         _LOG_DIR / "backend.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"))
 except Exception:

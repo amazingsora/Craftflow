@@ -13,4 +13,4 @@ if (-not (Test-Path $Venv)) {
 
 Write-Host "啟動 Craftflow 後端（本機模式）... log -> backend\logs\backend.log" -ForegroundColor Cyan
 Set-Location $BackendDir
-& $Venv main:app --reload --host 0.0.0.0 --port 8000
+& $Venv main:app --reload --reload-exclude "logs/*" --host 0.0.0.0 --port 8000

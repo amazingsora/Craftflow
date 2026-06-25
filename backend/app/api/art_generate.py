@@ -483,6 +483,7 @@ async def generate_character_design(
     art_style_id: Optional[int] = None,
     use_ai_prompt: bool = True,
     use_outfit: bool = True,
+    use_vision: bool = True,
     use_ipa: bool = True,
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
@@ -498,7 +499,7 @@ async def generate_character_design(
         use_controlnet = False
     return await character_design_service.generate_character_design(
         character_id=character_id, expression=expression, art_style_id=art_style_id,
-        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit,
+        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight, db=db,
     )
@@ -512,6 +513,7 @@ async def generate_variant_design(
     art_style_id: Optional[int] = None,
     use_ai_prompt: bool = True,
     use_outfit: bool = True,
+    use_vision: bool = True,
     use_ipa: bool = True,
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
@@ -527,7 +529,7 @@ async def generate_variant_design(
         use_controlnet = False
     return await character_design_service.generate_variant_design(
         character_id=character_id, slot=slot, expression=expression, art_style_id=art_style_id,
-        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit,
+        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight, db=db,
     )

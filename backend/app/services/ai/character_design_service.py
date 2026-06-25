@@ -54,6 +54,7 @@ from app.services.ai.image_ops import (
     _FULLBODY_NEG_TAGS,
     _FULLBODY_POS_TAGS,
     _border_color,
+    _dedup_tags,
     _fullbody_canvas,
     _is_flat_color_draft,
     _letterbox_to_aspect,
@@ -134,10 +135,11 @@ def _create_inpaint_canvas_and_mask(
     target_w: int,
     target_h: int,
     coverage: str,
-) -> tuple[bytes, bytes]:
+) -> tuple[bytes, bytes, int]:
     """
     Place sketch in upper portion of a full-body canvas and generate inpaint mask.
-    Returns (canvas_png, mask_png) — mask white=inpaint lower body, black=preserve sketch.
+    Returns (canvas_png, mask_png, expand_px) — mask white=inpaint lower body, black=preserve
+    sketch；expand_px=下半實際擴圖像素高(coverage=full→fill=1.0 時為 0，供呼叫端 0px 防呆)。
     """
     fill = _BODY_FILL_RATIO.get(coverage, 0.72)
     top_offset_ratio = _BODY_TOP_OFFSET.get(coverage, 0.02)
@@ -170,13 +172,14 @@ def _create_inpaint_canvas_and_mask(
             break
         draw.rectangle([0, y, target_w - 1, y], fill=int(dy / blend_px * 255))
 
+    expand_px = max(0, target_h - sketch_bottom)
     logger.info("[expand-canvas] coverage=%s fill=%.2f canvas=%dx%d sketch=%dx%d@top%d bottom=%d (下半 inpaint 區=%d px)",
-                coverage, fill, target_w, target_h, new_w, new_h, top, sketch_bottom, max(0, target_h - sketch_bottom))
+                coverage, fill, target_w, target_h, new_w, new_h, top, sketch_bottom, expand_px)
     canvas_out = io.BytesIO()
     canvas.save(canvas_out, format="PNG")
     mask_out = io.BytesIO()
     mask.save(mask_out, format="PNG")
-    return canvas_out.getvalue(), mask_out.getvalue()
+    return canvas_out.getvalue(), mask_out.getvalue(), expand_px
 
 
 # _inject_inpaint_nodes / _inject_img2img_node 已移除（死代碼，無呼叫端；2026-06-20 R1）。
@@ -184,6 +187,9 @@ def _create_inpaint_canvas_and_mask(
 
 _CANVAS_EXPAND_WF = "canvas_expand_flux.json"
 _CANVAS_EXPAND_SDXL_WF = "canvas_expand_sdxl.json"   # 方案3：SDXL inpaint 外擴（重用主生成 checkpoint，免載 Flux）
+# 下半擴圖區低於此像素門檻 → 視為無下半身可補（多半是 coverage 誤判/防呆預設 full），
+# 啟動 Flux 只會空轉到 timeout，故直接沿用輸入圖，避免 silent 觸發 17GB Flux 拖垮速度。
+_MIN_EXPAND_PX = 16
 # 方案3（pre-ref 外擴）為 v36 變體半身→全身正式路線（06-19 定版），預設啟用。
 # 設 CRAFTFLOW_PRE_REF_EXPAND=0 可關閉、退回方案1（CN 夾上限單段 SDXL，較快但貼合較鬆）。
 _PRE_REF_ENABLED = os.getenv("CRAFTFLOW_PRE_REF_EXPAND", "1").strip() == "1"
@@ -203,9 +209,13 @@ async def _run_canvas_expand_flux(
     - Lower body area (mask=white) inpainted by Flux 2
     - Returns full-body image bytes
     """
-    canvas_bytes, mask_bytes = _create_inpaint_canvas_and_mask(
+    canvas_bytes, mask_bytes, expand_px = _create_inpaint_canvas_and_mask(
         sketch_bytes, width, height, coverage
     )
+    # 0px 防呆：無下半身可補 → 跳過 Flux，直接回輸入圖（修正 coverage 誤判預設 full 時的空轉 timeout）
+    if expand_px < _MIN_EXPAND_PX:
+        logger.info("[canvas-expand] 下半擴圖區 %dpx < %dpx → 跳過 Flux，沿用輸入圖", expand_px, _MIN_EXPAND_PX)
+        return sketch_bytes
     canvas_fn = comfyui_client.upload_image_bytes(canvas_bytes, "canvas_expand_input.png")
     mask_fn = comfyui_client.upload_image_bytes(mask_bytes, "canvas_expand_mask.png")
 
@@ -266,7 +276,7 @@ async def _run_canvas_expand_sdxl(
     _exp_scale = 0.75
     _exp_w = max(512, round(width  * _exp_scale / 64) * 64)
     _exp_h = max(512, round(height * _exp_scale / 64) * 64)
-    canvas_bytes, mask_bytes = _create_inpaint_canvas_and_mask(
+    canvas_bytes, mask_bytes, _ = _create_inpaint_canvas_and_mask(
         sketch_bytes, _exp_w, _exp_h, coverage
     )
     canvas_fn = comfyui_client.upload_image_bytes(canvas_bytes, "canvas_expand_sdxl_input.png")
@@ -322,6 +332,7 @@ async def _generate_design_core(
     art_style_id: Optional[int],
     use_ai_prompt: bool,
     use_outfit: bool,
+    use_vision: bool,             # 是否把視覺模型抽取的特徵拼進 prompt（CN coverage 偵測不受此影響）
     use_ipa: bool,
     ipa_weight: float,
     use_controlnet: bool,
@@ -357,7 +368,9 @@ async def _generate_design_core(
                 log_label, _gen_family, _profile.steps, _profile.full_cn_weight)
 
     # ── Build Chinese description ──────────────────────────────────────────
-    parts = [f"角色名稱：{inp.name}"]
+    # 角色名是中文專有名詞,SD/Illustrious 無此 token 概念 → 不放進 prompt,
+    # 避免名字洩漏成 tag（2026-06-24；subject 由後續 gender_prefix=1girl 處理）。
+    parts: list[str] = []
 
     all_flat = True  # no images → treat as flat, use core_traits for anchors
     _ipa_ref_bytes: bytes | None = None
@@ -387,10 +400,15 @@ async def _generate_design_core(
 
             # Merge coverage detection + visual extraction into one Ollama call
             # (cached by image hash — repeat generations skip the vision call)
-            t0 = time.perf_counter()
+            # use_vision 控制「視覺特徵是否拼進 prompt」；coverage 是 CN 結構依據,與特徵解耦：
+            # vision 關但 CN 開時仍須跑偵測取得 coverage（特徵丟棄、不入 prompt）。兩者皆不需才跳過。
             need_coverage = use_controlnet and not is_expression
-            coverage, visual = await _vision_extract_cached(valid_images, need_coverage)
-            timings["vision_extract"] = round(time.perf_counter() - t0, 1)
+            if use_vision or need_coverage:
+                t0 = time.perf_counter()
+                coverage, visual = await _vision_extract_cached(valid_images, need_coverage)
+                timings["vision_extract"] = round(time.perf_counter() - t0, 1)
+            else:
+                coverage, visual = "full", ""
             if need_coverage:
                 _exp_w, _exp_h = _fullbody_canvas(inp.height)
                 _cn_coverage = coverage
@@ -429,15 +447,18 @@ async def _generate_design_core(
                     log_label, _cn_coverage, _pre_ref, cn_weight,
                     _BODY_FILL_RATIO.get(_cn_coverage, 1.0),
                 )
-            if visual and not visual.startswith("["):
+            if use_vision and visual and not visual.startswith("["):
                 has_outfit = bool(use_outfit and inp.outfit)
                 has_hair_in_traits = bool(inp.core_traits and
                     any(kw in inp.core_traits for kw in ("髮", "頭髮", "hair")))
-                visual_for_llm = _filter_visual_for_llm(
-                    visual,
-                    strip_clothing=has_outfit,
-                    strip_hairstyle=has_hair_in_traits,
-                )
+                # ── [停用] Group A6：vision 描述剝除服裝/髮型詞（保留視覺模型原始輸出）──
+                # 還原：取消下方 visual_for_llm = visual，改回 _filter_visual_for_llm(...)。
+                # visual_for_llm = _filter_visual_for_llm(
+                #     visual,
+                #     strip_clothing=has_outfit,
+                #     strip_hairstyle=has_hair_in_traits,
+                # )
+                visual_for_llm = visual
                 if visual_for_llm:
                     if len(valid_images) > 1:
                         label = "視覺參考特徵（多圖共同，服裝髮型以設定欄位為準）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（多圖共同特徵）"
@@ -549,6 +570,7 @@ async def _generate_design_core(
     style_extra_str = f", {style_extra}" if style_extra else ""
 
     final_positive = gender_prefix + body_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
+    final_positive = _dedup_tags(final_positive)  # 去框架/眼睛等重複,收稀釋
 
     extra_neg = ("detailed background, complex background, scenery, landscape, buildings, environment"
                  # 2026-06-21：抑制無端能量/火焰/光暈假影（不放 plain "glowing" 以免壓掉異色瞳/眼神光）
@@ -562,6 +584,7 @@ async def _generate_design_core(
     if PERSONAL_NEGATIVE_ENABLED and PERSONAL_NEGATIVE and not (art_style and art_style.negative):
         base_neg = PERSONAL_NEGATIVE
     final_negative = f"{base_neg}, {extra_neg}{gender_neg_extra}" if base_neg else f"{extra_neg}{gender_neg_extra}"
+    final_negative = _dedup_tags(final_negative)
 
     seed = random.randint(0, 2**31 - 1)
     _canvas_expand_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_WF).exists()
@@ -835,10 +858,11 @@ async def generate_character_design(
     art_style_id: Optional[int] = None,
     use_ai_prompt: bool = True,
     use_outfit: bool = True,
+    use_vision: bool = True,
     use_ipa: bool = True,
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
-    cn_weight: float = 0.85,
+    cn_weight: float = 0.65,   # 2026-06-24：草圖開 CN 0.85 整圖品質略差,預設降 0.65 測試
     db: Session = Depends(get_db),
 ):
     """
@@ -867,7 +891,7 @@ async def generate_character_design(
     return await _generate_design_core(
         character=character, inp=inp, db=db, slot=None,
         expression=expression, art_style_id=art_style_id,
-        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit,
+        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight,
         canvas_expand_mode="pre", use_pixel_override=True, use_solo_tag=False,
@@ -882,10 +906,11 @@ async def generate_variant_design(
     art_style_id: Optional[int] = None,
     use_ai_prompt: bool = True,
     use_outfit: bool = True,
+    use_vision: bool = True,
     use_ipa: bool = True,
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
-    cn_weight: float = 0.85,
+    cn_weight: float = 0.65,   # 2026-06-24：與 generate_character_design 同步降 0.65 測試
     db: Session = Depends(get_db),
 ):
     """Generate a design sheet using the variant's data instead of the main character fields."""
@@ -909,7 +934,7 @@ async def generate_variant_design(
     return await _generate_design_core(
         character=character, inp=inp, db=db, slot=slot,
         expression=expression, art_style_id=art_style_id,
-        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit,
+        use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight,
         canvas_expand_mode="post", use_pixel_override=False, use_solo_tag=True,

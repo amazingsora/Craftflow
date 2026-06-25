@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 
 from starlette.concurrency import run_in_threadpool
@@ -63,19 +64,23 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
     Saves one full vision-model round-trip vs calling _detect_body_coverage + analyze_multi_images_bytes separately.
     """
     ignore_bg = (
-        "【重要警告】這是一張草稿或帶有單色背景的參考圖。請完全忽略背景顏色。"
-        "背景不屬於角色特徵。請只觀察「角色線條內」的特徵。"
+        "【線稿警告】這可能是未上色的鉛筆稿／線稿，且常帶單色（如粉紅色）背景。"
+        "規則一：完全忽略背景顏色——粉紅色或任何單色背景，絕不可當成髮色或服裝顏色。"
+        "規則二：若畫面只有線條、沒有實際填色，請直接省略顏色、不要寫出任何顏色詞，也不要寫「線稿未上色」這類字樣，"
+        "只描述髮型長度與形狀、服裝款式與材質、明顯特徵。嚴禁臆測顏色。只觀察「角色線條內」的特徵。"
     )
     n = len(images_bytes)
+    # 2026-06-23：不再抽「體型輪廓」——體型由年齡/身高欄位確定性決定
+    # （_age_body_tags/_height_body_tags），vision 版本只會衝突（如 petite vs tall slender）。
     if n == 1:
         feature_q = (
             "B. 視覺特徵（逗號分隔的中文短語，控制在70字以內）：\n"
-            "① 髮色與髮型 ② 眼睛顏色 ③ 膚色 ④ 體型輪廓 ⑤ 服裝主要顏色與風格 ⑥ 明顯特殊特徵"
+            "① 髮色與髮型 ② 眼睛顏色 ③ 膚色 ④ 服裝主要顏色與風格 ⑤ 明顯特殊特徵"
         )
     else:
         feature_q = (
             f"B. {n}張圖共同視覺特徵（逗號分隔的中文短語，控制在90字以內）：\n"
-            "① 髮色與髮型 ② 眼睛顏色 ③ 膚色 ④ 體型輪廓 ⑤ 服裝主要顏色與風格 ⑥ 各圖均出現的特殊特徵"
+            "① 髮色與髮型 ② 眼睛顏色 ③ 膚色 ④ 服裝主要顏色與風格 ⑤ 各圖均出現的特殊特徵"
         )
     prompt = (
         f"{ignore_bg}\n\n"
@@ -93,11 +98,18 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
         result = _oc.analyze_multi_images_bytes(
             images_bytes, prompt,
             model=state.get_vision_model(),
-            options={"num_predict": 240, "temperature": 0.1},
+            # num_predict 放寬：thinking 類模型需額外 token 才能在推理後吐出格式輸出。
+            options={"num_predict": 512, "temperature": 0.1},
         )
-        coverage = "partial"
+        # 診斷用：印出模型原始回應（含 think 段）→ 判斷回空主因（think 燒光/不照格式/真空回）
+        logger.info("[combined-vision] RAW(len=%d): %r", len(result or ""), (result or "")[:300])
+        # thinking 類模型（如 Qwen3-VL abliterated）即使送 think:false，response 仍可能
+        # 內嵌 <think>…</think>。先去除再解析，避免推理段落污染或排擠格式輸出。
+        cleaned = re.sub(r"<think>.*?</think>", "", result or "", flags=re.DOTALL | re.IGNORECASE).strip()
+
+        coverage = ""
         visual = ""
-        for line in result.split('\n'):
+        for line in cleaned.split('\n'):
             line = line.strip()
             if line.upper().startswith('COVERAGE:'):
                 parts = line.split(':', 1)
@@ -111,11 +123,36 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
             elif line.upper().startswith('FEATURES:'):
                 parts = line.split(':', 1)
                 visual = parts[1].strip() if len(parts) > 1 else ""
+
+        # Fallback 1：模型沒照 COVERAGE: 格式 → 在全文掃關鍵詞推斷
+        if not coverage:
+            low = cleaned.lower()
+            if any(k in low for k in ("full body", "full-body", "feet", "ankle", "全身", "腳踝")):
+                coverage = "full"
+            elif any(k in low for k in ("bust", "headshot", "shoulder", "半身", "胸像", "肩")):
+                coverage = "bust"
+            elif any(k in low for k in ("partial", "thigh", "knee", "大腿", "膝")):
+                coverage = "partial"
+
+        # Fallback 2：沒抓到 FEATURES: 但有可用文字 → 取非 coverage 行當特徵
+        if not visual and cleaned:
+            desc = "\n".join(
+                ln.strip() for ln in cleaned.split('\n')
+                if ln.strip() and not ln.strip().upper().startswith('COVERAGE:')
+            ).strip()
+            visual = desc[:120]
+
+        # 防呆：仍判不出 coverage（模型回空/格式不符）→ 預設 full 跳過外擴，
+        # 避免視覺模型異常時 silent 觸發 40GB Flux 外擴拖垮速度（Resilient errors）。
+        if not coverage:
+            logger.warning("[combined-vision] 無法解析 coverage（模型回空或格式不符）→ 預設 full 跳過外擴")
+            coverage = "full"
+
         logger.info("[combined-vision] coverage=%s visual_len=%d", coverage, len(visual))
         return coverage, visual
     except Exception as e:
-        logger.warning("[combined-vision] failed: %s — defaulting to partial/empty", e)
-        return "partial", ""
+        logger.warning("[combined-vision] failed: %s — 預設 full/empty（跳過外擴）", e)
+        return "full", ""
 
 
 def _age_gender_tag(gender: str | None, age: int | None) -> str:
@@ -203,8 +240,10 @@ def _filter_visual_for_llm(visual: str, *, strip_clothing: bool, strip_hairstyle
 def _visual_extract_prompt(n: int) -> str:
     """Return a vision prompt tuned for single or multi-image analysis."""
     ignore_bg = (
-        "【重要警告】這是一張草稿或帶有單色背景的參考圖。請完全忽略背景顏色（例如：如果背景是純粉色，請勿將其判定為衣服或髮色）。"
-        "背景不屬於角色特徵。請只觀察「角色線條內」的特徵。"
+        "【線稿警告】這可能是未上色的鉛筆稿／線稿，且常帶單色（如粉紅色）背景。"
+        "規則一：完全忽略背景顏色——粉紅色或任何單色背景，絕不可當成髮色或服裝顏色。"
+        "規則二：若畫面只有線條、沒有實際填色，請直接省略顏色、不要寫出任何顏色詞，也不要寫「線稿未上色」這類字樣，"
+        "只描述髮型長度與形狀、服裝款式與材質、明顯特徵。嚴禁臆測顏色。只觀察「角色線條內」的特徵。"
     )
     if n == 1:
         return (
@@ -213,9 +252,8 @@ def _visual_extract_prompt(n: int) -> str:
             "① 髮色與髮型（顏色、長度、形狀，請根據角色本身的髮色判斷）"
             "② 眼睛顏色"
             "③ 膚色"
-            "④ 體型輪廓（高挑/嬌小、胖瘦）"
-            "⑤ 服裝主要顏色與風格（僅描述角色穿著的部分，無視背景）"
-            "⑥ 明顯特殊特徵（獸耳、印記、武器等）\n"
+            "④ 服裝主要顏色與風格（僅描述角色穿著的部分，無視背景）"
+            "⑤ 明顯特殊特徵（獸耳、印記、武器等）\n"
             "格式：逗號分隔的中文短語，不加標號，不寫句子，控制在70字以內。"
         )
     return (
@@ -225,9 +263,8 @@ def _visual_extract_prompt(n: int) -> str:
         "① 髮色與髮型"
         "② 眼睛顏色"
         "③ 膚色"
-        "④ 體型輪廓"
-        "⑤ 服裝主要顏色與風格"
-        "⑥ 各圖均出現的特殊特徵\n"
+        "④ 服裝主要顏色與風格"
+        "⑤ 各圖均出現的特殊特徵\n"
         "以共同特徵為主，忽略只在單張圖出現的細節。"
         "格式：逗號分隔的中文短語，不加標號，不寫句子，控制在90字以內。"
     )

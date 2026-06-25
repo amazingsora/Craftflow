@@ -21,14 +21,49 @@ _FLAT_COLOR_STD_THRESHOLD = 25.0  # max per-channel std to be considered a flat-
 # ── 全身人設取景常數（痛點3）─────────────────────────────────────────────────
 # 強化整體取景與手部/四肢補全，避免只生成中段（下巴到大腿）。集中為具名常數，
 # 避免 magic string 散落於主角色與變體兩處生成流程。
+# 2026-06-23：去語義稀釋。呼叫端 suffix 已含 "full body, front view"，此處不再重複
+# full body shot / head to toe / full body visible（同義詞攤平注意力）；只保留取景補強
+# 的 standing 與手部品質詞。
 _FULLBODY_POS_TAGS = (
-    "full body shot, head to toe, full body visible, standing, detailed hands, five fingers"
+    "standing, detailed hands, five fingers"
 )
 # 全身專屬負向：抑制裁切/特寫構圖，並補全手指相關防護（部分底模預設未含）。
 _FULLBODY_NEG_TAGS = (
     "cropped, out of frame, cut off, close-up, portrait, "
     "missing fingers, extra digits, bad hands, fused fingers"
 )
+
+# 框架類同義詞 → 去重比對用的代表（只用於比對，不改寫保留標籤的原形）。
+_FRAMING_SYNONYMS = {
+    "full body shot": "full body",
+    "full body visible": "full body",
+    "full body portrait": "full body",
+    "head to toe": "full body",
+    "whole body": "full body",
+}
+
+
+def _dedup_tags(prompt: str) -> str:
+    """去除組裝後 prompt 的重複標籤（保留首次出現的原形）。
+
+    額外把 full body 系框架同義詞收斂為單一概念，避免 LLM（翻譯「全身正面」）
+    與 suffix（確定性補 full body）各補一份。權重語法 (tag:1.1) 去括號去權重後比對。
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in prompt.split(","):
+        tag = raw.strip()
+        if not tag:
+            continue
+        norm = tag.lower().strip("() ")
+        if ":" in norm:
+            norm = norm.rsplit(":", 1)[0].strip()
+        norm = _FRAMING_SYNONYMS.get(norm, norm)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(tag)
+    return ", ".join(out)
 # 全身畫布比例：依角色身形自動選取（「自動匹配大小」）。皆為 64 倍數、約 1MP，
 # 貼近 SDXL 訓練分佈。高瘦 → 更長縱向畫布（多給頭/腳空間，減少裁切）；矮/幼態 → 較方。
 # 2026-06-07：整體往上拉一個 SDXL 直幅 bucket，加大縱向空間。部分 checkpoint
