@@ -17,8 +17,18 @@ from __future__ import annotations
 import re
 from typing import List, Set
 
+from app.core.config import (
+    PROMPT_UPSAMPLE_ENABLED,
+    PROMPT_UPSAMPLE_MODEL,
+    PROMPT_MAX_BODY_TAGS,
+)
 from app.services.ai import ollama_client
-from app.services.ai.prompt_engine.styles import PromptStyle, STYLE_CONFIG
+from app.services.ai.prompt_engine.styles import (
+    PromptStyle,
+    STYLE_CONFIG,
+    UPSAMPLE_SYSTEM_PROMPT,
+    _WEIGHT_GROUP_RE,
+)
 from app.services.ai.prompt_engine import lexicon
 
 
@@ -70,6 +80,11 @@ _COLOR_ALT_RE = re.compile(
 _HETERO_DETECT_RE = re.compile(r'異色瞳|異色眼')
 _LEFT_EYE_RE  = re.compile(rf'左眼(?:為|是|呈)?({_COLOR_ALT_RE.pattern})')
 _RIGHT_EYE_RE = re.compile(rf'右眼(?:為|是|呈)?({_COLOR_ALT_RE.pattern})')
+
+# S6（2026-07-12）：方向瞳色 tag（"golden eye (left)" / "blue eye (right)"）。A5 原版只清
+# heterochromia/odd eyes，漏掉 LLM 幻覺出的方向眼色（本輪 golden eye (left) 實證漏網 →
+# 生成圖一藍一金）。無異色瞳來源時連同這類 tag 一併清除。
+_DIRECTIONAL_EYE_RE = re.compile(r'\beye\s*\((?:left|right)\)', re.IGNORECASE)
 
 
 def _inject_heterochromia(tags: list[str], text: str, anchor_source: str = "") -> list[str]:
@@ -184,6 +199,53 @@ def _inject_traits(tags: list[str], text: str, anchor_source: str = "") -> tuple
     return to_prepend + tags, ", ".join(extra_negative_parts)
 
 
+def _upsample_tags(
+    base_tags: list[str], model: str, banned_set: set[str]
+) -> list[str]:
+    """
+    G1-2 擴寫 stage2：把稀疏 tags 擴寫成更密的 danbooru tags（V37 booru upsampler 規則）。
+
+    - additive 合併：base_tags 為 identity 錨，一律保留在前、不可被覆蓋，只補新增的 tag。
+    - 輸出經同一 _sanitize_to_list + banned_tags 守門，與主流程共用護欄。
+    - resilient：擴寫呼叫失敗（Ollama error）直接回原 tags，不讓生圖流程 crash。
+    """
+    if not base_tags:
+        return base_tags
+
+    prompt = UPSAMPLE_SYSTEM_PROMPT.format(tags=", ".join(base_tags))
+    raw = ollama_client.generate(
+        prompt,
+        model=model,
+        options={"num_predict": 200, "temperature": 0.4},
+        keep_alive=0,  # 同主編譯：編完即退 VRAM，避免餓死 ComfyUI 主 pass。
+    )
+    if ollama_client.is_error(raw):
+        return base_tags
+
+    extra = _sanitize_to_list(_extract_output(raw), banned_set)
+    seen = {t.lower().strip("() ") for t in base_tags}
+    merged = list(base_tags)
+    for t in extra:
+        key = t.lower().strip("() ")
+        if key not in seen:
+            seen.add(key)
+            merged.append(t)
+    return merged
+
+
+def _apply_body_budget(
+    tags: list[str], max_tags: int, protected: int
+) -> list[str]:
+    """
+    G1-4 token 預算：擴寫後 body tags 超過 max_tags 時，從尾端（擴寫新增部分）砍。
+    protected = 擴寫前的原始 tag 數（identity/subject），一律保留，優先級高於預算。
+    max_tags<=0 或未超限時不動。
+    """
+    if max_tags <= 0 or len(tags) <= max_tags:
+        return tags
+    return tags[: max(max_tags, protected)]
+
+
 def compile(
     text: str,
     style: PromptStyle = PromptStyle.SDXL,
@@ -191,11 +253,27 @@ def compile(
     anchor_text: str = "",
     quality_prefix_override: str | None = None,
     negative_override: str | None = None,
+    quality_suffix_override: str | None = None,
 ) -> tuple[str, str]:
     """
     Main entrypoint to compile Chinese creative text into fine-tuned SD prompts.
     """
+    # 0. (P3) 個人詞庫：LLM 翻譯前對原始中文做確定性替換，降低特定詞彙誤譯/幻覺機率
+    # （如「蔚藍檔案」→ "blue archive"）。未登錄詞彙不受影響，text 原樣通過（零回歸）。
+    text = lexicon.apply_personal_term_map(text)
+
     config = STYLE_CONFIG[style]
+
+    # (P1.1) config.banned_tags 只在 STYLE_CONFIG 初始化時由「靜態」quality_prefix 生成；
+    # quality_prefix_override / quality_suffix_override（如 workflow profile）帶入不在
+    # 該集合內的新 tag 時，LLM 若重複輸出同一詞，去重會失效。這裡動態補齊 override 的
+    # tags 進 local banned 集合，取代下面兩處 _sanitize_to_list / _upsample_tags 的
+    # config.banned_tags。override 為空時 banned 與 config.banned_tags 相同，零回歸。
+    banned = config.banned_tags
+    _ov = ", ".join(filter(None, [quality_prefix_override, quality_suffix_override]))
+    if _ov:
+        _expanded = _WEIGHT_GROUP_RE.sub(r"\1", _ov)
+        banned = banned | {t.strip().lower() for t in _expanded.split(",") if t.strip()}
 
     # 1. 構建 Prompt 並呼叫 LLM
     prompt = config.llm_template.format(prompt=text)
@@ -210,7 +288,16 @@ def compile(
 
     # 2. 擷取輸出與標籤清洗
     extracted = _extract_output(raw_response)
-    cleaned_tags = _sanitize_to_list(extracted, config.banned_tags)
+    cleaned_tags = _sanitize_to_list(extracted, banned)
+
+    # 2.5 (G1-2/G1-4) 選配擴寫 stage2 + token 預算。
+    #   預設關閉（PROMPT_UPSAMPLE_ENABLED=false）→ 此段完全 no-op，行為與改動前一致。
+    #   FLUX 走自然語言，不套 tag 擴寫。
+    if PROMPT_UPSAMPLE_ENABLED and style is not PromptStyle.FLUX:
+        _protected = len(cleaned_tags)  # 原始翻譯 tags = identity 錨，預算優先保留
+        _up_model = PROMPT_UPSAMPLE_MODEL or model
+        cleaned_tags = _upsample_tags(cleaned_tags, _up_model, banned)
+        cleaned_tags = _apply_body_budget(cleaned_tags, PROMPT_MAX_BODY_TAGS, _protected)
 
     # 3. 處理防幻覺與特徵修正 (非自然語言的 tag 類模型才執行)
     _extra_neg = ""
@@ -234,11 +321,17 @@ def compile(
         #     if "smile" not in [t.lower().strip() for t in cleaned_tags]:
         #         cleaned_tags.insert(0, "smile")
         #
-        # A5 異色瞳：無來源清除 LLM 幻覺 heterochromia ＋ 有來源強制注入方向眼色
-        # if not _HETERO_DETECT_RE.search(f"{text} {anchor_text}"):
-        #     cleaned_tags = [t for t in cleaned_tags
-        #                     if t.lower().strip("() ") not in {"heterochromia", "odd eyes"}]
-        # cleaned_tags = _inject_heterochromia(cleaned_tags, text, anchor_source=anchor_text)
+        # A5 異色瞳（2026-07-12 S6 單獨重啟；Group A 其餘 A1-A4 維持停用）：
+        #   無異色瞳來源 → 清除 LLM 幻覺的 heterochromia/odd eyes（S6 擴充：連同幻覺的
+        #   方向瞳色 tag "{color} eye (left/right)" 一併清，A5 原版漏此類）；
+        #   有來源 → _inject_heterochromia 依原文強制注入正確的方向眼色。
+        if not _HETERO_DETECT_RE.search(f"{text} {anchor_text}"):
+            cleaned_tags = [
+                t for t in cleaned_tags
+                if t.lower().strip("() ") not in {"heterochromia", "odd eyes"}
+                and not _DIRECTIONAL_EYE_RE.search(t)
+            ]
+        cleaned_tags = _inject_heterochromia(cleaned_tags, text, anchor_source=anchor_text)
 
         # ── [停用] Group B Anchor 系統（抽髮/眼色→清衝突→重排並 :1.1 加權，強制覆蓋模型）──
         # 還原：取消下列三段註解，並改回 final_body = _reorder_tags(cleaned_tags, anchors)。
@@ -260,6 +353,13 @@ def compile(
     # 4. 拼接 quality_prefix
     prefix = quality_prefix_override if quality_prefix_override else config.quality_prefix
     positive = f"{prefix}, {final_body}" if prefix and final_body else (prefix or final_body)
+
+    # 4.5 (P1) workflow 級 quality_suffix：附加在 body 之後，呼叫端（如
+    # character_design_service）之後接的 design-sheet／構圖 tags 之前，避免落在整串
+    # prompt 尾端——ComfyUI 對超長 prompt 是分塊（chunking）編碼、非硬截斷，放太尾端
+    # 只會被稀釋到後段 chunk、權重變弱。無登錄 workflow 時為 None，no-op。
+    if quality_suffix_override:
+        positive = f"{positive}, {quality_suffix_override}" if positive else quality_suffix_override
 
     # 5. Negative preset + context-aware suppression
     negative = negative_override if negative_override else config.negative
@@ -346,7 +446,9 @@ def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
         if _AGE_PHRASE_RE.search(t_clean):
             continue
 
-        normalized = t_clean.lower().strip("()")
+        # P2：banned_set 內的 tag 經 styles._sync_banned_tags 已剝除 SD 權重語法
+        # （如 "(highres:0.8)" → "highres"）；比對鍵同步剝除，避免權重殘留造成誤判漏放行。
+        normalized = re.sub(r':[\d.]+$', '', t_clean.lower().strip("()")).strip()
         if normalized in banned_set or normalized in seen:
             continue
         seen.add(normalized)

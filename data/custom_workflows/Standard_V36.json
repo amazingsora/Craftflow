@@ -10,8 +10,8 @@
   },
   "3": {
     "inputs": {
-      "wildcard_text": "score_9,sensitive,very aesthetic, ultra detailed,pale ,explicit,high contrast,\nshinonome ena, project sekai, brown eyes, medium brown hair, short hair, bob cut, side braid, braid on one side, blunt bangs, hair between eyes, fair skin, cute face, newest, masterpiece, best quality, naked, legs spread, left hand supporting, exposing vulva, pubic hair, seductive gaze, engaging in sex, love juice, right side boob exposed, source_anime",
-      "populated_text": "score_9,sensitive,very aesthetic, ultra detailed,pale skin,fair skin,explicit,high contrast,\nshinonome ena, project sekai, brown eyes, medium brown hair, short hair, bob cut, side braid, braid on one side, blunt bangs, hair between eyes, fair skin, cute face, newest, masterpiece, best quality, naked, legs spread, left hand supporting, exposing vulva, pubic hair, seductive gaze, engaging in sex, love juice, right side boob exposed, source_anime\n",
+      "wildcard_text": "masterpiece, best quality, amazing quality, absurdres,\n1girl, solo, portrait,",
+      "populated_text": "masterpiece, best quality, amazing quality, absurdres,\n1girl, solo, portrait,",
       "mode": "populate",
       "seed": [
         "32",
@@ -286,7 +286,7 @@
     },
     "class_type": "Seed (rgthree)",
     "_meta": {
-      "title": "Seed"
+      "title": "Seed (rgthree)"
     }
   },
   "33": {
@@ -651,6 +651,20 @@
   },
   "64": {
     "inputs": {
+      "rgthree_comparer": {
+        "images": [
+          {
+            "name": "A",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_pccaz_00003_.png&type=temp&subfolder=&rand=0.7722945911069179"
+          },
+          {
+            "name": "B",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_pccaz_00004_.png&type=temp&subfolder=&rand=0.7009208968252809"
+          }
+        ]
+      },
       "image_a": [
         "27",
         0

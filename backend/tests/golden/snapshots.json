@@ -1,0 +1,50 @@
+{
+  "anythingxl_heterochromia": {
+    "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name",
+    "positive": "newest, masterpiece, best quality, heterochromia, red eye (left), green eye (right), looking at viewer, source_anime"
+  },
+  "child_age_phrase_leak": {
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
+    "positive": "masterpiece, best quality, amazing quality, absurdres, round face, child, youthful"
+  },
+  "cjk_and_meta_leak": {
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
+    "positive": "masterpiece, best quality, amazing quality, absurdres, white hair, golden eyes, but let's stick to input, reasoning"
+  },
+  "duplicate_tags": {
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
+    "positive": "masterpiece, best quality, amazing quality, absurdres, white hair, golden eyes"
+  },
+  "flux_style_sentence": {
+    "negative": "",
+    "positive": "A young girl standing outdoors, holding a colorful umbrella in her right hand, with a calm and serene expression."
+  },
+  "heterochromia_female": {
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
+    "positive": "masterpiece, best quality, amazing quality, absurdres, heterochromia, red eye (left), green eye (right), brown hair, short hair"
+  },
+  "male_mage": {
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
+    "positive": "masterpiece, best quality, amazing quality, absurdres, silver hair, purple eyes, mage, magic, robe, serious expression"
+  },
+  "no_concept_plain": {
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
+    "positive": "masterpiece, best quality, amazing quality, absurdres, holding umbrella, right hand, standing, outdoors"
+  },
+  "noobai_style_knight": {
+    "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality",
+    "positive": "masterpiece, best quality, newest, absurdres, knight, full armor, holding sword, battlefield, fire, smoke, debris, intense expression, dynamic pose, cinematic lighting"
+  },
+  "overlong_leak_tag": {
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
+    "positive": "masterpiece, best quality, amazing quality, absurdres, black hair, black eyes, simple dress"
+  },
+  "pony_style_katana": {
+    "negative": "score_6, score_5, score_4, bad anatomy, ugly, watermark, text",
+    "positive": "score_9, score_8_up, score_7_up, silver hair, holding sword, katana, red moon, night, source_anime"
+  },
+  "tall_casual_vest": {
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs",
+    "positive": "masterpiece, best quality, amazing quality, absurdres, tall, long legs, vest, casual, sleeveless, formal suit, tie"
+  }
+}

@@ -22,8 +22,10 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class GenProfile:
     family: str
-    # 主 KSampler steps（後端覆寫工作流 KSampler.steps；人設全身用）。
-    steps: int = 20
+    # 主 KSampler steps（人設全身用）。None = 不覆寫，沿用 workflow JSON 內建的
+    # KSampler.steps（R3，2026-07-12：對齊本檔案自身原則「node 級參數寫在 workflow
+    # JSON，後端不覆寫」——steps 過去無條件覆寫屬歷史遺留）。
+    steps: int | None = 20
     # coverage → CN 強度上限（partial/bust 概念圖為半身，下半需 SD 腦補；
     # CN 過強會把「下半留空」也當硬約束 → 缺腿。None=不夾、沿用滑桿值）。
     coverage_cn_weight: dict = field(default_factory=lambda: {"partial": 0.6, "bust": 0.5})
@@ -52,10 +54,12 @@ GEN_PROFILE: dict[str, GenProfile] = {
     "sdxl":        _DEFAULT,
     "pony":        GenProfile(family="pony"),
     "noobai":      GenProfile(family="noobai"),
-    # Illustrious（含 fabricatedXL_v70，即 V36 主路線）：
-    # steps 略增 20→26（fabricatedXL 建議 18–30；補臉/細節），其餘沿用 SDXL 基線。
+    # Illustrious（含 fabricatedXL_v70，即 V36/V37 主路線）：
+    # steps=None（R3，2026-07-12）：不覆寫，沿用各 workflow JSON 內建值（V36=28、
+    # AnimaV7=30，皆在 fabricatedXL 建議區間 18–30 內）。原本硬覆寫 26 是歷史遺留，
+    # 與 V37「採樣端已對齊官方配方、零調整」的前提矛盾，已改用 workflow 自身的值。
     # illustrious(fabricatedXL_v70=V36/V35 主底模):對齊真 V35 內建鏈→AnimeLineArt(預設)
-    "illustrious": GenProfile(family="illustrious", steps=26),
+    "illustrious": GenProfile(family="illustrious", steps=None),
     # 未來 Anima（非 SDXL，無 IPA，CN 僅 LLLite）：佔位，待 F4 落地。
     # "anima":     GenProfile(family="anima", ipa_enabled=False, cn_enabled=False),
 }

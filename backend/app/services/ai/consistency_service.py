@@ -138,7 +138,7 @@ def _semantic_scan_paragraph(
     prompt = load_prompt("consistency/check", char_desc=char_desc, paragraph=paragraph)
 
     raw = ollama_client.generate(prompt, model=model)
-    if raw.startswith("["):
+    if ollama_client.is_error(raw):
         pass  # already unavailable message
     parsed = _parse_json(raw)
     if parsed is None:

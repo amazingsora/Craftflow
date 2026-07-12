@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from app.core.config import (
     UPLOAD_DIR, CUSTOM_WORKFLOWS_DIR,
     PERSONAL_STYLE_ENABLED, PERSONAL_STYLE_EXTRA_TAGS,
-    PERSONAL_NEGATIVE_ENABLED, PERSONAL_NEGATIVE,
+    PERSONAL_NEGATIVE_ENABLED, PERSONAL_NEGATIVE, PERSONAL_STYLE_WEIGHT,
     IPA_FLAT_DRAFT_SCALE,
 )
 from app.core import state
@@ -38,12 +38,13 @@ from app.services.ai.prompt_engine import compile as compile_prompt
 from app.services.ai.vram_manager import guardian
 from app.services.ai.generation_recorder import record_generation
 from app.services.ai.workflow_builder import (
-    _compile_overrides,
     _extra_tags,
     _inject_loras,
     _load_workflow,
     _log_wf_snapshot,
     _replace_negative_seeds,
+    _resolve_prompt_overrides,
+    _prompt_profile_source,
     _resolve_style,
     _run_comfyui,
     _is_custom_workflow,
@@ -114,6 +115,19 @@ def _hex_to_sd_color(hex_color: str) -> str:
         return prefix + base
     except Exception:
         return "colored"
+
+
+def _effective_ksampler_steps(wf: dict, steps: Optional[int]) -> Optional[int]:
+    """R3（2026-07-12）：steps 為 None（家族 profile 選擇不覆寫 KSampler）時，回讀 wf
+    內 KSampler 節點的實際 steps（workflow JSON 內建值），供 generation_history 記錄
+    真實生效值，避免可重現性記錄失真。steps 有值時原樣回傳，不受影響（零回歸）。"""
+    if steps is not None:
+        return steps
+    return next(
+        (n["inputs"].get("steps") for n in wf.values()
+         if isinstance(n, dict) and n.get("class_type") == "KSampler"),
+        None,
+    )
 
 
 # coverage→CN 上限/end_percent 已移至 gen_profile.GEN_PROFILE（R3 2026-06-20，per-family 單一真相）。
@@ -488,7 +502,10 @@ async def _generate_design_core(
     t0 = time.perf_counter()
     art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
     style = _resolve_style(art_style, active_wf)
-    _overrides = _compile_overrides(art_style)
+    # P1：art_style > workflow 級 prompt_profiles.yml > checkpoint family。
+    _overrides = _resolve_prompt_overrides(art_style, active_wf)
+    # P4：debug prompt 來源標註（profile: <wf> / family fallback），僅供前端 DEBUG 顯示。
+    _profile_source = _prompt_profile_source(art_style, active_wf)
     await guardian.request_focus("ollama")
     try:
         positive, negative = compile_prompt(
@@ -506,7 +523,9 @@ async def _generate_design_core(
         t0 = time.perf_counter()
         await guardian.request_focus("ollama")
         try:
-            _ai_overrides = {**_overrides, "quality_prefix_override": ""}
+            # quality_prefix/suffix 只在主描述套一次，避免同一段 quality tag 被灌兩次
+            # （P1：workflow profile 的 quality_suffix 與既有 quality_prefix 同一防重複邏輯）。
+            _ai_overrides = {**_overrides, "quality_prefix_override": "", "quality_suffix_override": ""}
             extra_compiled, _ = compile_prompt(
                 inp.ai_prompt.strip(), style=style, model=state.get_text_model(), **_ai_overrides,
             )
@@ -540,7 +559,10 @@ async def _generate_design_core(
             f", {_design_tags}, full body, front view"
             f", {_FULLBODY_POS_TAGS}"
             f"{_solo_tag}"
-            ", simple background, flat background, no background detail, no scenery" + bg_tag
+            # S2（2026-07-12）：拔正向 "no background detail, no scenery"——正向 no-xxx
+            # 是反效果（SD 讀到的是 xxx 本身）；extra_neg 已含 detailed background/
+            # scenery（見下方 negative 組裝），拔除零損失。
+            ", simple background, flat background" + bg_tag
         )
         width, height = _fullbody_canvas(inp.height)
         steps = _profile.steps
@@ -567,9 +589,22 @@ async def _generate_design_core(
     style_extra = _extra_tags(art_style)
     if not style_extra and PERSONAL_STYLE_ENABLED and PERSONAL_STYLE_EXTRA_TAGS:
         style_extra = PERSONAL_STYLE_EXTRA_TAGS
-    style_extra_str = f", {style_extra}" if style_extra else ""
+    # G1-3 畫風承擔：PERSONAL_STYLE_WEIGHT!=1.0 時，把畫風 tags 加權 (tag:w) 並前置到
+    # identity 區塊（與角色身分同級優先），讓畫風由 prompt 承擔、CN 可安心降權。
+    # 預設 1.0 → 維持現行「不加權、末端 append」行為，零回歸風險。
+    style_front = ""
+    style_extra_str = ""
+    if style_extra:
+        if PERSONAL_STYLE_WEIGHT != 1.0:
+            _weighted = ", ".join(
+                f"({t.strip()}:{PERSONAL_STYLE_WEIGHT})"
+                for t in style_extra.split(",") if t.strip()
+            )
+            style_front = f"{_weighted}, " if _weighted else ""
+        else:
+            style_extra_str = f", {style_extra}"
 
-    final_positive = gender_prefix + body_prefix + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
+    final_positive = gender_prefix + body_prefix + style_front + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
     final_positive = _dedup_tags(final_positive)  # 去框架/眼睛等重複,收稀釋
 
     extra_neg = ("detailed background, complex background, scenery, landscape, buildings, environment"
@@ -581,7 +616,10 @@ async def _generate_design_core(
         if _cn_coverage in ("partial", "bust"):
             extra_neg += ", multiple views, reference sheet, design sheet, multiple poses, chibi inset, inset image, sketch overlay"
     base_neg = negative
-    if PERSONAL_NEGATIVE_ENABLED and PERSONAL_NEGATIVE and not (art_style and art_style.negative):
+    # P1：negative 優先序 art_style > workflow profile > PERSONAL_NEGATIVE > family 預設。
+    # _overrides 有 negative_override 代表 compile_prompt 已採用 art_style 或 workflow
+    # profile 的 negative（見 _resolve_prompt_overrides），此時不可再被 PERSONAL_NEGATIVE 蓋掉。
+    if PERSONAL_NEGATIVE_ENABLED and PERSONAL_NEGATIVE and not _overrides.get("negative_override"):
         base_neg = PERSONAL_NEGATIVE
     final_negative = f"{base_neg}, {extra_neg}{gender_neg_extra}" if base_neg else f"{extra_neg}{gender_neg_extra}"
     final_negative = _dedup_tags(final_negative)
@@ -650,6 +688,7 @@ async def _generate_design_core(
                 "X-IPA-Used": "0", "X-CN-Used": "0", "X-CN-Mode": "canvas_expand",
                 "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
                 "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
+                "X-Prompt-Profile": base64.b64encode(_profile_source.encode()).decode(),
                 "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
                 "X-AI-Prompt-Compiled": "",
             },
@@ -745,7 +784,10 @@ async def _generate_design_core(
             inputs["height"] = height
         elif ct == "KSampler":
             inputs["seed"] = seed
-            inputs["steps"] = steps
+            # R3：steps=None（illustrious 家族現況）→ 不覆寫，沿用 workflow JSON 內建值
+            # （如 V37 官方 28 步）；有值的家族維持既有覆寫行為，零回歸。
+            if steps is not None:
+                inputs["steps"] = steps
         elif ct == "IPAdapterAdvanced" and ipa_used:
             inputs["weight"] = round(_ipa_weight_eff, 2)
         elif ct in _CN_APPLY_TYPES and _cn_ref_bytes is not None:
@@ -811,6 +853,8 @@ async def _generate_design_core(
         "workflow": active_wf,
     }
 
+    _effective_steps = _effective_ksampler_steps(wf, steps)
+
     hist_id = record_generation(
         db,
         endpoint=record_endpoint,
@@ -822,7 +866,7 @@ async def _generate_design_core(
         positive=final_positive,
         negative=final_negative,
         params={
-            "width": width, "height": height, "steps": steps,
+            "width": width, "height": height, "steps": _effective_steps,
             "expression": expression, "art_style_id": art_style_id,
             "ipa_used": ipa_used, "ipa_weight": round(ipa_weight, 2),
             "cn_used": cn_used, "cn_weight": round(cn_weight, 2),
@@ -844,6 +888,7 @@ async def _generate_design_core(
             "X-CN-Mode": cn_mode_out,
             "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
+            "X-Prompt-Profile": base64.b64encode(_profile_source.encode()).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
             "X-AI-Prompt-Compiled": base64.b64encode(_ai_prompt_compiled.encode()).decode() if _ai_prompt_compiled else "",
         },

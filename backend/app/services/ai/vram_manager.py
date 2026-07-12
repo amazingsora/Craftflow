@@ -4,9 +4,12 @@ Coordinates memory usage between Ollama (LLM) and ComfyUI (Diffusion).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import requests
 from typing import Literal
+
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import (
     OLLAMA_BASE,
@@ -32,41 +35,51 @@ class VRAMGuardian:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(VRAMGuardian, cls).__new__(cls)
+            cls._instance._lock = asyncio.Lock()
         return cls._instance
 
     @property
     def current_owner(self) -> ServiceType | None:
         return self._current_owner
 
-    async def request_focus(self, tool: ServiceType) -> bool:
+    async def request_focus(self, tool: ServiceType, exclusive: bool = False) -> bool:
         """
-        Request GPU focus for a specific tool. 
+        Request GPU focus for a specific tool.
         Unloads the other tool's models if necessary to free up VRAM.
+
+        2026-07-07 P3：singleton 無鎖時，兩個 async job 同時呼叫會各自讀到
+        舊的 _current_owner 並行卸載/轉移 focus，導致另一種 VRAM 爆法。
+        用 asyncio.Lock 序列化整個 focus 切換流程（含 VRAM 查詢與卸載）。
+
+        exclusive=True：下一個 job 會載入遠大於現駐留量的模型（如 Flux 2 17GB），
+        絕不可與另一方共存。跳過 coexist 短路，一律卸載另一方獨佔顯卡。
         """
-        if self._current_owner == tool:
-            return True
+        async with self._lock:
+            if self._current_owner == tool and not exclusive:
+                return True
 
-        # 條件式卸載：VRAM 足夠共存就直接轉移 focus，不卸載另一方
-        if VRAM_COEXIST_ENABLED and self._can_coexist(tool):
-            logger.info(
-                f"VRAM: enough memory — keeping {self._current_owner} loaded, focus → {tool}"
-            )
-            self._current_owner = tool
-            return True
+            # 條件式卸載：VRAM 足夠共存就直接轉移 focus，不卸載另一方
+            # exclusive 時強制略過此短路，走下方卸載流程
+            if not exclusive and VRAM_COEXIST_ENABLED and await run_in_threadpool(self._can_coexist, tool):
+                logger.info(
+                    f"VRAM: enough memory — keeping {self._current_owner} loaded, focus → {tool}"
+                )
+                self._current_owner = tool
+                return True
 
-        logger.info(f"VRAM: Switching focus from {self._current_owner} to {tool}")
+            logger.info(f"VRAM: Switching focus from {self._current_owner} to {tool}")
 
-        try:
-            if tool == "comfyui":
-                await self._unload_ollama()
-            elif tool == "ollama":
-                await self._unload_comfyui()
-            
-            self._current_owner = tool
-            return True
-        except Exception as e:
-            logger.error(f"VRAM: Failed to switch focus to {tool}: {e}")
-            return False
+            try:
+                if tool == "comfyui":
+                    await self._unload_ollama()
+                elif tool == "ollama":
+                    await self._unload_comfyui()
+
+                self._current_owner = tool
+                return True
+            except Exception as e:
+                logger.error(f"VRAM: Failed to switch focus to {tool}: {e}")
+                return False
 
     def _comfyui_vram(self) -> tuple[int, int]:
         """Return (gpu_free_bytes, torch_reserved_bytes) from ComfyUI /system_stats."""
@@ -102,7 +115,10 @@ class VRAMGuardian:
             return False
 
     async def _unload_ollama(self):
-        """Unload all models from Ollama to free VRAM."""
+        """Unload all models from Ollama to free VRAM (sync HTTP calls off the event loop)."""
+        await run_in_threadpool(self._unload_ollama_sync)
+
+    def _unload_ollama_sync(self):
         logger.info("VRAM: Unloading all Ollama models...")
         try:
             r = requests.get(f"{OLLAMA_BASE}/api/ps", timeout=5)
@@ -123,7 +139,10 @@ class VRAMGuardian:
             logger.warning(f"VRAM: Ollama unload failed: {e}")
 
     async def _unload_comfyui(self):
-        """Request ComfyUI to free its VRAM cache."""
+        """Request ComfyUI to free its VRAM cache (sync HTTP call off the event loop)."""
+        await run_in_threadpool(self._unload_comfyui_sync)
+
+    def _unload_comfyui_sync(self):
         logger.info("VRAM: Requesting ComfyUI to free cache...")
         try:
             # ComfyUI /free endpoint can trigger garbage collection and model unloading

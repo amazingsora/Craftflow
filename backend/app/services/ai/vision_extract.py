@@ -100,6 +100,9 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
             model=state.get_vision_model(),
             # num_predict 放寬：thinking 類模型需額外 token 才能在推理後吐出格式輸出。
             options={"num_predict": 512, "temperature": 0.1},
+            # 2026-07-07 P0：呼叫完即退 VRAM，避免與後續 compile() 的文字模型同時駐留
+            # 導致 vram_manager._can_coexist("ollama") 誤判安全（見開發規劃 P0 根因 3）。
+            keep_alive=0,
         )
         # 診斷用：印出模型原始回應（含 think 段）→ 判斷回空主因（think 燒光/不照格式/真空回）
         logger.info("[combined-vision] RAW(len=%d): %r", len(result or ""), (result or "")[:300])
@@ -342,9 +345,11 @@ async def _vision_extract_cached(
             valid_images, _visual_extract_prompt(len(valid_images)),
             model=state.get_vision_model(),
             options={"num_predict": 160, "temperature": 0.1},
+            # 2026-07-07 P0：同上，呼叫完即退 VRAM
+            keep_alive=0,
         )
 
-    if visual and not visual.startswith("["):
+    if visual and not _oc.is_error(visual):
         _VISION_CACHE[key] = (coverage, visual)
         while len(_VISION_CACHE) > _VISION_CACHE_MAX:
             _VISION_CACHE.pop(next(iter(_VISION_CACHE)))

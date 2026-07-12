@@ -55,7 +55,7 @@ Research → Propose → Explain risk → Apply
 
 ## 沙箱/環境注意（實戰教訓）
 - repo=LF、Windows 工作目錄=CRLF：沙箱 git status 會全檔假 modified；commit 前對要提交的檔先 `sed 's/\r$//'` 正規化，否則整檔換行符入版
-- 檔案工具寫掛載資料夾可能**檔尾截斷**：重要檔用 shell 寫入，寫完驗檔尾（已實證 06-10/06-12）
+- 檔案工具寫掛載資料夾可能**檔尾截斷**：重要檔用 shell 寫入，寫完驗檔尾（已實證 06-10/06-12/07-12）。07-12 新增觀察：截斷不只發生在寫入當下，bash 端對同一檔案的後續讀取（cat/grep/python open）也可能長時間（>15 分鐘）持續讀到截斷/局部損壞版本，即便 Windows host 端（Read tool）內容已完整正確；`__pycache__` 清除、`sleep` 等待、`--import-mode=importlib` 皆無效。唯一穩定解法：用 bash 寫入正確內容覆蓋該檔（`python3 -c "open(f,'wb').write(...)"`，需手動保留原始 CRLF），寫完立即 `py_compile` 驗證。改動 `.py` 檔後、要在沙箱跑 pytest 前，先對受影響檔案跑一次 `python3 -m py_compile` 健檢，比事後除錯省時很多。⚠️ 07-12 新增觀察：`py_compile` 不保證抓到截斷——若截斷點恰好落在註解/docstring 結尾，殘缺檔仍可能語法合法、`py_compile` 誤判成功。更可靠的健檢是額外跑 `ast.parse` 後檢查預期的函式/類別名稱是否都還在（`{n.name for n in ast.walk(tree) if hasattr(n,'name')}`），才抓到 `lexicon.py` 這種漏網案例。
 - 沙箱不可直寫 SQLite（掛載層不支援鎖定）；DB 變更提供指令由使用者本機執行
 - `vite.config.js.timestamp-*.mjs` 為 Vite 暫存檔，已 gitignore，勿入版
 

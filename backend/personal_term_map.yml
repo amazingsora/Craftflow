@@ -1,0 +1,26 @@
+# Craftflow — 個人詞庫 P3（LLM 翻譯前確定性替換，2026-07-12）
+#
+# key   = 中文原文（比對子字串；實作時由長到短匹配，避免短詞先吃掉長詞，
+#         例如「大小姐衣裝」要贏過「大小姐」）
+# value = 替換後直接進 LLM 輸入的英文 tag/片語
+#
+# 用途：特定詞彙（角色名、專有名詞、易誤譯的服裝/神韻描述）LLM 常誤譯或幻覺，
+# 這裡在送進 LLM 模板前先用確定性字串替換處理掉，降低誤譯機率。
+# 未列出的詞彙不受影響，LLM 照舊自行翻譯（零回歸）。
+#
+# 與 lexicon.py 既有 TRAIT_MAP 的差異：TRAIT_MAP 掛在 _inject_traits（LLM 翻譯後修正，
+# 該路徑 2026-06-24 已停用）；這裡是翻譯「前」對原始中文做替換，兩者不衝突。
+#
+# 初始詞庫來源：doc/2026-07-12_工作流提示詞優化規劃.md「七、提示詞精度條目」
+# 實測歸因（聖真希，V37 + C 品質塊 + B 負向，符合度 85% 的偏差分析）。
+
+terms:
+  長度蓋過小腿: long skirt
+  大小姐衣裝: ojou-sama
+  蔚藍檔案: blue archive
+  下垂眼: tareme
+  垂眼: tareme
+  窄裙: pencil skirt
+  大小姐: ojou-sama
+  馬靴: riding boots   # 目前翻對，固定化防模型回退
+  個性溫柔: gentle expression   # S7 補條：避免翻成 gentle personality（非視覺 tag）

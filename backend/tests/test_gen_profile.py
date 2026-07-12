@@ -6,7 +6,7 @@ from app.services.ai import gen_profile as gp
 
 def test_known_families_steps():
     assert gp.get_profile("sdxl").steps == 20
-    assert gp.get_profile("illustrious").steps == 26   # V36 主路線：步數略增
+    assert gp.get_profile("illustrious").steps is None  # R3：不覆寫，沿用 workflow JSON
     assert gp.get_profile("pony").steps == 20
     assert gp.get_profile("noobai").steps == 20
 
@@ -30,7 +30,7 @@ def test_resolve_profile_reads_embedded_checkpoint(monkeypatch):
     monkeypatch.setattr("app.services.ai.workflow_builder._load_workflow", lambda name: wf)
     profile, family = gp.resolve_profile_for_workflow("Standard_V36.json")
     assert family == "illustrious"
-    assert profile.steps == 26
+    assert profile.steps is None
 
 
 def test_resolve_profile_fallback_to_global_checkpoint(monkeypatch):

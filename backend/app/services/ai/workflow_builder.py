@@ -40,8 +40,14 @@ _STYLES_YML = Path("/app/backend/checkpoint_styles.yml")
 if not _STYLES_YML.exists():
     _STYLES_YML = Path(__file__).resolve().parents[3] / "checkpoint_styles.yml"
 
+# prompt_profiles.yml — workflow 級 prompt override（P1，2026-07-12）。同一路徑慣例。
+_PROMPT_PROFILES_YML = Path("/app/backend/prompt_profiles.yml")
+if not _PROMPT_PROFILES_YML.exists():
+    _PROMPT_PROFILES_YML = Path(__file__).resolve().parents[3] / "prompt_profiles.yml"
+
 logger.info("system workflow dir: %s", _SYSTEM_WORKFLOW_DIR)
 logger.info("checkpoint styles: %s", _STYLES_YML)
+logger.info("prompt profiles: %s", _PROMPT_PROFILES_YML)
 
 
 # ── Art Style helpers ─────────────────────────────────────────────────────────
@@ -64,6 +70,74 @@ def _compile_overrides(art_style: Optional[ArtStyle]) -> dict:
         "quality_prefix_override": art_style.quality_prefix or None,
         "negative_override": art_style.negative or None,
     }
+
+
+def _load_prompt_profiles() -> dict:
+    """Load workflow → prompt profile mapping from prompt_profiles.yml.
+
+    未建檔／解析失敗 → {}（這層機制完全不介入，等同改動前行為，零回歸）。
+    不快取（同 _load_checkpoint_styles 慣例）：檔案小、每次讀取成本可忽略，
+    换来調參期間（P5 回歸測試）改 yml 免重啟即生效。
+    """
+    try:
+        with open(_PROMPT_PROFILES_YML, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("profiles", {}) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logger.warning("Could not load prompt_profiles.yml: %s", e)
+        return {}
+
+
+def _workflow_profile_overrides(workflow: str) -> dict:
+    """P1：查 workflow 檔名在 prompt_profiles.yml 是否有登錄的 quality_prefix /
+    quality_suffix / negative；只有實際登錄（非空）的欄位才放進回傳 dict，
+    未登錄欄位不佔位，讓 compile() 的預設 fallback（checkpoint family）維持有效。
+    """
+    profile = _load_prompt_profiles().get(workflow)
+    if not profile:
+        return {}
+    out: dict = {}
+    if profile.get("quality_prefix"):
+        out["quality_prefix_override"] = profile["quality_prefix"]
+    if profile.get("quality_suffix"):
+        out["quality_suffix_override"] = profile["quality_suffix"]
+    if profile.get("negative"):
+        out["negative_override"] = profile["negative"]
+    return out
+
+
+def _resolve_prompt_overrides(art_style: Optional[ArtStyle], workflow: str) -> dict:
+    """P1：整合 compile_prompt() 的三個 override 欄位，優先序：
+    art_style 個別欄位 > workflow 級 prompt_profiles.yml > checkpoint family
+    （後者由 compile() 內部 fallback 到 STYLE_CONFIG，這裡不重複填）。
+
+    只用「非空」值覆寫下層，避免 art_style 留白的欄位把 workflow profile 的定案值蓋掉
+    （_compile_overrides 對已存在的 art_style 一律回傳含 None 值的 key，不可直接 dict merge）。
+    """
+    out = dict(_workflow_profile_overrides(workflow))
+    if art_style:
+        if art_style.quality_prefix:
+            out["quality_prefix_override"] = art_style.quality_prefix
+        if art_style.negative:
+            out["negative_override"] = art_style.negative
+    return out
+
+
+def _prompt_profile_source(art_style: Optional[ArtStyle], workflow: str) -> str:
+    """P4：回傳 debug prompt 用的來源標註字串，反映 _resolve_prompt_overrides 的實際優先序。
+      - workflow 在 prompt_profiles.yml 有登錄 → "profile: <workflow>"
+      - 否則 → "family fallback"（compile() 內部 fallback 到 checkpoint family STYLE_CONFIG）
+      - art_style 另有覆寫 quality_prefix/negative 時，附加 " +art_style#<id>" 標註疊加層。
+    純標註用途，不影響任何生成邏輯。"""
+    if _load_prompt_profiles().get(workflow):
+        src = f"profile: {workflow}"
+    else:
+        src = "family fallback"
+    if art_style and (art_style.quality_prefix or art_style.negative):
+        src += f" +art_style#{art_style.id}"
+    return src
 
 
 def _extra_tags(art_style: Optional[ArtStyle]) -> str:
@@ -331,7 +405,7 @@ def _run(workflow: dict) -> bytes:
 async def _run_comfyui(workflow: dict) -> bytes:
     return await run_in_threadpool(_run, workflow)
 
-# ── txt2img 組裝 / inpaint·upscale 風格解析（A1 Step 4 自 api 下沉）─────────────
+# ── txt2img 組裝 / inpaint·upscale 風格解析（A1 Step 4 自 api 下沉）─────────────────────────────
 
 def _build_txt2img(req: "GenerateRequest", db: Session, batch_size: int = 1):
     """txt2img workflow 組裝（sync /art/generate 與 async job 共用）。

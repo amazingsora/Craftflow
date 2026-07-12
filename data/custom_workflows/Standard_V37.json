@@ -10,11 +10,11 @@
   },
   "3": {
     "inputs": {
-      "wildcard_text": "masterpiece, best quality, amazing quality, absurdres,\n\n\n1girl, solo, portrait,",
-      "populated_text": "masterpiece, best quality, amazing quality, absurdres,\n\n\n1girl, solo, portrait,",
+      "wildcard_text": "masterpiece, best quality, (newest:0.6), 1girl, solo, (highres, absurdres, very aesthetic:0.8), plana \\(blue archive\\), black coat, black eyes, black hairband, black pantyhose, black serafuku, black shoes, black skirt, blush, colored inner hair, dutch angle, eyes visible through hair, full body, hair bow, hair over one eye, hair spread out, hugging own legs, in box, in container, knees up, long sleeves, looking at viewer, lying, midriff peek, miniskirt, multicolored hair, on side, open clothes, open coat, parted lips, pink pupils, pleated skirt, red pupils, school uniform, single braid, thighband pantyhose, thighs, very long hair, white bow, white hair, white neckerchief, white ribbon, wide sleeves, location, (A highly aesthetic Pixiv style illustration, clean composition, high-quality digital art, detailed background, sharp focus on facial expressions.:0.6)",
+      "populated_text": "masterpiece, best quality, (newest:0.6), 1girl, solo, (highres, absurdres, very aesthetic:0.8), plana \\(blue archive\\), black coat, black eyes, black hairband, black pantyhose, black serafuku, black shoes, black skirt, blush, colored inner hair, dutch angle, eyes visible through hair, full body, hair bow, hair over one eye, hair spread out, hugging own legs, in box, in container, knees up, long sleeves, looking at viewer, lying, midriff peek, miniskirt, multicolored hair, on side, open clothes, open coat, parted lips, pink pupils, pleated skirt, red pupils, school uniform, single braid, thighband pantyhose, thighs, very long hair, white bow, white hair, white neckerchief, white ribbon, wide sleeves, location, (A highly aesthetic Pixiv style illustration, clean composition, high-quality digital art, detailed background, sharp focus on facial expressions.:0.6)",
       "mode": "populate",
       "seed": [
-        "33",
+        "32",
         0
       ],
       "Select to add Wildcard": "Select the Wildcard to add to the text"
@@ -26,11 +26,11 @@
   },
   "4": {
     "inputs": {
-      "wildcard_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, extra fingers, deformed, artist name, watermark, signature, patreon, twitter username",
-      "populated_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, extra fingers, deformed, artist name, watermark, signature, patreon, twitter username",
+      "wildcard_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, deformed, artist name, watermark, signature, patreon, twitter username",
+      "populated_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, deformed, artist name, watermark, signature, patreon, twitter username",
       "mode": "populate",
       "seed": [
-        "33",
+        "32",
         0
       ],
       "Select to add Wildcard": "Select the Wildcard to add to the text"
@@ -70,7 +70,7 @@
       "Select to add LoRA": "Select the LoRA to add to the text",
       "Select to add Wildcard": "Select the Wildcard to add to the text",
       "model": [
-        "42",
+        "41",
         0
       ],
       "clip": [
@@ -78,7 +78,7 @@
         1
       ],
       "vae": [
-        "41",
+        "40",
         0
       ],
       "positive": [
@@ -90,7 +90,7 @@
         0
       ],
       "bbox_detector": [
-        "34",
+        "33",
         0
       ],
       "sam_model_opt": [
@@ -153,7 +153,7 @@
   "18": {
     "inputs": {
       "seed": [
-        "33",
+        "32",
         0
       ],
       "steps": 28,
@@ -169,7 +169,7 @@
   },
   "19": {
     "inputs": {
-      "value": 2048
+      "value": 1536
     },
     "class_type": "PrimitiveFloat",
     "_meta": {
@@ -194,7 +194,7 @@
         0
       ],
       "seed": [
-        "33",
+        "32",
         0
       ],
       "steps": 14,
@@ -203,11 +203,11 @@
         2
       ],
       "sampler_name": [
-        "37",
+        "36",
         0
       ],
       "scheduler": [
-        "36",
+        "35",
         0
       ],
       "denoise": 0.26,
@@ -240,7 +240,7 @@
         0
       ],
       "image": [
-        "40",
+        "39",
         0
       ],
       "detailer_pipe": [
@@ -273,14 +273,14 @@
   },
   "31": {
     "inputs": {
-      "value": 3
+      "value": 2.5
     },
     "class_type": "PrimitiveFloat",
     "_meta": {
       "title": "BBOX Crop Factor"
     }
   },
-  "33": {
+  "32": {
     "inputs": {
       "seed": -1
     },
@@ -289,7 +289,7 @@
       "title": "Seed (rgthree)"
     }
   },
-  "34": {
+  "33": {
     "inputs": {
       "model_name": "bbox/face_yolov9c.pt"
     },
@@ -298,7 +298,7 @@
       "title": "DefaultDetectorProvider"
     }
   },
-  "35": {
+  "34": {
     "inputs": {
       "group_mode": true,
       "default_active": false,
@@ -319,7 +319,7 @@
       "title": "TriggerWord Toggle (LoraManager)"
     }
   },
-  "36": {
+  "35": {
     "inputs": {
       "text": "normal",
       "anything": [
@@ -332,7 +332,7 @@
       "title": "展示任何"
     }
   },
-  "37": {
+  "36": {
     "inputs": {
       "text": "euler_ancestral",
       "anything": [
@@ -345,7 +345,7 @@
       "title": "展示任何"
     }
   },
-  "38": {
+  "37": {
     "inputs": {
       "width": [
         "1",
@@ -365,12 +365,12 @@
       "title": "空Latent图像"
     }
   },
-  "39": {
+  "38": {
     "inputs": {
       "select": 1,
       "sel_mode": false,
       "input1": [
-        "38",
+        "37",
         0
       ]
     },
@@ -379,14 +379,14 @@
       "title": "Switch (Any)"
     }
   },
-  "40": {
+  "39": {
     "inputs": {
       "samples": [
         "46",
         0
       ],
       "vae": [
-        "41",
+        "40",
         0
       ]
     },
@@ -395,7 +395,7 @@
       "title": "VAE解码"
     }
   },
-  "41": {
+  "40": {
     "inputs": {
       "select": 1,
       "sel_mode": false,
@@ -409,7 +409,7 @@
       "title": "Switch (Any)"
     }
   },
-  "42": {
+  "41": {
     "inputs": {
       "strength": 1,
       "model": [
@@ -457,7 +457,7 @@
   "45": {
     "inputs": {
       "string_a": [
-        "35",
+        "34",
         0
       ],
       "string_b": [
@@ -474,7 +474,7 @@
   "46": {
     "inputs": {
       "seed": [
-        "33",
+        "32",
         0
       ],
       "steps": [
@@ -486,11 +486,11 @@
         2
       ],
       "sampler_name": [
-        "37",
+        "36",
         0
       ],
       "scheduler": [
-        "36",
+        "35",
         0
       ],
       "denoise": [
@@ -498,19 +498,19 @@
         5
       ],
       "model": [
-        "203",
+        "5",
         0
       ],
       "positive": [
-        "214",
+        "43",
         0
       ],
       "negative": [
-        "214",
-        1
+        "44",
+        0
       ],
       "latent_image": [
-        "39",
+        "38",
         0
       ]
     },
@@ -585,11 +585,11 @@
         0
       ],
       "sampler_name": [
-        "37",
+        "36",
         0
       ],
       "scheduler_name": [
-        "36",
+        "35",
         0
       ],
       "positive": [
@@ -601,7 +601,7 @@
         0
       ],
       "seed_value": [
-        "33",
+        "32",
         0
       ],
       "width": [
@@ -656,12 +656,12 @@
           {
             "name": "A",
             "selected": true,
-            "url": "/api/view?filename=rgthree.compare._temp_eilyf_00001_.png&type=temp&subfolder=&rand=0.24810856055920572"
+            "url": "/api/view?filename=rgthree.compare._temp_budrl_00001_.png&type=temp&subfolder=&rand=0.829149109254686"
           },
           {
             "name": "B",
             "selected": true,
-            "url": "/api/view?filename=rgthree.compare._temp_eilyf_00002_.png&type=temp&subfolder=&rand=0.3209926718273741"
+            "url": "/api/view?filename=rgthree.compare._temp_budrl_00002_.png&type=temp&subfolder=&rand=0.534387669914809"
           }
         ]
       },
@@ -670,7 +670,7 @@
         0
       ],
       "image_b": [
-        "40",
+        "39",
         0
       ]
     },
@@ -695,135 +695,6 @@
     "class_type": "ImpactSwitch",
     "_meta": {
       "title": "Switch (Any)"
-    }
-  },
-  "200": {
-    "inputs": {
-      "image": "concept_ref.png"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "IPA 參考圖（概念圖）"
-    }
-  },
-  "201": {
-    "inputs": {
-      "ipadapter_file": "ip-adapter-plus_sdxl_vit-h.safetensors"
-    },
-    "class_type": "IPAdapterModelLoader",
-    "_meta": {
-      "title": "IPA Model Loader"
-    }
-  },
-  "202": {
-    "inputs": {
-      "clip_name": "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
-    },
-    "class_type": "CLIPVisionLoader",
-    "_meta": {
-      "title": "CLIP Vision Loader"
-    }
-  },
-  "203": {
-    "inputs": {
-      "weight": 0.6,
-      "weight_type": "linear",
-      "combine_embeds": "concat",
-      "start_at": 0,
-      "end_at": 1,
-      "embeds_scaling": "V only",
-      "model": [
-        "5",
-        0
-      ],
-      "ipadapter": [
-        "201",
-        0
-      ],
-      "image": [
-        "200",
-        0
-      ],
-      "clip_vision": [
-        "202",
-        0
-      ]
-    },
-    "class_type": "IPAdapterAdvanced",
-    "_meta": {
-      "title": "IPAdapterAdvanced"
-    }
-  },
-  "210": {
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "CN 參考圖（姿勢/結構）"
-    },
-    "inputs": {
-      "image": "char_cn_ref.png",
-      "upload": "image"
-    }
-  },
-  "211": {
-    "class_type": "ControlNetLoader",
-    "_meta": {
-      "title": "Load ControlNet (Union)"
-    },
-    "inputs": {
-      "control_net_name": "diffusion_pytorch_model_promax.safetensors"
-    }
-  },
-  "212": {
-    "class_type": "SetUnionControlNetType",
-    "_meta": {
-      "title": "Union Type: Lineart"
-    },
-    "inputs": {
-      "control_net": [
-        "211",
-        0
-      ],
-      "type": "canny/lineart/anime_lineart/mlsd"
-    }
-  },
-  "213": {
-    "class_type": "AnimeLineArtPreprocessor",
-    "_meta": {
-      "title": "Preprocess: AnimeLineArt"
-    },
-    "inputs": {
-      "image": [
-        "210",
-        0
-      ],
-      "resolution": 1024
-    }
-  },
-  "214": {
-    "class_type": "ControlNetApplyAdvanced",
-    "_meta": {
-      "title": "Apply CN: Lineart"
-    },
-    "inputs": {
-      "positive": [
-        "43",
-        0
-      ],
-      "negative": [
-        "44",
-        0
-      ],
-      "control_net": [
-        "212",
-        0
-      ],
-      "image": [
-        "213",
-        0
-      ],
-      "strength": 0.7,
-      "start_percent": 0.0,
-      "end_percent": 0.85
     }
   }
 }
