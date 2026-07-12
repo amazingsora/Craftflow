@@ -93,6 +93,92 @@ def test_resolve_style_priority(monkeypatch):
     assert wb._resolve_style(None) == PromptStyle.SDXL
 
 
+# ── P1: prompt_profiles.yml（workflow 級 override）─────────────────────────────
+
+def test_load_prompt_profiles_missing_file_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(wb, "_PROMPT_PROFILES_YML", tmp_path / "nope.yml")
+    assert wb._load_prompt_profiles() == {}
+
+
+def test_load_prompt_profiles_reads_yaml(tmp_path, monkeypatch):
+    yml = tmp_path / "prompt_profiles.yml"
+    yml.write_text(
+        "profiles:\n"
+        "  Standard_V37.json:\n"
+        "    quality_prefix: \"masterpiece, best quality, absurdres\"\n"
+        "    negative: \"worst quality, low quality\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(wb, "_PROMPT_PROFILES_YML", yml)
+    profiles = wb._load_prompt_profiles()
+    assert profiles["Standard_V37.json"]["quality_prefix"] == "masterpiece, best quality, absurdres"
+
+
+def test_workflow_profile_overrides_unregistered_workflow_is_noop(monkeypatch):
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
+    assert wb._workflow_profile_overrides("text_to_image.json") == {}
+
+
+def test_workflow_profile_overrides_only_includes_set_fields(monkeypatch):
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
+        "Standard_V37.json": {"quality_prefix": "masterpiece, absurdres", "negative": "worst quality"},
+    })
+    out = wb._workflow_profile_overrides("Standard_V37.json")
+    assert out == {
+        "quality_prefix_override": "masterpiece, absurdres",
+        "negative_override": "worst quality",
+    }
+    # quality_suffix 未登錄 → 不佔位（compile() 預設行為才生效）
+    assert "quality_suffix_override" not in out
+
+
+def test_resolve_prompt_overrides_priority_art_style_over_workflow(monkeypatch):
+    """art_style 有值時必須贏過 workflow profile（即便 workflow profile 也有登錄該欄位）。"""
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
+        "Standard_V37.json": {"quality_prefix": "wf-prefix", "negative": "wf-negative"},
+    })
+    st = ArtStyle(name="s", quality_prefix="style-prefix", negative="")
+    out = wb._resolve_prompt_overrides(st, "Standard_V37.json")
+    assert out["quality_prefix_override"] == "style-prefix"  # art_style 贏
+    assert out["negative_override"] == "wf-negative"          # art_style 該欄位留白 → workflow 生效
+
+
+def test_resolve_prompt_overrides_no_art_style_uses_workflow_profile(monkeypatch):
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
+        "Standard_V37.json": {"quality_prefix": "wf-prefix", "negative": "wf-negative"},
+    })
+    out = wb._resolve_prompt_overrides(None, "Standard_V37.json")
+    assert out == {"quality_prefix_override": "wf-prefix", "negative_override": "wf-negative"}
+
+
+def test_resolve_prompt_overrides_unregistered_workflow_zero_regression(monkeypatch):
+    """未登錄 workflow：無 art_style → 空 dict，與改動前 _compile_overrides(None) 行為一致。"""
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
+    assert wb._resolve_prompt_overrides(None, "text_to_image.json") == {}
+
+
+# ── P4: _prompt_profile_source（debug 來源標註）────────────────────────────────
+
+def test_prompt_profile_source_registered_workflow(monkeypatch):
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
+        "Standard_V37.json": {"quality_prefix": "x"},
+    })
+    assert wb._prompt_profile_source(None, "Standard_V37.json") == "profile: Standard_V37.json"
+
+
+def test_prompt_profile_source_unregistered_is_family_fallback(monkeypatch):
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
+    assert wb._prompt_profile_source(None, "text_to_image.json") == "family fallback"
+
+
+def test_prompt_profile_source_art_style_overlay(monkeypatch):
+    """art_style 有覆寫欄位時附加 +art_style# 標註（疊加於 profile 或 family fallback）。"""
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
+    st = ArtStyle(name="s", quality_prefix="style-prefix", negative="")
+    st.id = 7
+    assert wb._prompt_profile_source(st, "text_to_image.json") == "family fallback +art_style#7"
+
+
 # ── _load_workflow ────────────────────────────────────────────────────────────
 
 @pytest.fixture

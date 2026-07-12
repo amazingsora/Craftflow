@@ -100,6 +100,14 @@ Craftflow/
    ollama pull dolphin-llama3
    ollama pull qwen2.5vl:7b
    ```
+   > **VRAM 保險**（2026-07-07）：文字/視覺模型設定不同時，建議啟動 Ollama 前設
+   > `OLLAMA_MAX_LOADED_MODELS=1`（環境變數），強制同一時間只駐留一顆模型，
+   > 避免與 vram_manager 的條件式卸載邏輯疊加造成 VRAM 溢出。代價是換模型時多
+   > 3-8 秒冷載，cache 命中時無感。
+   ```bash
+   # Windows PowerShell（啟動 ollama serve 前）
+   $env:OLLAMA_MAX_LOADED_MODELS = "1"; ollama serve
+   ```
 2. **ComfyUI** 已啟動於 `:8188`，並安裝必要節點與模型（ControlNet Union ProMax、IP-Adapter；詳見安裝手冊）。
 
 ### 1. 設定環境變數

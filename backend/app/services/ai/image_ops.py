@@ -23,9 +23,12 @@ _FLAT_COLOR_STD_THRESHOLD = 25.0  # max per-channel std to be considered a flat-
 # 避免 magic string 散落於主角色與變體兩處生成流程。
 # 2026-06-23：去語義稀釋。呼叫端 suffix 已含 "full body, front view"，此處不再重複
 # full body shot / head to toe / full body visible（同義詞攤平注意力）；只保留取景補強
-# 的 standing 與手部品質詞。
+# 的 standing。
+# S1（2026-07-12）：拔 "detailed hands, five fingers"——Illustrious 正向手部 tag 無效
+# （手部品質應由負向擋，見下方 _FULLBODY_NEG_TAGS 的 missing fingers/extra digits/
+# bad hands/fused fingers + FaceDetailer），純稀釋且實測歸因為零效益 tag。
 _FULLBODY_POS_TAGS = (
-    "standing, detailed hands, five fingers"
+    "standing"
 )
 # 全身專屬負向：抑制裁切/特寫構圖，並補全手指相關防護（部分底模預設未含）。
 _FULLBODY_NEG_TAGS = (

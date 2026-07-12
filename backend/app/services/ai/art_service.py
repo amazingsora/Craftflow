@@ -107,7 +107,7 @@ class ArtAnalysisResult:
 
     @property
     def success(self) -> bool:
-        return bool(self.content) and not self.content.startswith("[")
+        return bool(self.content) and not ollama_client.is_error(self.content)
 
 
 def critique_sketch(image_path: str, model: str = ollama_client.DEFAULT_VISION_MODEL) -> ArtAnalysisResult:

@@ -3,6 +3,9 @@ Lexicon — Vocabulary and patterns for trait extraction and tag classification.
 """
 from __future__ import annotations
 import re
+from pathlib import Path
+
+import yaml
 
 # ── Color Mapping ─────────────────────────────────────────────────────────────
 
@@ -72,6 +75,48 @@ EYE_COLORS = {
     "red eyes", "blue eyes", "purple eyes", "pink eyes", "green eyes",
     "orange eyes", "grey eyes", "gray eyes", "amber eyes",
 }
+
+# ── Personal Term Map（P3，2026-07-12）─────────────────────────────────────────
+# LLM 翻譯前的確定性字串替換：中文原文子字串 → 英文 tag，直接進 LLM 輸入，降低特定
+# 詞彙（角色名、專有名詞、易誤譯的服裝/神韻描述）被誤譯或幻覺的機率。管理於
+# personal_term_map.yml；未建檔／解析失敗 → {}（這層機制完全不介入，零回歸）。
+# 與上方 TRAIT_MAP（掛在已停用的 _inject_traits，LLM 翻譯「後」修正）是不同機制。
+
+_PERSONAL_TERM_MAP_YML = Path("/app/backend/personal_term_map.yml")
+if not _PERSONAL_TERM_MAP_YML.exists():
+    _PERSONAL_TERM_MAP_YML = Path(__file__).resolve().parents[4] / "personal_term_map.yml"
+
+
+def _load_personal_term_map() -> dict[str, str]:
+    """讀 personal_term_map.yml。未建檔/解析失敗 → {}。不快取，比照
+    checkpoint_styles.yml/prompt_profiles.yml 慣例，調參期改 yml 免重啟即生效。"""
+    try:
+        with open(_PERSONAL_TERM_MAP_YML, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("terms", {}) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+
+
+def apply_personal_term_map(text: str) -> str:
+    """套用個人詞庫：中文原文子字串 → 英文 tag。由長到短匹配（比照 _TRAIT_ALTS 慣例），
+    避免短詞（如「大小姐」）先吃掉長詞（如「大小姐衣裝」）的子字串，導致長詞規則失效。
+    未登錄詞彙或空詞庫時原樣回傳（零回歸）。
+
+    P3.1（2026-07-12）：替換值前後補逗號分隔（", tag, "），杜絕相鄰兩詞替換後英文黏字。
+    根因：「黑色長窄裙長度蓋過小腿」兩次替換後成 "黑色長pencil skirtlong skirt"，
+    skirtlong 黏字使 LLM 只認出前者、丟棄 long skirt（裙長變短）。補分隔符後兩個
+    英文 tag 各自獨立（", pencil skirt, , long skirt, "），交由 _sanitize_to_list 收整。"""
+    terms = _load_personal_term_map()
+    if not terms or not text:
+        return text
+    for zh in sorted(terms, key=len, reverse=True):
+        if zh in text:
+            text = text.replace(zh, f", {terms[zh]}, ")
+    return text
+
 
 # ── Tag Ordering Categories ────────────────────────────────────────────────────
 

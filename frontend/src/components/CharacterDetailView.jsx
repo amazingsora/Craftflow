@@ -130,6 +130,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [lastFlatDraft, setLastFlatDraft] = useState(null)
   const [lastAiPromptCompiled, setLastAiPromptCompiled] = useState(null)
   const [lastIpaUsed, setLastIpaUsed] = useState(null)
+  const [lastPromptProfile, setLastPromptProfile] = useState(null)
   const [lightboxSrc, setLightboxSrc] = useState(null)
   const [lastTimings, setLastTimings] = useState(null)
 
@@ -256,6 +257,12 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       setLastFlatDraft(resp.headers.get('X-Flat-Draft') === '1')
 
       if (debugPrompt) setLastDebugPrompt(debugPrompt)
+
+      const b64Profile = resp.headers.get('X-Prompt-Profile')
+      if (b64Profile) {
+        try { setLastPromptProfile(decodeURIComponent(escape(atob(b64Profile)))) }
+        catch (e) { /* silent */ }
+      }
 
       const b64Timings = resp.headers.get('X-Timings')
       if (b64Timings) {
@@ -464,6 +471,9 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       const b64AiCompiled = resp.headers.get('X-AI-Prompt-Compiled')
       if (b64AiCompiled) { try { aiPromptCompiled = decodeURIComponent(escape(atob(b64AiCompiled))) } catch (e) { /* silent */ } }
       const ipaUsed = resp.headers.get('X-IPA-Used') === '1'
+      let promptProfile = null
+      const b64Profile = resp.headers.get('X-Prompt-Profile')
+      if (b64Profile) { try { promptProfile = decodeURIComponent(escape(atob(b64Profile))) } catch (e) { /* silent */ } }
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
       setV(slot, {
@@ -474,6 +484,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         lastTimings: timings,
         lastAiPromptCompiled: aiPromptCompiled,
         lastIpaUsed: ipaUsed,
+        lastPromptProfile: promptProfile,
         pendingQueue: [{ blob, url, label: '全身人設圖' }],
       })
       onAddHistory?.({
@@ -1037,6 +1048,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                           {lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
                         </div>
                       )}
+                      {lastPromptProfile && (
+                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                          background: lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--surface-2)',
+                          color: lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-fg)' : 'var(--muted)',
+                          border: `1px solid ${lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--border-strong)'}` }}>
+                          {lastPromptProfile}
+                        </div>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {lastRawDesc ?? '—'}
@@ -1382,6 +1401,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                           color: vState.lastIpaUsed ? 'var(--tint-blue-fg)' : 'var(--muted)',
                           border: `1px solid ${vState.lastIpaUsed ? 'var(--tint-blue-border)' : 'var(--border-strong)'}` }}>
                           {vState.lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
+                        </div>
+                      )}
+                      {vState.lastPromptProfile && (
+                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                          background: vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--surface-2)',
+                          color: vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-fg)' : 'var(--muted)',
+                          border: `1px solid ${vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--border-strong)'}` }}>
+                          {vState.lastPromptProfile}
                         </div>
                       )}
                     </div>

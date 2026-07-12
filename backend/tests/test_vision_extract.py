@@ -164,7 +164,7 @@ def test_cached_fifo_eviction(monkeypatch):
 def test_cached_plain_mode_uses_ollama_multi(monkeypatch):
     calls = {"multi": 0}
 
-    def fake_multi(images, prompt, model=None, options=None):
+    def fake_multi(images, prompt, model=None, options=None, keep_alive=None):
         calls["multi"] += 1
         return "共同特徵描述"
 

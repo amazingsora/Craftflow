@@ -18,6 +18,7 @@ from app.models.character import Character
 from app.models.project import Project
 from app.schemas.character import CharacterCreate, CharacterUpdate, CharacterResponse
 from app.services.ai import character_service
+from app.services.ai.ollama_client import is_error as _ollama_is_error
 from app.services.ai.variant_helpers import (
     _get_variants,
     _slot_index,
@@ -104,7 +105,7 @@ def summarize_character(character_id: int, db: DbDep, model: Optional[str] = Non
         notes=character.notes,
         model=used_model,
     )
-    if not summary or summary.startswith("["):
+    if not summary or _ollama_is_error(summary):
         raise HTTPException(
             status_code=503,
             detail=f"Ollama 回傳錯誤（模型：{used_model}）：{summary or '空回應'}",
@@ -482,7 +483,7 @@ def summarize_variant(character_id: int, slot: int, db: DbDep, model: Optional[s
         notes=v.get("notes"),
         model=used_model,
     )
-    if not summary or summary.startswith("["):
+    if not summary or _ollama_is_error(summary):
         raise HTTPException(
             status_code=503,
             detail=f"Ollama 回傳錯誤（模型：{used_model}）：{summary or '空回應'}",

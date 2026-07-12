@@ -137,6 +137,15 @@ def _post_generate(payload: dict, timeout: int, label: str) -> str:
         return f"[{label} error at {OLLAMA_BASE}: {e}]"
 
 
+def is_error(response: str) -> bool:
+    """
+    True if `response` is one of this module's error strings (e.g. "[Vision error ...]").
+    Centralizes the `.startswith("[")` convention used across callers so the
+    error-marker format only needs to change in one place.
+    """
+    return bool(response) and response.startswith("[")
+
+
 def is_available() -> bool:
     try:
         requests.get(f"{OLLAMA_BASE}/api/tags", timeout=3)

@@ -54,6 +54,21 @@ PERSONAL_STYLE_ENABLED: bool = os.getenv("PERSONAL_STYLE_ENABLED", "false").lowe
 PERSONAL_STYLE_EXTRA_TAGS: str = os.getenv("PERSONAL_STYLE_EXTRA_TAGS", "")
 PERSONAL_NEGATIVE_ENABLED: bool = os.getenv("PERSONAL_NEGATIVE_ENABLED", "false").lower() == "true"
 PERSONAL_NEGATIVE: str = os.getenv("PERSONAL_NEGATIVE", "")
+# 畫風 tags 加權係數（G1-3）：!=1.0 時，角色生圖把 style_extra 每個 tag 包成 (tag:weight)
+# 並前置到 identity 區塊（與角色身分同級優先），讓畫風由 prompt 承擔、CN 可安心降權。
+# 1.0（預設）= 維持現行末端 append、不加權，git 預設零行為變更。
+PERSONAL_STYLE_WEIGHT: float = float(os.getenv("PERSONAL_STYLE_WEIGHT", "1.0"))
+
+# ── Prompt 擴寫 stage2（G1-2，.env 啟用 / git 預設關閉）────────────────────────
+# PROMPT_UPSAMPLE_ENABLED=true → compile() 翻譯+sanitize 後，多一次 LLM 呼叫把稀疏
+#   tags 擴寫成更密的 danbooru tags（V37 booru upsampler 規則）。additive 合併、原始
+#   tags 為 identity 錨不可被覆蓋；FLUX（自然語言）不套用。
+#   ⚠️ 預設關閉——需先手動 A/B 驗證(G1-1)再開，避免未驗證污染線上出圖。
+PROMPT_UPSAMPLE_ENABLED: bool = os.getenv("PROMPT_UPSAMPLE_ENABLED", "false").lower() == "true"
+PROMPT_UPSAMPLE_MODEL: str = os.getenv("PROMPT_UPSAMPLE_MODEL", "")  # 空 = 沿用 compile() 的 text model
+# 擴寫後 body tag 數上限（token 預算，G1-4）：擴寫會膨脹 tags，超限時從擴寫尾端砍，
+# 受保護的原始翻譯 tags（identity/subject）一律保留。0（預設）= 停用。
+PROMPT_MAX_BODY_TAGS: int = int(os.getenv("PROMPT_MAX_BODY_TAGS", "0"))
 
 # ── 生圖微調旋鈕 ──────────────────────────────────────────────
 # flat_draft(線稿/平塗概念圖)當 IPA 參考會把成像拉平 → 自動把 IPA 權重乘此係數(下限0.1)。1.0=不降。

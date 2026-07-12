@@ -1,0 +1,26 @@
+# Craftflow — Workflow 級 Prompt Profile（P1，2026-07-12）
+#
+# key   = workflow 檔名（data/custom_workflows/ 或系統 workflow 目錄下的檔名，含副檔名）
+# value = quality_prefix / quality_suffix / negative，皆可省略；省略的欄位不覆寫，
+#         落回下一優先序（見下）。
+#
+# 解析優先序（三欄位各自獨立判斷）：
+#   art_style 個別欄位  >  這裡的 workflow profile  >  checkpoint family（prompt_engine/styles.py STYLE_CONFIG）
+#
+# 未登錄的 workflow 檔名＝這份設定完全不介入，行為與新增本機制前一致（零回歸）。
+#
+# quality_suffix：附加在 compile() 組出的 body 之後（角色/畫風 tags 之前），用於未來
+# 需要「尾綴權重 tag」（如官方範例的 pixiv 尾綴 `(:0.6)`）的 workflow；V37 本輪未採用，留空。
+
+profiles:
+  Standard_V37.json:
+    # 2026-07-12 實測三版對照（doc/2026-07-12_工作流提示詞優化規劃.md 表格）：
+    # C 官方簡化版，介於 A(官方權重版)/B(現行強化版) 之間、平衡最佳 → 暫定採用。
+    quality_prefix: "masterpiece, best quality, absurdres"
+    # negative：B 版（現行 illustrious 強化版 + 補強 worst detail/sketch/patreon/浮水印署名 +
+    # 抑制 detailed background/scenery，人設圖 profile 禁用場景細節），實測優於官方短版。
+    negative: >-
+      worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions,
+      missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts,
+      signature, watermark, username, text, blurry, cropped, extra limbs,
+      worst detail, sketch, patreon, twitter username, detailed background, scenery

@@ -10,8 +10,16 @@ Each style defines:
 """
 from __future__ import annotations
 
+import re
 from enum import Enum
 from pydantic import BaseModel, model_validator
+
+
+# P2：quality_prefix 可能含 SD 權重語法，如 "(highres, absurdres, very aesthetic:0.8)"
+# 或單一 "(newest:0.6)"。_sync_banned_tags 純逗號 split 會把整組拆成 "(highres" 等破碎
+# 字串，banned_tags 比對永遠失敗、LLM 仍可能吐出重複的 highres/absurdres 灌爆正向。
+# 這裡先把 "(tag1, tag2:0.8)" 展開成 "tag1, tag2"（丟權重與外層括號），再交給逐一 split。
+_WEIGHT_GROUP_RE = re.compile(r'\(([^()]+):[\d.]+\)')
 
 
 class PromptStyle(str, Enum):
@@ -31,10 +39,14 @@ class StyleConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sync_banned_tags(self) -> StyleConfig:
-        """Automatically add quality_prefix tags to banned_tags to prevent duplication."""
+        """Automatically add quality_prefix tags to banned_tags to prevent duplication.
+
+        P2：先展開 SD 權重群組語法（見 _WEIGHT_GROUP_RE），再逐一 split，避免權重寫法
+        把 tag 拆爛成不會命中 banned_set 的破碎字串。
+        """
         if self.quality_prefix:
-            # Split "tag1, tag2" into {"tag1", "tag2"}
-            extra_banned = {t.strip() for t in self.quality_prefix.split(",") if t.strip()}
+            expanded = _WEIGHT_GROUP_RE.sub(r'\1', self.quality_prefix)
+            extra_banned = {t.strip() for t in expanded.split(",") if t.strip()}
             self.banned_tags.update(extra_banned)
         return self
 
@@ -77,6 +89,9 @@ _LINEART_ARTIFACT_TAGS = {
     "line-art style", "lineart style", "line art style",
     "line-art style legs", "lineart legs",
     "pencil sketch", "sketch style", "monochrome sketch",
+    # S7（2026-07-12）：線稿概念圖經 vision 抽取「無色調服裝」洩漏成 colorless 詞族，
+    # uncolored 只擋 uncolored 詞族、漏掉 colorless。補齊 achromatic/colorless 變體。
+    "colorless", "colorless clothing", "achromatic clothing",
 }
 
 _SD_SYNTAX_TAGS = {
@@ -103,6 +118,7 @@ _DANBOORU_COMMON_RULES = f"""- FORMAT: Output ONLY comma-separated tags. NO key-
 - CONFLICT: "外貌與個性" (Priority Traits) and "服裝設定" (Outfit Setting) ALWAYS override "視覺參考特徵" (Visual Traits). (a) If Visual says "pink jacket" but Outfit Setting says "grey combat suit", output ONLY the Outfit Setting outfit — discard the Visual outfit entirely. (b) If Visual says "purple eyes" but Priority Traits says "brown hair" / "異色瞳", use Priority Traits only.
 - MODIFIERS: Pay extreme attention to hair length and style modifiers. "短雙馬尾" = "short hair, short twin tails" or "short hair, short ponytail".
 - HETEROCHROMIA: If "異色瞳" is present, always output "heterochromia" plus each eye's color with direction. Example: 左眼紅右眼綠 → heterochromia, red eye (left), green eye (right).
+- PASSTHROUGH: English tags already present in the input MUST be copied to the output verbatim, unchanged.
 - STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
 - QUALITY: Do NOT add quality tags (e.g., masterpiece, best quality). They are handled elsewhere.
 {_COLOR_RULES}"""
@@ -307,3 +323,29 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
         llm_template=_ANYTHINGXL_TEMPLATE,
     ),
 }
+
+
+# ── Prompt 擴寫 stage2 system prompt（G1-2）─────────────────────────────────────
+# 移植自 F:\wk\workflow 的 V37 Advanced 三變體共用的 booru tag upsampler system prompt：
+# 把稀疏 danbooru tags 擴寫成 10-50 個更密的 tags，補足畫面資訊密度（畫風一致由此承擔，
+# 讓 CN 可降權只管結構）。規則對齊 V37：不可改主體、不可加 meta/quality、僅輸出 tag 字串。
+# ⚠️ 本常數為依規劃文件重建版本，最終措辭以 G1-1 手動 A/B 驗證結果為準。
+# {tags} 由 compiler 填入 stage1 清洗後的 tag 串；輸出經同一 _sanitize_to_list 守門。
+UPSAMPLE_SYSTEM_PROMPT = """[TASK]
+You are a Danbooru tag upsampler for anime Stable Diffusion. Expand the given SHORT tag list
+into a denser, richer set of danbooru tags that describe the SAME subject and scene.
+
+[RULES]
+- SUBJECT LOCK: Never change, drop, or contradict any given tag. Keep the exact subject,
+  character identity, gender, hair/eye colors, and outfit. Only ADD complementary tags.
+- ADD: expression, pose, composition, lighting, background/setting, minor accessories, and
+  view — but only what is consistent with the given tags. Do NOT invent a different character.
+- SCALE: output roughly 10-50 comma-separated danbooru tags total (including the originals).
+- FORMAT: lowercase, comma-separated tags ONLY. No key-value pairs, no sentences.
+- NO-GO: NO quality/meta tags (masterpiece, best quality, score_9, absurdres, newest — handled
+  elsewhere). NO "Output:"/"Tags:" prefix. NO explanations. NO capital letters.
+
+[INPUT TAGS]
+{tags}
+
+[RESULT]"""

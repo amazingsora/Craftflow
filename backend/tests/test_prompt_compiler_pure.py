@@ -1,0 +1,83 @@
+"""
+compiler._sanitize_to_list 純函式單測（P2，2026-07-02 規劃）。
+不需要 Ollama；只測 compile() 拆出的確定性清洗邏輯。
+執行：cd backend && pytest tests/test_prompt_compiler_pure.py
+"""
+from app.services.ai.prompt_engine.compiler import _sanitize_to_list
+
+
+def test_sanitize_basic_split_and_strip():
+    out = _sanitize_to_list("1girl, solo, white hair", banned_set=set())
+    assert out == ["1girl", "solo", "white hair"]
+
+
+def test_sanitize_dedup_case_insensitive():
+    out = _sanitize_to_list("white hair, White Hair, solo", banned_set=set())
+    assert out == ["white hair", "solo"]
+
+
+def test_sanitize_banned_tags_removed():
+    out = _sanitize_to_list("1girl, masterpiece, solo", banned_set={"masterpiece"})
+    assert out == ["1girl", "solo"]
+
+
+def test_sanitize_drops_cjk_leak():
+    out = _sanitize_to_list("white hair, 角色名稱, solo", banned_set=set())
+    assert out == ["white hair", "solo"]
+
+
+def test_sanitize_quoted_meta_only_dropped_when_quote_not_symmetric():
+    """
+    已知邊界情況：t_clean.strip('."\\'') 會把「頭尾都是雙引號」的整段一次剝除，
+    使內部殘留的單引號（如 let's）在剝除後不再含 '"'，因此 `if '"' in t_clean`
+    偵測不到、不會被丟棄。這不是本次 P0-P3 範圍要修的 bug，這裡先固定住現況，
+    未來要收斂這個漏洞時，此測試會提醒需要同步更新（對應 golden case cjk_and_meta_leak）。
+    """
+    out = _sanitize_to_list('white hair, "but let\'s stick to input", solo', banned_set=set())
+    assert out == ["white hair", "but let's stick to input", "solo"]
+
+
+def test_sanitize_drops_unbalanced_quote_meta_commentary():
+    out = _sanitize_to_list('white hair, but let\'s stick to "input", solo', banned_set=set())
+    assert out == ["white hair", "solo"]
+
+
+def test_sanitize_drops_meta_label_colon():
+    out = _sanitize_to_list("white hair, Conflict Resolution:, solo", banned_set=set())
+    assert out == ["white hair", "solo"]
+
+
+def test_sanitize_drops_alt_paren_explanation():
+    out = _sanitize_to_list("white hair, (or maybe boots), solo", banned_set=set())
+    assert "(or maybe boots)" not in out
+    assert "white hair" in out and "solo" in out
+
+
+def test_sanitize_keeps_short_direction_paren():
+    out = _sanitize_to_list("red eye (left), green eye (right)", banned_set=set())
+    assert out == ["red eye (left)", "green eye (right)"]
+
+
+def test_sanitize_strips_inline_dash_reasoning():
+    out = _sanitize_to_list("reasoning - wait actually blue", banned_set=set())
+    assert out == ["reasoning"]
+
+
+def test_sanitize_drops_numeric_age_phrase():
+    out = _sanitize_to_list("1girl, 10 years old, child", banned_set=set())
+    assert out == ["1girl", "child"]
+
+
+def test_sanitize_drops_overlong_tag():
+    long_tag = "this is a very long inference sentence that leaks reasoning text far beyond the eighty character limit"
+    out = _sanitize_to_list(f"white hair, {long_tag}, solo", banned_set=set())
+    assert out == ["white hair", "solo"]
+
+
+def test_sanitize_takes_first_slash_alternative():
+    out = _sanitize_to_list("shoes/boots, solo", banned_set=set())
+    assert out == ["shoes", "solo"]
+
+
+def test_sanitize_empty_string_returns_empty_list():
+    assert _sanitize_to_list("", banned_set=set()) == []
