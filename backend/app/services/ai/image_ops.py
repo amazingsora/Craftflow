@@ -260,3 +260,133 @@ def _pixel_coverage_check(image_bytes: bytes) -> str | None:
     except Exception:
         pass
     return None
+
+# ── 反向升級檢查（2026-07-14 全身外擴誤判修復 T1A）─────────────────────────────
+# 事故：LLM 把「完整站立全身草圖」誤判 partial/bust → 觸發外擴 → 在已完整的身體
+# 下方再 inpaint 一套腿（幽靈下半身／比例被拉長）。coverage 誤判偏差中，
+# full→partial（少補腿）代價 << partial→full（憑空多生下半身），故只加「反向升級」單向
+# 防呆：LLM 判 partial/bust 時，用像素幾何反查草圖是否其實已是完整站立全身，是則升級
+# full、跳過外擴。雙條件「同時」成立才升級，任一不成立即維持 LLM 判定 → 對真半身零回歸。
+_FULLNESS_BOTTOM_MARGIN = _env_float("FULLNESS_BOTTOM_MARGIN", 0.015)  # ink bbox 底距畫布底 ≥ 此比例 → 角色收尾於畫面內。2026-07-15：實測真半身margin=0%、真全身≥2%，0.03太嚴會擋掉2%的全身(附件1/6)→降0.015；仍是調參(真全身腳觸底邊者仍漏)，根治見 T1B DWPose
+_FULLNESS_MIN_AR = _env_float("FULLNESS_MIN_AR", 2.0)                 # ink bbox 高/寬 ≥ 此值 → 站立全身 prior（胸像 AR≈1.0–1.3）
+_FULLNESS_INK_DELTA = _env_float("FULLNESS_INK_DELTA", 28.0)          # 偏離背景色歐氏距離 ≥ 此值 → 視為 ink（非固定灰階閾值，淡鉛筆稿才抓得到）
+_FULLNESS_MAX_EDGE = 256                                              # bbox 計算前降採樣最長邊（比例不受影響、提速）
+
+
+def _ink_bbox(image_bytes: bytes) -> tuple[tuple[int, int, int, int], int, int] | None:
+    """以背景色為基準二值化，回傳 ink 像素 bounding box (l,t,r,b) 與降採樣後畫布 (w,h)。
+
+    閾值取「偏離 _border_color 的歐氏距離」（非固定灰階閾值），淡鉛筆稿也抓得到。
+    無任何 ink 像素 → None。最長邊降採樣至 _FULLNESS_MAX_EDGE 提速（bbox 比例不變）。
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        w0, h0 = img.size
+        longest = max(w0, h0)
+        if longest > _FULLNESS_MAX_EDGE:
+            scale = _FULLNESS_MAX_EDGE / longest
+            img = img.resize((max(1, int(w0 * scale)), max(1, int(h0 * scale))), Image.BILINEAR)
+        w, h = img.size
+        br, bg, bb = _border_color(img)
+        px = img.load()
+        delta_sq = _FULLNESS_INK_DELTA ** 2
+        min_x, min_y, max_x, max_y = w, h, -1, -1
+        for y in range(h):
+            for x in range(w):
+                r, g, b = px[x, y]
+                if (r - br) ** 2 + (g - bg) ** 2 + (b - bb) ** 2 >= delta_sq:
+                    if x < min_x:
+                        min_x = x
+                    if x > max_x:
+                        max_x = x
+                    if y < min_y:
+                        min_y = y
+                    if y > max_y:
+                        max_y = y
+        if max_x < 0:
+            return None
+        return (min_x, min_y, max_x, max_y), w, h
+    except Exception:
+        return None
+
+
+def _pixel_fullness_check(image_bytes: bytes) -> bool:
+    """反向升級：LLM 判 partial/bust 但草圖幾何其實是完整站立全身 → True（升級 full、跳過外擴）。
+
+    雙條件「同時」成立才升級（避免把真半身誤升級成 full 造成回歸）：
+      1. 底部留白：ink bbox 最低點距底邊 ≥ FULLNESS_BOTTOM_MARGIN 圖高（角色完整收尾於畫面內）
+      2. 直立比例：ink bbox 高/寬 ≥ FULLNESS_MIN_AR（站立全身 prior；胸像 AR≈1.0–1.3）
+    07-13「緊裁半身填到底」ink 觸底 → 條件1不成立 → 不升級 → 不回歸。
+    """
+    res = _ink_bbox(image_bytes)
+    if res is None:
+        return False
+    (l, t, r, b), w, h = res
+    bbox_w = max(1, r - l + 1)
+    bbox_h = b - t + 1
+    bottom_margin = (h - 1 - b) / h              # ink bbox 底距畫布底的比例
+    aspect = bbox_h / bbox_w
+    upgrade = bottom_margin >= _FULLNESS_BOTTOM_MARGIN and aspect >= _FULLNESS_MIN_AR
+    logger.info(
+        "[fullness-check] bbox=%s canvas=%dx%d bottom_margin=%.3f(>=%.3f) ar=%.2f(>=%.2f) -> upgrade=%s",
+        (l, t, r, b), w, h, bottom_margin, _FULLNESS_BOTTOM_MARGIN, aspect, _FULLNESS_MIN_AR, upgrade,
+    )
+    return upgrade
+
+# ── 外擴輸出斷裂偵測（2026-07-15 全身外擴誤判修復 Stage 3 T3A）──────────────────────
+# 最後防線：即使判定層誤放行、外擴仍生出「上半身完整 + 一段背景空帶 + 下方漂浮第二套腿」
+# 的幽靈下半身（附件三實例），這裡在外擴輸出上做行掃描攔截：主體垂直範圍內若存在一整段
+# 「整排幾乎純背景色」的空帶（≥ EXPAND_BREAK_MIN_FRAC 圖高），判定主體斷裂 → 呼叫端丟棄
+# 外擴、回退方案1（縮圖＋夾 CN）。用雙門檻避開腳踝/脖子等細窄處誤判為斷裂。
+_EXPAND_BREAK_MIN_FRAC = _env_float("EXPAND_BREAK_MIN_FRAC", 0.08)  # 主體內連續空帶 ≥ 此比例圖高 → 判斷裂
+_EXPAND_BREAK_CONTENT_ROW = _env_float("EXPAND_BREAK_CONTENT_ROW", 0.02)  # 該列 ink 佔寬 ≥ 此比例 → 視為「有主體」列
+_EXPAND_BREAK_GAP_ROW = _env_float("EXPAND_BREAK_GAP_ROW", 0.005)         # 該列 ink 佔寬 ≤ 此比例 → 視為「純背景」列（腳踝等細處落在兩者間、不計為空帶）
+
+
+def _detect_body_break(image_bytes: bytes) -> bool:
+    """外擴輸出主體斷裂偵測：主體垂直範圍內有整段純背景空帶 → True（幽靈下半身，應丟棄）。
+
+    行掃描每列 ink 佔寬比例：content 列（≥ CONTENT_ROW）標出主體上下界；主體界內連續
+    gap 列（≤ GAP_ROW）最長段 ≥ MIN_FRAC 圖高 → 斷裂。雙門檻使腳踝/脖子等細窄列（落在
+    兩門檻之間）不被誤計為空帶，避免誤攔正常全身。
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        w0, h0 = img.size
+        longest = max(w0, h0)
+        if longest > _FULLNESS_MAX_EDGE:
+            scale = _FULLNESS_MAX_EDGE / longest
+            img = img.resize((max(1, int(w0 * scale)), max(1, int(h0 * scale))), Image.BILINEAR)
+        w, h = img.size
+        br, bg, bb = _border_color(img)
+        px = img.load()
+        delta_sq = _FULLNESS_INK_DELTA ** 2
+        frac = []
+        for y in range(h):
+            cnt = 0
+            for x in range(w):
+                r, g, b = px[x, y]
+                if (r - br) ** 2 + (g - bg) ** 2 + (b - bb) ** 2 >= delta_sq:
+                    cnt += 1
+            frac.append(cnt / w)
+        content_rows = [y for y in range(h) if frac[y] >= _EXPAND_BREAK_CONTENT_ROW]
+        if len(content_rows) < 2:
+            return False
+        top, bottom = content_rows[0], content_rows[-1]
+        # 主體界內最長連續 gap 段
+        longest_gap = cur = 0
+        for y in range(top, bottom + 1):
+            if frac[y] <= _EXPAND_BREAK_GAP_ROW:
+                cur += 1
+                longest_gap = max(longest_gap, cur)
+            else:
+                cur = 0
+        broken = longest_gap >= _EXPAND_BREAK_MIN_FRAC * h
+        logger.info(
+            "[expand-break] canvas=%dx%d body=[%d,%d] longest_gap=%d(>=%d) -> broken=%s",
+            w, h, top, bottom, longest_gap, int(_EXPAND_BREAK_MIN_FRAC * h), broken,
+        )
+        return broken
+    except Exception as e:
+        logger.warning("[expand-break] 偵測失敗，視為未斷裂: %s", e)
+        return False

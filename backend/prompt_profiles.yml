@@ -1,8 +1,13 @@
 # Craftflow — Workflow 級 Prompt Profile（P1，2026-07-12）
 #
 # key   = workflow 檔名（data/custom_workflows/ 或系統 workflow 目錄下的檔名，含副檔名）
-# value = quality_prefix / quality_suffix / negative，皆可省略；省略的欄位不覆寫，
-#         落回下一優先序（見下）。
+# value = quality_prefix / quality_suffix / negative / negative_extra，皆可省略；省略的
+#         欄位不覆寫，落回下一優先序（見下）。
+#
+# negative（取代語義）vs negative_extra（補充語義，R4，2026-07-14）：
+#   negative       = 取代整個 negative 主體（優先序見下）。
+#   negative_extra = 不取代，附加於已選定的 negative 之後——family/art_style/PERSONAL_NEGATIVE
+#                    既有負向都保留，只是再補一段。兩者可同時登錄，也可只用其一。
 #
 # 解析優先序（三欄位各自獨立判斷）：
 #   art_style 個別欄位  >  這裡的 workflow profile  >  checkpoint family（prompt_engine/styles.py STYLE_CONFIG）

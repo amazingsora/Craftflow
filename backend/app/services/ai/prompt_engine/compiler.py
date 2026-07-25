@@ -28,6 +28,7 @@ from app.services.ai.prompt_engine.styles import (
     STYLE_CONFIG,
     UPSAMPLE_SYSTEM_PROMPT,
     _WEIGHT_GROUP_RE,
+    _LINEART_ARTIFACT_RE,
 )
 from app.services.ai.prompt_engine import lexicon
 
@@ -254,6 +255,7 @@ def compile(
     quality_prefix_override: str | None = None,
     negative_override: str | None = None,
     quality_suffix_override: str | None = None,
+    negative_extra_override: str | None = None,
 ) -> tuple[str, str]:
     """
     Main entrypoint to compile Chinese creative text into fine-tuned SD prompts.
@@ -363,6 +365,11 @@ def compile(
 
     # 5. Negative preset + context-aware suppression
     negative = negative_override if negative_override else config.negative
+    # (R4) negative_extra：「補充」語義——附加於已選定的 negative 之後，不取代。
+    # workflow profile 的 negative 為「取代」語義；當只想在 family/art_style 既有負向
+    # 之上再補一段（如某 workflow 需額外抑制特定假影）時用 negative_extra。None＝no-op（零回歸）。
+    if negative_extra_override:
+        negative = f"{negative}, {negative_extra_override}" if negative else negative_extra_override
     if _extra_neg:
         negative = f"{negative}, {_extra_neg}" if negative else _extra_neg
 
@@ -400,6 +407,17 @@ _AGE_PHRASE_RE = re.compile(r'\b\d+\s+years?\s+old\b', re.IGNORECASE)
 # CJK（中日韓）偵測：含這些字元的 tag = LLM 未完成翻譯／角色名／few-shot 範例反芻洩漏。
 # SD 模型對中文 token 無概念 → 丟棄整個 tag。通用安全網,model-agnostic。
 _CJK_RE = re.compile(r'[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]')
+
+# S9（2026-07-13）NSFW 硬護欄：角色含未成年外觀，uncensored 文字/視覺模型偶爾幻覺出
+# 裸露 tag（第五輪 ai_prompt 編譯結果實證出現 nude/pubic hair/nipples）。這裡在 sanitize
+# 層確定性剝除，任何 style/來源一律生效，不賭模型自律；正則比對 tag 全字。人設圖 negative
+# 另固定補 nsfw（見 character_design_service）。normalized（小寫、去權重、去括號）比對。
+_NSFW_BANNED = frozenset({
+    "nude", "naked", "nudity", "topless", "bottomless", "nsfw", "explicit",
+    "nipples", "nipple", "areola", "areolae", "pubic hair", "pussy", "vagina",
+    "penis", "genitalia", "genitals", "cameltoe", "sex", "cum", "nude body",
+    "bare breasts", "exposed breasts", "naked body",
+})
 
 
 def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
@@ -449,6 +467,12 @@ def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
         # P2：banned_set 內的 tag 經 styles._sync_banned_tags 已剝除 SD 權重語法
         # （如 "(highres:0.8)" → "highres"）；比對鍵同步剝除，避免權重殘留造成誤判漏放行。
         normalized = re.sub(r':[\d.]+$', '', t_clean.lower().strip("()")).strip()
+
+        # S9 NSFW 硬護欄（全字比對）＋ S7.1 線稿詞 regex（含即丟）：任何 style/來源一律剝除，
+        # 不進 banned_set（那是 per-style 動態集合），這兩層是確定性安全/品質網。
+        if normalized in _NSFW_BANNED or _LINEART_ARTIFACT_RE.search(t_clean):
+            continue
+
         if normalized in banned_set or normalized in seen:
             continue
         seen.add(normalized)

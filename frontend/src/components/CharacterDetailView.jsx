@@ -131,6 +131,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [lastAiPromptCompiled, setLastAiPromptCompiled] = useState(null)
   const [lastIpaUsed, setLastIpaUsed] = useState(null)
   const [lastPromptProfile, setLastPromptProfile] = useState(null)
+  const [lastCoverage, setLastCoverage] = useState(null)
   const [lightboxSrc, setLightboxSrc] = useState(null)
   const [lastTimings, setLastTimings] = useState(null)
 
@@ -261,6 +262,12 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       const b64Profile = resp.headers.get('X-Prompt-Profile')
       if (b64Profile) {
         try { setLastPromptProfile(decodeURIComponent(escape(atob(b64Profile)))) }
+        catch (e) { /* silent */ }
+      }
+
+      const b64Coverage = resp.headers.get('X-Coverage')
+      if (b64Coverage) {
+        try { setLastCoverage(decodeURIComponent(escape(atob(b64Coverage)))) }
         catch (e) { /* silent */ }
       }
 
@@ -474,6 +481,9 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       let promptProfile = null
       const b64Profile = resp.headers.get('X-Prompt-Profile')
       if (b64Profile) { try { promptProfile = decodeURIComponent(escape(atob(b64Profile))) } catch (e) { /* silent */ } }
+      let coverage = null
+      const b64Coverage = resp.headers.get('X-Coverage')
+      if (b64Coverage) { try { coverage = decodeURIComponent(escape(atob(b64Coverage))) } catch (e) { /* silent */ } }
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
       setV(slot, {
@@ -485,6 +495,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         lastAiPromptCompiled: aiPromptCompiled,
         lastIpaUsed: ipaUsed,
         lastPromptProfile: promptProfile,
+        lastCoverage: coverage,
         pendingQueue: [{ blob, url, label: '全身人設圖' }],
       })
       onAddHistory?.({
@@ -738,7 +749,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                         lastTimings.body_coverage     != null && ['姿態偵測',  lastTimings.models?.vision,   lastTimings.body_coverage],
                         lastTimings.compile_prompt    != null && ['提示詞編譯', lastTimings.models?.text,    lastTimings.compile_prompt],
                         lastTimings.compile_ai_prompt != null && ['AI提示詞',  lastTimings.models?.text,    lastTimings.compile_ai_prompt],
-                        lastTimings.canvas_expand     != null && ['Canvas Expand (Flux)', lastTimings.models?.workflow, lastTimings.canvas_expand],
+                        lastTimings.canvas_expand     != null && ['Canvas Expand', lastTimings.models?.canvas_expand || lastTimings.models?.workflow, lastTimings.canvas_expand],
                         lastTimings.upload            != null && ['圖片上傳',  null,                         lastTimings.upload],
                         lastTimings.comfyui           != null && ['ComfyUI 生成', lastTimings.models?.workflow, lastTimings.comfyui],
                       ].filter(Boolean).map(([label, model, sec]) => (
@@ -1054,6 +1065,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                           color: lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-fg)' : 'var(--muted)',
                           border: `1px solid ${lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--border-strong)'}` }}>
                           {lastPromptProfile}
+                        </div>
+                      )}
+                      {lastCoverage && (
+                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                          background: lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--surface-2)',
+                          color: lastCoverage.includes('→') ? 'var(--tint-amber-fg)' : 'var(--muted)',
+                          border: `1px solid ${lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--border-strong)'}` }}>
+                          {lastCoverage}
                         </div>
                       )}
                     </div>
@@ -1409,6 +1428,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                           color: vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-fg)' : 'var(--muted)',
                           border: `1px solid ${vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--border-strong)'}` }}>
                           {vState.lastPromptProfile}
+                        </div>
+                      )}
+                      {vState.lastCoverage && (
+                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                          background: vState.lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--surface-2)',
+                          color: vState.lastCoverage.includes('→') ? 'var(--tint-amber-fg)' : 'var(--muted)',
+                          border: `1px solid ${vState.lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--border-strong)'}` }}>
+                          {vState.lastCoverage}
                         </div>
                       )}
                     </div>
