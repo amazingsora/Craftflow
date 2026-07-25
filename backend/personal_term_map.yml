@@ -24,3 +24,4 @@ terms:
   大小姐: ojou-sama
   馬靴: riding boots   # 目前翻對，固定化防模型回退
   個性溫柔: gentle expression   # S7 補條：避免翻成 gentle personality（非視覺 tag）
+  白色頭髮: white hair   # 詞庫補條（第五輪）：LLM 違反 COLOR 規則把白髮翻 silver hair，固定化

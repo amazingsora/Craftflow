@@ -132,6 +132,25 @@ def test_workflow_profile_overrides_only_includes_set_fields(monkeypatch):
     assert "quality_suffix_override" not in out
 
 
+def test_workflow_profile_overrides_includes_negative_extra(monkeypatch):
+    """R4：negative（取代）與 negative_extra（補充）可同時登錄，各自映射到獨立 override key。"""
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
+        "Standard_V37.json": {"negative": "worst quality", "negative_extra": "extra neg"},
+    })
+    out = wb._workflow_profile_overrides("Standard_V37.json")
+    assert out["negative_override"] == "worst quality"
+    assert out["negative_extra_override"] == "extra neg"
+
+
+def test_workflow_profile_overrides_negative_extra_alone(monkeypatch):
+    """只登錄 negative_extra（無 negative 取代）→ 只放 negative_extra_override，不佔 negative_override。"""
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
+        "Standard_V37.json": {"negative_extra": "just extra"},
+    })
+    out = wb._workflow_profile_overrides("Standard_V37.json")
+    assert out == {"negative_extra_override": "just extra"}
+
+
 def test_resolve_prompt_overrides_priority_art_style_over_workflow(monkeypatch):
     """art_style 有值時必須贏過 workflow profile（即便 workflow profile 也有登錄該欄位）。"""
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {

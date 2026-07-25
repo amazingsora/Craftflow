@@ -82,17 +82,15 @@ _QUALITY_TAGS_ANYTHINGXL = {
 }
 
 # 線稿／未上色參考圖的視覺屬性：這些描述的是輸入素材，不是期望生成的彩色人設圖。
-# 加入 banned_tags 防止 vision 抽取結果洩漏到 prompt 導致彩圖品質下降。
-_LINEART_ARTIFACT_TAGS = {
-    "uncolored", "uncolored skin tone", "uncolored skin",
-    "no color tone on skin", "no color tone", "no skin color",
-    "line-art style", "lineart style", "line art style",
-    "line-art style legs", "lineart legs",
-    "pencil sketch", "sketch style", "monochrome sketch",
-    # S7（2026-07-12）：線稿概念圖經 vision 抽取「無色調服裝」洩漏成 colorless 詞族，
-    # uncolored 只擋 uncolored 詞族、漏掉 colorless。補齊 achromatic/colorless 變體。
-    "colorless", "colorless clothing", "achromatic clothing",
-}
+# S7.1（2026-07-13）：原枚舉式 set 被新變體不斷繞過（colorless eyes / line art style skin /
+# no iris detail / simple line art outline …打地鼠）。改 regex「含即丟」，由 compiler
+# _sanitize_to_list 對每個 tag 做 search，涵蓋全部舊枚舉＋未來變體。
+_LINEART_ARTIFACT_RE = re.compile(
+    r'colou?rless|uncolou?red|unpainted|no colou?r|no iris'
+    r'|no skin colou?r|line[ -]?art|achromatic'
+    r'|pencil sketch|sketch style|sketch outline|monochrome sketch',
+    re.IGNORECASE,
+)
 
 _SD_SYNTAX_TAGS = {
     "masterpiece", "best quality", "score_9", "ultra detailed",
@@ -271,7 +269,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
             "missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, "
             "signature, watermark, username, text, blurry, cropped, extra limbs, deformed"
         ),
-        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS | _LINEART_ARTIFACT_TAGS,
+        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
         llm_template=_SDXL_TEMPLATE,
     ),
     PromptStyle.PONY: StyleConfig(
@@ -305,7 +303,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
             "missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, "
             "signature, watermark, username, text, blurry, cropped, extra limbs"
         ),
-        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_ILLUSTRIOUS | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS | _LINEART_ARTIFACT_TAGS,
+        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_ILLUSTRIOUS | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
         llm_template=_ILLUSTRIOUS_TEMPLATE,
     ),
     PromptStyle.ANYTHINGXL: StyleConfig(

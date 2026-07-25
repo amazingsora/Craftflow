@@ -41,7 +41,7 @@ def test_age_gender_tag(gender, age, expected):
     (5, "toddler"),
     (10, "child"),
     (13, "flat chest"),
-    (16, "teenage girl"),
+    (16, ""),      # S3（2026-07-13）：15-17 歲檔改空
     (20, ""),
 ])
 def test_age_body_tags(age, keyword):
@@ -50,6 +50,12 @@ def test_age_body_tags(age, keyword):
         assert keyword in result
     else:
         assert result == ""
+
+
+def test_age_body_tags_s3_child_is_single_tag_no_flat_chest():
+    """S3：≤12 歲檔縮為單一 `child`，拔 flat chest/small hands（防三頭身 chibi）。"""
+    assert ve._age_body_tags(10) == "child"
+    assert "flat chest" not in ve._age_body_tags(10)
 
 
 @pytest.mark.parametrize("height, expected", [
@@ -98,6 +104,23 @@ def test_filter_visual_handles_ascii_comma():
     assert "外套" not in out and "白色頭髮" in out
 
 
+def test_filter_visual_strips_skin_leak():
+    """S8（2026-07-13）：strip_skin 剝除線稿膚色洩漏句（膚色/未填色/tan skin tone），
+    正常特徵保留。"""
+    out = ve._filter_visual_for_llm(
+        "金色眼睛，膚色未填色呈線條狀，tan skin tone，白色上衣",
+        strip_clothing=False, strip_hairstyle=False, strip_skin=True,
+    )
+    assert "膚色" not in out and "tan skin" not in out
+    assert "金色眼睛" in out and "白色上衣" in out
+
+
+def test_filter_visual_strip_skin_off_by_default():
+    """strip_skin 預設 False，未開時不影響既有行為（零回歸）。"""
+    v = "膚色偏白，金色眼睛"
+    assert ve._filter_visual_for_llm(v, strip_clothing=False, strip_hairstyle=False) == v
+
+
 # ── vision prompt 模板 ────────────────────────────────────────────────────────
 
 def test_visual_extract_prompt_single_vs_multi():
@@ -117,6 +140,12 @@ def test_cache_key_deterministic_and_sensitive(monkeypatch):
     assert k1 != ve._vision_cache_key([b"img-a", b"img-X"], "coverage")  # 內容不同
     monkeypatch.setattr(ve.state, "get_vision_model", lambda: "other-model")
     assert k1 != ve._vision_cache_key(imgs, "coverage")                  # 模型不同
+
+
+def test_cache_key_includes_flow_version():
+    """H1（2026-07-13）：cache key 前綴流程版本號，改 coverage 邏輯後舊快取自動失效。"""
+    key = ve._vision_cache_key([b"img"], "coverage")
+    assert key.startswith(ve._VISION_FLOW_VERSION + "|")
 
 
 # ── _vision_extract_cached ────────────────────────────────────────────────────

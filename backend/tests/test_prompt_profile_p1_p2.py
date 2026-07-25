@@ -101,3 +101,42 @@ def test_compile_no_override_dynamic_banned_is_noop():
     # "amazing quality" 是 ILLUSTRIOUS 家族靜態 quality_prefix 的一部分 → 本就會被
     # config.banned_tags 擋掉（LLM 重複吐出的那份被濾掉），行為與改動前一致。
     assert positive == "masterpiece, best quality, amazing quality, absurdres, white hair"
+
+
+# ── R4: compile() negative_extra_override（補充語義，附加不取代）─────────────────
+
+def test_compile_negative_extra_appends_after_negative_override():
+    """negative（取代）＋ negative_extra（補充）同時登錄：extra 接在被取代後的 negative 之後。"""
+    with patch.object(ollama_client, "generate", return_value="white hair"):
+        _, negative = compiler.compile(
+            "白髮少女",
+            style=PromptStyle.ILLUSTRIOUS,
+            negative_override="worst quality, low quality",
+            negative_extra_override="extra artifact, unwanted tag",
+        )
+    assert negative == "worst quality, low quality, extra artifact, unwanted tag"
+
+
+def test_compile_negative_extra_appends_to_family_negative_when_no_override():
+    """只登錄 negative_extra：family 預設 negative 主體保留，extra 附加於尾（非取代）。"""
+    with patch.object(ollama_client, "generate", return_value="white hair"):
+        _, negative = compiler.compile(
+            "白髮少女",
+            style=PromptStyle.ILLUSTRIOUS,
+            negative_extra_override="my extra neg tag",
+        )
+    assert negative.endswith("my extra neg tag")
+    # family 主體未被取代 → extra 之前仍有既有內容
+    assert negative != "my extra neg tag"
+    assert ", my extra neg tag" in negative
+
+
+def test_compile_no_negative_extra_is_noop():
+    """未設定 negative_extra（多數呼叫路徑現況）→ negative 與改動前一致，零回歸。"""
+    with patch.object(ollama_client, "generate", return_value="white hair"):
+        _, negative = compiler.compile(
+            "白髮少女",
+            style=PromptStyle.ILLUSTRIOUS,
+            negative_override="worst quality, low quality",
+        )
+    assert negative == "worst quality, low quality"

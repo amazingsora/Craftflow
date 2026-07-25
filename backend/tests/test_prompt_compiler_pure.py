@@ -81,3 +81,35 @@ def test_sanitize_takes_first_slash_alternative():
 
 def test_sanitize_empty_string_returns_empty_list():
     assert _sanitize_to_list("", banned_set=set()) == []
+
+
+# ── S9 NSFW 硬護欄（2026-07-13）────────────────────────────────────────────────
+
+def test_sanitize_drops_nsfw_tags():
+    out = _sanitize_to_list(
+        "1girl, solo, nude, nipples, pubic hair, white dress, topless",
+        banned_set=set(),
+    )
+    assert out == ["1girl", "solo", "white dress"]
+
+
+def test_sanitize_nsfw_case_insensitive_and_weighted():
+    out = _sanitize_to_list("1girl, (Nude:1.2), NIPPLES, solo", banned_set=set())
+    assert out == ["1girl", "solo"]
+
+
+# ── S7.1 線稿詞 regex（2026-07-13，含即丟，涵蓋舊枚舉＋變體）──────────────────
+
+def test_sanitize_drops_lineart_artifact_variants():
+    out = _sanitize_to_list(
+        "1girl, colorless eyes, line art style skin, no iris detail, "
+        "uncolored, pencil sketch, achromatic clothing, blue dress",
+        banned_set=set(),
+    )
+    assert out == ["1girl", "blue dress"]
+
+
+def test_sanitize_lineart_regex_keeps_legit_tags():
+    """常見合法 tag 不被線稿 regex 誤傷（no iris/colorless 才丟，art/color 本身不丟）。"""
+    out = _sanitize_to_list("1girl, blue eyes, colorful dress, fine art background", banned_set=set())
+    assert out == ["1girl", "blue eyes", "colorful dress", "fine art background"]

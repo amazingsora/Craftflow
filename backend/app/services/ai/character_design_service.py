@@ -60,6 +60,8 @@ from app.services.ai.image_ops import (
     _is_flat_color_draft,
     _letterbox_to_aspect,
     _pixel_coverage_check,
+    _pixel_fullness_check,
+    _detect_body_break,
     _shrink_for_full_body,
 )
 from app.services.ai.capability import resolve_capability
@@ -131,6 +133,31 @@ def _effective_ksampler_steps(wf: dict, steps: Optional[int]) -> Optional[int]:
 
 
 # coverage→CN 上限/end_percent 已移至 gen_profile.GEN_PROFILE（R3 2026-06-20，per-family 單一真相）。
+
+
+def _coverage_badge(coverage: str, user_w: float, eff_w: float, cn_on: bool,
+                    original: str | None = None, pre_ref: bool = False) -> str:
+    """S10（2026-07-13）：debug 用 coverage/CN 標註。半身圖故障連三輪歸因靠猜，
+    把「coverage 判定 + CN 使用者值→實際夾制值」可視化，一眼看出是否誤判/夾制生效。
+    例：`coverage: bust (CN 0.85→0.50)`、`coverage: full (CN 0.85)`、`coverage: full (CN off)`。
+
+    T0-1（2026-07-14）：`coverage` 是「最終」值（pre_ref 外擴或 fullness 升級後可能已成 full），
+    附掛 `original`（改寫前原判）＋ `pre_ref`（是否走過外擴）以區分：
+    `full (CN 0.85) [原判 bust, pre_ref 外擴]`（已外擴）vs `full (CN 0.85)`（原判即 full、未動）。"""
+    if not cn_on:
+        base = f"coverage: {coverage} (CN off)"
+    elif abs(user_w - eff_w) > 1e-3:
+        base = f"coverage: {coverage} (CN {user_w:.2f}→{eff_w:.2f})"
+    else:
+        base = f"coverage: {coverage} (CN {eff_w:.2f})"
+    notes: list[str] = []
+    if original is not None and original != coverage:
+        notes.append(f"原判 {original}")
+    if pre_ref:
+        notes.append("pre_ref 外擴")
+    if notes:
+        base += " [" + ", ".join(notes) + "]"
+    return base
 
 
 
@@ -207,6 +234,30 @@ _MIN_EXPAND_PX = 16
 # 方案3（pre-ref 外擴）為 v36 變體半身→全身正式路線（06-19 定版），預設啟用。
 # 設 CRAFTFLOW_PRE_REF_EXPAND=0 可關閉、退回方案1（CN 夾上限單段 SDXL，較快但貼合較鬆）。
 _PRE_REF_ENABLED = os.getenv("CRAFTFLOW_PRE_REF_EXPAND", "1").strip() == "1"
+# T1A（2026-07-14）：像素反向升級防呆（LLM 誤判 partial/bust 但草圖實為完整全身 → 升級 full、
+# 跳過外擴，避免幽靈下半身）。設 CRAFTFLOW_FULLNESS_CHECK=0 可關閉、退回純 LLM 判定。
+_FULLNESS_CHECK_ENABLED = os.getenv("CRAFTFLOW_FULLNESS_CHECK", "1").strip() == "1"
+# T3A（2026-07-15）：外擴輸出斷裂防線（幽靈下半身最後攔截）。外擴成功後掃描輸出，偵測到
+# 主體內純背景空帶 → 丟棄外擴、回退方案1（縮圖+夾CN）。設 CRAFTFLOW_EXPAND_BREAK_GUARD=0 可關。
+_EXPAND_BREAK_GUARD_ENABLED = os.getenv("CRAFTFLOW_EXPAND_BREAK_GUARD", "1").strip() == "1"
+# T0-3（2026-07-14）：CRAFTFLOW_EXPAND_DEBUG=1 時把外擴 canvas/mask/輸出三圖落地 data/debug/，
+# 檔名含 coverage 與 seed，供全身外擴誤判的失敗案例直接檢視 mask 幾何。
+_EXPAND_DEBUG_DIR = CUSTOM_WORKFLOWS_DIR.parent / "debug"
+
+
+def _expand_debug_enabled() -> bool:
+    return os.getenv("CRAFTFLOW_EXPAND_DEBUG", "0").strip() == "1"
+
+
+def _dump_expand_debug(coverage: str, seed: int, tag: str, data: bytes) -> None:
+    """落地一張外擴中間圖（input canvas / mask / output）。任何失敗僅告警、不影響生成。"""
+    try:
+        _EXPAND_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        fn = _EXPAND_DEBUG_DIR / f"expand_{coverage}_{seed}_{tag}.png"
+        fn.write_bytes(data)
+        logger.info("[expand-debug] dump %s (%d bytes)", fn.name, len(data))
+    except Exception as e:
+        logger.warning("[expand-debug] dump 失敗: %s", e)
 
 
 async def _run_canvas_expand_flux(
@@ -293,6 +344,9 @@ async def _run_canvas_expand_sdxl(
     canvas_bytes, mask_bytes, _ = _create_inpaint_canvas_and_mask(
         sketch_bytes, _exp_w, _exp_h, coverage
     )
+    if _expand_debug_enabled():
+        _dump_expand_debug(coverage, seed, "input", canvas_bytes)
+        _dump_expand_debug(coverage, seed, "mask", mask_bytes)
     canvas_fn = comfyui_client.upload_image_bytes(canvas_bytes, "canvas_expand_sdxl_input.png")
     mask_fn = comfyui_client.upload_image_bytes(mask_bytes, "canvas_expand_sdxl_mask.png")
 
@@ -316,7 +370,10 @@ async def _run_canvas_expand_sdxl(
     _log_wf_snapshot(wf, label="canvas-expand-sdxl")
     await guardian.request_focus("comfyui")
     try:
-        return await _run_comfyui(wf)
+        out = await _run_comfyui(wf)
+        if _expand_debug_enabled():
+            _dump_expand_debug(coverage, seed, "output", out)
+        return out
     except Exception as e:
         logger.error("[canvas-expand-sdxl] ComfyUI 執行失敗: %s: %s", type(e).__name__, e)
         raise
@@ -390,10 +447,12 @@ async def _generate_design_core(
     _ipa_ref_bytes: bytes | None = None
     _cn_ref_bytes: bytes | None = None
     _cn_coverage: str = "full"
+    _coverage_original: str = "full"   # T0-1：pre_ref/fullness 改寫前的原始判定（badge 觀測用）
     _coverage_end_pct: float | None = None
     _cn_weight_user = cn_weight        # 方案3：保留使用者原始 CN 強度（夾制前）
     _pre_ref = False                   # 方案3：是否要在 SDXL 前 Flux 外擴概念圖成全身 ref
     _pre_ref_done = False              # 方案3：pre-ref 外擴成功（成功則跳過 post 外擴、還原 CN）
+    _expand_engine: str | None = None  # T0-2：實際外擴引擎檔名（回傳 timings.models 供 UI 顯示，取代 hardcode）
 
     if inp.concept_imgs:
         valid_images: list[bytes] = []
@@ -407,16 +466,19 @@ async def _generate_design_core(
         if valid_images:
             all_flat = all(_is_flat_color_draft(img) for img in valid_images)
             logger.info("[prompt-log] %s concept images flat_draft=%s (%d imgs)", log_label, all_flat, len(valid_images))
-            if use_ipa:
+            # G0 能力閘控（2026-07-14）：非 SDXL 家族（如 Anima）ipa_enabled/cn_enabled=False
+            # → 不取 IPA/CN 參考圖，連帶跳過方案3外擴與節點注入，避免把 SDXL IPA/CN 節點
+            # 注入 Anima UNet（架構不符）。SDXL 家族兩旗標皆 True → 零回歸。
+            if use_ipa and _profile.ipa_enabled:
                 _ipa_ref_bytes = valid_images[0]
-            if use_controlnet:
+            if use_controlnet and _profile.cn_enabled:
                 _cn_ref_bytes = valid_images[0]
 
             # Merge coverage detection + visual extraction into one Ollama call
             # (cached by image hash — repeat generations skip the vision call)
             # use_vision 控制「視覺特徵是否拼進 prompt」；coverage 是 CN 結構依據,與特徵解耦：
             # vision 關但 CN 開時仍須跑偵測取得 coverage（特徵丟棄、不入 prompt）。兩者皆不需才跳過。
-            need_coverage = use_controlnet and not is_expression
+            need_coverage = use_controlnet and not is_expression and _profile.cn_enabled
             if use_vision or need_coverage:
                 t0 = time.perf_counter()
                 coverage, visual = await _vision_extract_cached(valid_images, need_coverage)
@@ -432,13 +494,25 @@ async def _generate_design_core(
                     if pixel_override:
                         logger.info("[%s] pixel-check override: %s → %s", log_label, _cn_coverage, pixel_override)
                         _cn_coverage = pixel_override
+                # T0-1：記錄 pre_ref/fullness 改寫前的原始判定，供 badge 區分「已外擴／升級」vs「未動」
+                _coverage_original = _cn_coverage
+                # T1A（2026-07-14）：反向升級。LLM 判 partial/bust 但草圖幾何實為完整站立全身
+                # → 升級 full、跳過外擴（否則在完整身體下方再 inpaint 一套腿＝幽靈下半身／比例拉長）。
+                if (_FULLNESS_CHECK_ENABLED
+                        and _cn_coverage in ("partial", "bust")
+                        and _pixel_fullness_check(valid_images[0])):
+                    logger.info("[%s] fullness-check 反向升級：%s → full（草圖幾何為完整站立全身，跳過外擴）",
+                                log_label, _cn_coverage)
+                    _cn_coverage = "full"
                 # CN≥0.7 限制條件：所有 coverage 一律保留 CN，不再 bypass。
                 # partial/bust 透過 _shrink_for_full_body 縮到畫布上半，下半留空補腿；
                 # CN 以 AnimeLineArt（非 Canny）引導上半身，單 pass 無接縫。
-                # 方案3：變體 partial/bust 且有 Flux 擴圖 → 稍後在 SDXL 前外擴成全身 ref
+                # 方案3：角色版(pre)＋變體版(post) partial/bust → 稍後在 SDXL 前用 SDXL inpaint
+                # 外擴成全身 ref。2026-07-14：pre(角色頁主情境)原走 Flux 早退路徑(canvas_expand_flux
+                # 已刪且 16G VRAM 太重)，改與 post 一併走身分保留的 SDXL 兩段式方案3。
                 _pre_ref = (
                     _PRE_REF_ENABLED
-                    and canvas_expand_mode == "post"
+                    and canvas_expand_mode in ("pre", "post")
                     and _cn_coverage in ("partial", "bust")
                     and _ipa_ref_bytes is not None
                     and (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_SDXL_WF).exists()
@@ -465,14 +539,16 @@ async def _generate_design_core(
                 has_outfit = bool(use_outfit and inp.outfit)
                 has_hair_in_traits = bool(inp.core_traits and
                     any(kw in inp.core_traits for kw in ("髮", "頭髮", "hair")))
-                # ── [停用] Group A6：vision 描述剝除服裝/髮型詞（保留視覺模型原始輸出）──
-                # 還原：取消下方 visual_for_llm = visual，改回 _filter_visual_for_llm(...)。
-                # visual_for_llm = _filter_visual_for_llm(
-                #     visual,
-                #     strip_clothing=has_outfit,
-                #     strip_hairstyle=has_hair_in_traits,
-                # )
-                visual_for_llm = visual
+                # ── Group A6（2026-07-13 S8 重啟）：vision 描述剝除服裝/髮型/膚色洩漏詞 ──
+                # 第五/六輪連續實證：vision 的 hoodie/淺髮/tan skin tone 蓋掉「戰鬥服/短褐髮」
+                # 設定。有 outfit → strip 服裝句；core_traits 有髮型 → strip 髮型句；膚色線稿
+                # 洩漏一律 strip（真膚色由年齡/預設決定，見 _SKINTONE_LEAK_KW）。
+                visual_for_llm = _filter_visual_for_llm(
+                    visual,
+                    strip_clothing=has_outfit,
+                    strip_hairstyle=has_hair_in_traits,
+                    strip_skin=True,
+                )
                 if visual_for_llm:
                     if len(valid_images) > 1:
                         label = "視覺參考特徵（多圖共同，服裝髮型以設定欄位為準）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（多圖共同特徵）"
@@ -610,7 +686,10 @@ async def _generate_design_core(
     extra_neg = ("detailed background, complex background, scenery, landscape, buildings, environment"
                  # 2026-06-21：抑制無端能量/火焰/光暈假影（不放 plain "glowing" 以免壓掉異色瞳/眼神光）
                  ", energy aura, glowing aura, flames, fire, burning, embers, magic effect, spell effect"
-                 ", particle effects, glowing hands, energy effect, smoke")
+                 ", particle effects, glowing hands, energy effect, smoke"
+                 # S9（2026-07-13）：NSFW 硬護欄——人設圖固定補裸露負向（角色含未成年外觀，
+                 # 不賭 uncensored 模型自律；正向端另有 _sanitize_to_list 的 _NSFW_BANNED 剝除）。
+                 ", nsfw, nude, naked, nipples, pubic hair, topless, bottomless, exposed breasts")
     if not is_expression:
         extra_neg = f"{extra_neg}, {_FULLBODY_NEG_TAGS}"
         if _cn_coverage in ("partial", "bust"):
@@ -621,6 +700,11 @@ async def _generate_design_core(
     # profile 的 negative（見 _resolve_prompt_overrides），此時不可再被 PERSONAL_NEGATIVE 蓋掉。
     if PERSONAL_NEGATIVE_ENABLED and PERSONAL_NEGATIVE and not _overrides.get("negative_override"):
         base_neg = PERSONAL_NEGATIVE
+        # R4：negative_extra 為「補充」語義，須跨越 PERSONAL_NEGATIVE 取代仍生效。
+        # 非此分支時 base_neg 已是 compile() 的輸出（negative_extra 已在 compile 內附加），不重覆加。
+        _neg_extra = _overrides.get("negative_extra_override")
+        if _neg_extra:
+            base_neg = f"{base_neg}, {_neg_extra}"
     final_negative = f"{base_neg}, {extra_neg}{gender_neg_extra}" if base_neg else f"{extra_neg}{gender_neg_extra}"
     final_negative = _dedup_tags(final_negative)
 
@@ -628,7 +712,7 @@ async def _generate_design_core(
     _canvas_expand_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_WF).exists()
     _canvas_expand_sdxl_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_SDXL_WF).exists()
 
-    # ── 方案3：變體 partial/bust → SDXL 前先用 SDXL inpaint 外擴概念圖成全身，當 CN 結構參考 ──
+    # ── 方案3：角色/變體 partial/bust → SDXL 前先用 SDXL inpaint 外擴概念圖成全身，當 CN 結構參考 ──
     # 成功後 coverage 視為 full：CN 還原使用者完整強度、不縮圖；全身結構已具備 → 補得出腿且貼合度高。
     # IPA 仍用原始概念圖（保身分）；CN 用外擴全身圖（保結構）。外擴用主生成同一顆 checkpoint，
     # 不換模型、不載 Flux。失敗則沿用方案1 基線（縮圖+夾 CN）。
@@ -648,14 +732,25 @@ async def _generate_design_core(
         logger.info("[%s] 方案3 pre-ref 外擴（SDXL inpaint, ckpt=%s, coverage=%s → full, CN 還原 %.2f）",
                     log_label, _main_ckpt, _cn_coverage, _cn_weight_user)
         try:
-            _cn_ref_bytes = await _run_canvas_expand_sdxl(
+            _expanded = await _run_canvas_expand_sdxl(
                 _ipa_ref_bytes, _cn_coverage, final_positive, final_negative,
                 width, height, seed, _main_ckpt,
             )
-            cn_weight = _cn_weight_user
-            _cn_coverage = "full"
-            _pre_ref_done = True
             timings["canvas_expand"] = round(time.perf_counter() - t0_pre, 1)
+            # T3A：外擴輸出斷裂防線。偵測到幽靈下半身（主體內純背景空帶）→ 丟棄外擴、
+            # 保留方案1 基線（先前已設好的 _shrink_for_full_body ref + 夾制 CN），coverage 不還原 full。
+            if _EXPAND_BREAK_GUARD_ENABLED and _detect_body_break(_expanded):
+                logger.warning(
+                    "[%s] 方案3 外擴輸出偵測到主體斷裂（幽靈下半身）→ 丟棄外擴、回退方案1（縮圖+夾CN）",
+                    log_label,
+                )
+                _expand_engine = _CANVAS_EXPAND_SDXL_WF  # 引擎仍記錄（已跑但丟棄）
+            else:
+                _cn_ref_bytes = _expanded
+                cn_weight = _cn_weight_user
+                _cn_coverage = "full"
+                _pre_ref_done = True
+                _expand_engine = _CANVAS_EXPAND_SDXL_WF
         except HTTPException as he:
             if he.status_code == 504:
                 # 外擴逾時：ComfyUI 多半仍在背景處理該 job，回退再送主 SDXL 會 double submit → 串行。
@@ -678,7 +773,7 @@ async def _generate_design_core(
         )
         timings["canvas_expand"] = round(time.perf_counter() - t0, 1)
         timings["total"] = round(time.perf_counter() - t_total, 1)
-        timings["models"] = {"vision": state.get_vision_model(), "text": state.get_text_model(), "workflow": _CANVAS_EXPAND_WF}
+        timings["models"] = {"vision": state.get_vision_model(), "text": state.get_text_model(), "workflow": _CANVAS_EXPAND_WF, "canvas_expand": _CANVAS_EXPAND_WF}
         return Response(
             content=image_bytes,
             media_type="image/png",
@@ -689,6 +784,10 @@ async def _generate_design_core(
                 "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
                 "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
                 "X-Prompt-Profile": base64.b64encode(_profile_source.encode()).decode(),
+                "X-Coverage": base64.b64encode(
+                    _coverage_badge(_cn_coverage, _cn_weight_user, cn_weight, cn_on=False,
+                                    original=_coverage_original, pre_ref=_pre_ref_done).encode()
+                ).decode(),
                 "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
                 "X-AI-Prompt-Compiled": "",
             },
@@ -842,6 +941,7 @@ async def _generate_design_core(
                 image_bytes, _cn_coverage, final_positive, width, height, seed
             )
             timings["canvas_expand"] = round(time.perf_counter() - t0_expand, 1)
+            _expand_engine = _CANVAS_EXPAND_WF
             cn_mode_out = "canvas_expand"
         except Exception as e:
             logger.warning("[%s] canvas-expand 失敗，使用 SDXL 輸出: %s", log_label, e)
@@ -851,6 +951,7 @@ async def _generate_design_core(
         "vision": state.get_vision_model(),
         "text": state.get_text_model(),
         "workflow": active_wf,
+        "canvas_expand": _expand_engine,
     }
 
     _effective_steps = _effective_ksampler_steps(wf, steps)
@@ -889,6 +990,10 @@ async def _generate_design_core(
             "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Prompt-Profile": base64.b64encode(_profile_source.encode()).decode(),
+            "X-Coverage": base64.b64encode(
+                _coverage_badge(_cn_coverage, _cn_weight_user, cn_weight, cn_on=cn_used,
+                                original=_coverage_original, pre_ref=_pre_ref_done).encode()
+            ).decode(),
             "X-Timings": base64.b64encode(json.dumps(timings).encode()).decode(),
             "X-AI-Prompt-Compiled": base64.b64encode(_ai_prompt_compiled.encode()).decode() if _ai_prompt_compiled else "",
         },

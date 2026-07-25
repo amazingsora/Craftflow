@@ -4,7 +4,11 @@ character_design_service 純函式單測（P2 2026-07-02、R3 2026-07-12）。
 """
 import pytest
 
-from app.services.ai.character_design_service import _hex_to_sd_color, _effective_ksampler_steps
+from app.services.ai.character_design_service import (
+    _hex_to_sd_color,
+    _effective_ksampler_steps,
+    _coverage_badge,
+)
 
 
 @pytest.mark.parametrize("hex_color, expected", [
@@ -54,3 +58,17 @@ def test_effective_steps_reads_back_workflow_json_when_none():
 
 def test_effective_steps_none_and_no_ksampler_node_returns_none():
     assert _effective_ksampler_steps({"1": {"class_type": "CheckpointLoaderSimple", "inputs": {}}}, None) is None
+
+
+# ── _coverage_badge（S10，2026-07-13）────────────────────────────────────────────
+
+def test_coverage_badge_clamped_shows_arrow():
+    assert _coverage_badge("bust", 0.85, 0.50, cn_on=True) == "coverage: bust (CN 0.85→0.50)"
+
+
+def test_coverage_badge_unclamped_single_value():
+    assert _coverage_badge("full", 0.85, 0.85, cn_on=True) == "coverage: full (CN 0.85)"
+
+
+def test_coverage_badge_cn_off():
+    assert _coverage_badge("full", 0.85, 0.85, cn_on=False) == "coverage: full (CN off)"

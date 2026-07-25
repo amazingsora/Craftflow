@@ -60,8 +60,11 @@ GEN_PROFILE: dict[str, GenProfile] = {
     # 與 V37「採樣端已對齊官方配方、零調整」的前提矛盾，已改用 workflow 自身的值。
     # illustrious(fabricatedXL_v70=V36/V35 主底模):對齊真 V35 內建鏈→AnimeLineArt(預設)
     "illustrious": GenProfile(family="illustrious", steps=None),
-    # 未來 Anima（非 SDXL，無 IPA，CN 僅 LLLite）：佔位，待 F4 落地。
-    # "anima":     GenProfile(family="anima", ipa_enabled=False, cn_enabled=False),
+    # Anima（非 SDXL：UNETLoader + Qwen 文字編碼器；無 IP-Adapter、CN 僅 LLLite）：
+    # 2026-07-14 啟用 G0 能力閘控——ipa_enabled/cn_enabled=False 讓角色/變體生成流程
+    # 不把 SDXL IPA/ControlNet 節點注入 Anima UNet（架構不符會維度錯誤/靜默失效）。
+    # steps=None：AnimaV7 KSampler 由內部節點鏈驅動（steps 為節點參照），後端不覆寫。
+    "anima":       GenProfile(family="anima", steps=None, ipa_enabled=False, cn_enabled=False),
 }
 
 
@@ -85,6 +88,15 @@ def resolve_profile_for_workflow(workflow_name: str) -> tuple[GenProfile, str]:
              if isinstance(n, dict) and n.get("class_type") == "CheckpointLoaderSimple"),
             "",
         ) or ""
+        # Anima 等 diffusion-model 工作流無 CheckpointLoaderSimple，改讀 UNETLoader 的
+        # unet_name（含 GGUF 變體）→ 才能解析到 anima family、啟用其能力閘控。
+        if not ckpt:
+            ckpt = next(
+                (n["inputs"].get("unet_name", "") for n in wf.values()
+                 if isinstance(n, dict)
+                 and n.get("class_type") in ("UNETLoader", "UnetLoaderGGUF", "UNETLoaderGGUF")),
+                "",
+            ) or ""
     except Exception as e:
         logger.warning("[gen_profile] 讀工作流 checkpoint 失敗（%s），改用全域 checkpoint", e)
     if not ckpt:

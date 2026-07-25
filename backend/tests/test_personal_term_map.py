@@ -55,6 +55,12 @@ def test_apply_term_map_unregistered_text_passthrough():
     assert out == "白髮金眼的少女"
 
 
+def test_apply_term_map_white_hair_fixed():
+    """詞庫補條（第五輪）：白色頭髮 → white hair，杜絕 LLM 翻成 silver hair。"""
+    out = lexicon.apply_personal_term_map("白色頭髮的少女")
+    assert "white hair" in out and "白色頭髮" not in out
+
+
 def test_apply_term_map_empty_text():
     assert lexicon.apply_personal_term_map("") == ""
 

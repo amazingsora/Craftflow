@@ -92,8 +92,11 @@ def _load_prompt_profiles() -> dict:
 
 def _workflow_profile_overrides(workflow: str) -> dict:
     """P1：查 workflow 檔名在 prompt_profiles.yml 是否有登錄的 quality_prefix /
-    quality_suffix / negative；只有實際登錄（非空）的欄位才放進回傳 dict，
+    quality_suffix / negative / negative_extra；只有實際登錄（非空）的欄位才放進回傳 dict，
     未登錄欄位不佔位，讓 compile() 的預設 fallback（checkpoint family）維持有效。
+
+    negative（取代語義）與 negative_extra（補充語義，R4）互不排斥，可同時登錄：
+    前者決定 negative 主體、後者附加於其後。
     """
     profile = _load_prompt_profiles().get(workflow)
     if not profile:
@@ -105,6 +108,8 @@ def _workflow_profile_overrides(workflow: str) -> dict:
         out["quality_suffix_override"] = profile["quality_suffix"]
     if profile.get("negative"):
         out["negative_override"] = profile["negative"]
+    if profile.get("negative_extra"):
+        out["negative_extra_override"] = profile["negative_extra"]
     return out
 
 

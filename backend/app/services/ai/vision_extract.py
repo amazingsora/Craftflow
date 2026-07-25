@@ -85,10 +85,15 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
     prompt = (
         f"{ignore_bg}\n\n"
         "請回答以下兩個問題：\n\n"
-        "A. 身體遮蔽程度（只回答一個英文詞）：\n"
-        "- 'full'    腳踝和腳都清晰可見（完整全身）\n"
-        "- 'partial' 膝蓋或腳踝以下被切掉（大腿可見但無腳也算partial）\n"
-        "- 'bust'    只有腰部以上可見\n\n"
+        "A. 身體遮蔽程度（只回答一個英文詞，依下列步驟判斷）：\n"
+        "  步驟1：畫面最底部有沒有畫出「腳掌、腳趾或鞋子」？\n"
+        "    - 有看到腳掌／鞋子 → 'full'\n"
+        "    - 沒看到腳掌／鞋子 → 進入步驟2（此時絕不可判 full）\n"
+        "  步驟2：（沒有腳的前提下）最多能看到身體到哪裡？\n"
+        "    - 看得到大腿、膝蓋或小腿（但沒有腳） → 'partial'\n"
+        "    - 只看得到腰部以上（看不到大腿） → 'bust'\n"
+        "  ⚠️ 關鍵規則：只要畫面底部沒有腳掌或鞋子，即使角色已畫到大腿、"
+        "即使人物佔滿整個畫面高度，都一律判 'partial'，絕對不是 'full'。\n\n"
         f"{feature_q}\n\n"
         "回答格式（嚴格遵守）：\n"
         "COVERAGE: [一個英文詞]\n"
@@ -178,17 +183,22 @@ def _age_gender_tag(gender: str | None, age: int | None) -> str:
 
 
 def _age_body_tags(age: int | None) -> str:
-    """Convert character age to SD body proportion tags."""
+    """Convert character age to SD body proportion tags.
+
+    S3（2026-07-13）：≤12 歲檔原本 7 個 tag（child...flat chest, small hands）整串前排
+    → 把比例壓成三頭身 chibi（第六輪 H3 實證）。縮為單一 `child`，拔 flat chest；
+    15-17 歲檔改空（`teenage girl, youthful` 純稀釋，體型已由 _height_body_tags 承擔）。
+    ≤6（toddler）與 13-14 檔維持原樣，未在本次 A/B 範圍。"""
     if age is None:
         return ""
     if age <= 6:
         return "toddler, very young, chubby cheeks, round face"
     if age <= 12:
-        return "child, young girl, youthful, childlike features, round face, flat chest, small hands"
+        return "child"
     if age <= 14:
         return "young girl, youthful, flat chest"
     if age <= 17:
-        return "teenage girl, youthful"
+        return ""
     return ""
 
 
@@ -217,15 +227,24 @@ _CLOTHING_KW = {
 _HAIRSTYLE_KW = {
     "馬尾", "雙馬尾", "辮子", "捲髮", "直髮", "髮型", "長髮",
 }
+# S8（2026-07-13）：線稿膚色洩漏詞族。未上色線稿的膚色被 vision 誤譯成
+# 「膚色未填色呈線條狀 / tan skin tone」進 prompt，壓深生成膚色（第五輪歸因）。
+# 有膚色線條/未填色類描述一律剝除；真正膚色由年齡/預設確定性決定。
+_SKINTONE_LEAK_KW = {
+    "膚色", "膚", "未上色", "未填色", "無色", "線條", "線稿",
+    "tan skin", "skin tone", "uncolored", "colorless", "unpainted",
+}
 
 
-def _filter_visual_for_llm(visual: str, *, strip_clothing: bool, strip_hairstyle: bool) -> str:
+def _filter_visual_for_llm(
+    visual: str, *, strip_clothing: bool, strip_hairstyle: bool, strip_skin: bool = False
+) -> str:
     """
-    Remove clothing / hairstyle phrases from a comma-separated vision description
-    before sending it to the LLM, so it cannot hallucinate outfits or hairstyles
-    that conflict with explicitly defined character settings.
+    Remove clothing / hairstyle / skin-tone-leak phrases from a comma-separated vision
+    description before sending it to the LLM, so it cannot hallucinate outfits, hairstyles,
+    or lineart skin-tone artifacts that conflict with explicitly defined character settings.
     """
-    if not (strip_clothing or strip_hairstyle):
+    if not (strip_clothing or strip_hairstyle or strip_skin):
         return visual
     phrases = [p.strip() for p in visual.replace(",", "，").split("，") if p.strip()]
     result = []
@@ -234,6 +253,8 @@ def _filter_visual_for_llm(visual: str, *, strip_clothing: bool, strip_hairstyle
         if strip_clothing and any(kw in p for kw in _CLOTHING_KW):
             drop = True
         if not drop and strip_hairstyle and any(kw in p for kw in _HAIRSTYLE_KW):
+            drop = True
+        if not drop and strip_skin and any(kw in p for kw in _SKINTONE_LEAK_KW):
             drop = True
         if not drop:
             result.append(p)
@@ -279,6 +300,12 @@ def _visual_extract_prompt(n: int) -> str:
 # 快取持久化至 data/vision_cache.json，重啟後仍命中（避免 LLM 非確定性導致行為飄移）。
 _VISION_CACHE_MAX = 32
 
+# H1（2026-07-13）：cache 版本號。coverage 與 visual 存在同一 cache value，過去 cache key
+# 不含流程版本 → 改了 coverage 判定/prompt 後，舊的（可能誤判 full 的）coverage 仍被鎖死命中
+# （第六輪半身圖斷腿根因之一）。凡動到 coverage 判定或 vision prompt，就 bump 此版本號，
+# 讓全部舊快取自動失效、下次重判。
+_VISION_FLOW_VERSION = "v4-2026-07-14"  # T1A：加入像素反向升級（fullness-check），改動 coverage 決策鏈 → 清舊快取重判
+
 
 def _load_vision_cache() -> dict[str, tuple[str, str]]:
     """Load persisted vision cache from disk; return empty dict on any error."""
@@ -314,7 +341,8 @@ def _vision_cache_key(images_bytes: list[bytes], mode: str) -> str:
     for b in images_bytes:
         h.update(len(b).to_bytes(8, "little"))
         h.update(b)
-    return f"{mode}|{state.get_vision_model()}|{h.hexdigest()}"
+    # H1：前綴流程版本號，改動 coverage/vision 邏輯後舊快取自動失效（見 _VISION_FLOW_VERSION）。
+    return f"{_VISION_FLOW_VERSION}|{mode}|{state.get_vision_model()}|{h.hexdigest()}"
 
 
 async def _vision_extract_cached(

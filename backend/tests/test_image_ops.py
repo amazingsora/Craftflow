@@ -16,6 +16,8 @@ from app.services.ai.image_ops import (
     _is_flat_color_draft,
     _letterbox_to_aspect,
     _pixel_coverage_check,
+    _pixel_fullness_check,
+    _detect_body_break,
     _shrink_for_full_body,
     _FULLBODY_CANVAS_TALL,
     _FULLBODY_CANVAS_STD,
@@ -165,3 +167,81 @@ def test_shrink_partial_and_bust(coverage, max_ratio):
     out = _shrink_for_full_body(_png_bytes(300, 900), 768, 1344, coverage)
     im = Image.open(io.BytesIO(out))
     assert im.size == (768, 1344)  # 輸出為完整畫布
+
+
+# ── _pixel_fullness_check（T1A 反向升級，2026-07-14 全身外擴誤判修復）──────────────
+
+def _draw_bytes(w, h, box, color=(30, 30, 30), bg=(255, 255, 255)):
+    """在 bg 底上畫一個實心矩形當 ink，回傳 PNG bytes。"""
+    from PIL import ImageDraw
+    im = Image.new("RGB", (w, h), bg)
+    ImageDraw.Draw(im).rectangle(box, fill=color)
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_fullness_caseA_fullbody_feet_near_bottom_upgrades():
+    # 案例A：全身草圖，腳貼近底邊仍留 >3% 邊、直立高瘦 → 升級（跳過外擴）
+    img = _draw_bytes(446, 1023, [150, 40, 296, 985])
+    assert _pixel_fullness_check(img) is True
+
+
+def test_fullness_caseB_faint_fullbody_upgrades():
+    # 案例B：淡鉛筆全身（淺灰 ink 仍偏離白底 >28）→ 升級
+    img = _draw_bytes(500, 1000, [180, 30, 320, 940], color=(170, 170, 170))
+    assert _pixel_fullness_check(img) is True
+
+
+def test_fullness_0713_cropped_bust_touches_bottom_not_upgraded():
+    # 07-13 緊裁半身填到底：ink 觸底(margin≈0) → 條件1不成立 → 不升級（不回歸）
+    img = _draw_bytes(512, 768, [80, 20, 430, 767])
+    assert _pixel_fullness_check(img) is False
+
+
+def test_fullness_real_bust_low_aspect_not_upgraded():
+    # 真胸像：上半、方形 AR<2 → 不升級（維持 bust→外擴）
+    img = _draw_bytes(512, 512, [100, 20, 420, 300])
+    assert _pixel_fullness_check(img) is False
+
+
+def test_fullness_blank_image_not_upgraded():
+    # 全白無 ink → None bbox → 不升級
+    img = _png_bytes(512, 512, color=(255, 255, 255))
+    assert _pixel_fullness_check(img) is False
+
+
+# ── _detect_body_break（T3A 外擴斷裂防線，2026-07-15）──────────────────────────
+
+def test_break_ghost_lower_body_detected():
+    # 幽靈下半身：上半身塊 + 純背景空帶 + 下方漂浮腿 → 斷裂
+    from PIL import ImageDraw
+    im = Image.new("RGB", (500, 1000), (240, 90, 90))
+    d = ImageDraw.Draw(im)
+    d.rectangle([160, 40, 340, 380], fill=(30, 30, 30))     # 上半身
+    d.rectangle([170, 640, 330, 950], fill=(30, 30, 30))    # 下方漂浮腿（中間 260px 空帶 = 26% 圖高）
+    buf = io.BytesIO(); im.save(buf, "PNG")
+    assert _detect_body_break(buf.getvalue()) is True
+
+
+def test_break_continuous_body_not_flagged():
+    # 連續全身（無空帶）→ 不判斷裂
+    img = _draw_bytes(500, 1000, [160, 40, 340, 960])
+    assert _detect_body_break(img) is False
+
+
+def test_break_thin_waist_not_flagged():
+    # 連續全身但中段細窄（腰/腳踝）：細窄列 frac 介於雙門檻間、不計為空帶 → 不誤攔
+    from PIL import ImageDraw
+    im = Image.new("RGB", (500, 1000), (240, 90, 90))
+    d = ImageDraw.Draw(im)
+    d.rectangle([120, 40, 380, 450], fill=(30, 30, 30))     # 上半身（寬）
+    d.rectangle([235, 450, 265, 620], fill=(30, 30, 30))    # 細腰（~6% 寬，>GAP_ROW）
+    d.rectangle([150, 620, 350, 960], fill=(30, 30, 30))    # 下半身（寬）
+    buf = io.BytesIO(); im.save(buf, "PNG")
+    assert _detect_body_break(buf.getvalue()) is False
+
+
+def test_break_blank_output_not_flagged():
+    img = _png_bytes(500, 1000, color=(240, 90, 90))
+    assert _detect_body_break(img) is False

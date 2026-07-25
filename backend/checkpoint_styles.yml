@@ -72,3 +72,7 @@ families:
   flux1-dev:        flux
   flux1-schnell:    flux
   fluxDev:          flux
+
+  # ── Anima（非 SDXL：UNETLoader + Qwen 編碼器；無 IPA、CN 僅 LLLite → 能力閘控停用）
+  anima_base:       anima
+  anima:            anima
