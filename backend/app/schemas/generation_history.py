@@ -13,6 +13,7 @@ class GenerationHistoryBrief(BaseModel):
     seed: int
     workflow: str
     style: Optional[str]
+    saved_filename: Optional[str] = None
     created_at: datetime
 
 

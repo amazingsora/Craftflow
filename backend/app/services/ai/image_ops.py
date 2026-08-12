@@ -9,10 +9,11 @@ from __future__ import annotations
 import io
 import os
 import logging
+import re
 import statistics
 import struct
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,30 @@ _FRAMING_SYNONYMS = {
     "head to toe": "full body",
     "whole body": "full body",
 }
+
+# E-2（2026-07-26）：多視圖／設定稿同義 tag —— 「含即丟」語義（與 styles._LINEART_ARTIFACT_RE
+# 同款機制）。人設圖自 E-1 起統一走「單張全身插畫」，但 LLM 翻譯「角色設定」類描述時仍會
+# 自行吐出 character design reference sheet / multiple views，直接把構圖拉回多視角（2026-07-26
+# 附件一雙人的根因之一）。注意：solo 與 multiple views 在 danbooru 語義可共存，補 solo 擋不住，
+# 必須從正向把這類 tag 移除。
+# ⚠️ 只可作用於**正向** —— 負向端刻意保留 multiple views/reference sheet 作為抑制項。
+_SHEET_TAG_RE = re.compile(
+    r'(reference|design|character|model|turn[ -]?around)\s+sheet'
+    r'|multiple\s+views?|multi[ -]?view|multiple\s+poses',
+    re.IGNORECASE,
+)
+
+
+def _strip_sheet_tags(prompt: str) -> str:
+    """自**正向** prompt 移除多視圖／設定稿類 tag（見 _SHEET_TAG_RE）。
+
+    逐 tag 比對（去括號去權重後），命中即整個 tag 丟棄；其餘原形保留。
+    """
+    out = [
+        raw.strip() for raw in prompt.split(",")
+        if raw.strip() and not _SHEET_TAG_RE.search(raw.strip().lower().strip("() "))
+    ]
+    return ", ".join(out)
 
 
 def _dedup_tags(prompt: str) -> str:
@@ -124,6 +149,81 @@ def _letterbox_to_aspect(image_bytes: bytes, target_w: int, target_h: int) -> by
     canvas.save(out, "PNG")
     logger.info("[cn-letterbox] %sx%s → %sx%s (target_ar=%.3f)", w, h, new_w, new_h, target_ar)
     return out.getvalue()
+
+
+def _fit_to_canvas(image_bytes: bytes, target_w: int, target_h: int) -> bytes:
+    """把圖精確縮放到 target_w x target_h（先補邊對齊比例，再等比縮放）。
+
+    img2img 用（2026-07-25 D'-2）：VAEEncode 的 latent 尺寸由輸入圖決定，會**取代**
+    EmptyLatentImage 的尺寸 → 參考圖若不是目標尺寸，出圖尺寸就跟著跑掉。
+    先 _letterbox_to_aspect 保住構圖不被裁，再 resize 到精確畫布。
+    """
+    boxed = _letterbox_to_aspect(image_bytes, target_w, target_h)
+    im = Image.open(io.BytesIO(boxed)).convert("RGB")
+    if im.size == (target_w, target_h):
+        return boxed
+    im = im.resize((target_w, target_h), Image.LANCZOS)
+    out = io.BytesIO()
+    im.save(out, "PNG")
+    logger.info("[img2img-fit] → %sx%s", target_w, target_h)
+    return out.getvalue()
+
+
+# ── img2img 參考圖色彩正規化（2026-08-05）──────────────────────────────────────
+# 事故：Anima 走 img2img 時，原始草圖（粉紅背景 + 粉紅鉛筆線）直接進 VAEEncode，
+# 整個色場被帶進 latent → 出圖整張泛粉、角色沒有自己的顏色。CN 路徑有前處理器
+# （AnimeLineArt/Canny）把參考圖化為線稿，img2img 路徑卻只有 _fit_to_canvas
+# （純幾何、零色彩處理）→ 這是兩條路徑的能力落差，不是 denoise 調得不好。
+#
+# 模式（env `IMG2IMG_REF_MODE` 覆寫，供 A/B；預設 grayscale）：
+#   none      = 不處理（＝ 2026-08-05 前行為，回滾用）
+#   grayscale = 去色但保留明暗層次。中性灰不注入色相，顏色交還 prompt 決定。
+#   lineart   = 去色 + 反差拉滿成白底深線。結構最強，但白底在低 denoise 會蓋掉
+#               prompt 指定的背景色，需實測取捨。
+_I2I_REF_MODES = ("none", "grayscale", "lineart")
+_I2I_REF_MODE_DEFAULT = "grayscale"
+# lineart 二值化門檻。⚠️ 必須先 autocontrast 再套用：草圖去色後背景是中灰（實測
+# 中位數 ~184、動態範圍僅 35~185），直接對原始灰階套門檻會把整張圖判成線條（全黑）。
+# autocontrast 把背景拉到 ~252 後，此門檻才落在「線 vs 背景」的正確位置（實測深色
+# 占比 5.5%，與草圖線條密度相符）。
+_I2I_LINEART_AUTOCONTRAST_CUTOFF = 1
+_I2I_LINEART_THRESHOLD = 190
+
+
+def _resolve_i2i_ref_mode() -> str:
+    """讀 env 決定正規化模式；未知值 → 預設值（不讓打錯字靜默改變行為）。"""
+    mode = os.getenv("IMG2IMG_REF_MODE", _I2I_REF_MODE_DEFAULT).strip().lower()
+    if mode not in _I2I_REF_MODES:
+        logger.warning("[i2i-ref] IMG2IMG_REF_MODE=%r 不是 %s 之一，改用預設 %s",
+                       mode, _I2I_REF_MODES, _I2I_REF_MODE_DEFAULT)
+        return _I2I_REF_MODE_DEFAULT
+    return mode
+
+
+def _normalize_i2i_ref(image_bytes: bytes, mode: str | None = None) -> bytes:
+    """把 img2img 參考圖的色彩正規化，避免草圖底色污染整張輸出。
+
+    只動色彩，不動幾何（尺寸對齊仍由 _fit_to_canvas 負責）。任何失敗都回傳原圖，
+    讓生成繼續跑（Resilient errors）。
+    """
+    mode = (mode or _resolve_i2i_ref_mode()).strip().lower()
+    if mode not in _I2I_REF_MODES:
+        logger.warning("[i2i-ref] 未知 mode=%r → 改用預設 %s", mode, _I2I_REF_MODE_DEFAULT)
+        mode = _I2I_REF_MODE_DEFAULT
+    if mode == "none":
+        return image_bytes
+    try:
+        im = Image.open(io.BytesIO(image_bytes)).convert("L")
+        if mode == "lineart":
+            im = ImageOps.autocontrast(im, cutoff=_I2I_LINEART_AUTOCONTRAST_CUTOFF)
+            im = im.point(lambda v: 0 if v < _I2I_LINEART_THRESHOLD else 255, mode="L")
+        out = io.BytesIO()
+        im.convert("RGB").save(out, "PNG")
+        logger.info("[i2i-ref] 色彩正規化：mode=%s", mode)
+        return out.getvalue()
+    except Exception as e:
+        logger.warning("[i2i-ref] 正規化失敗（%s）→ 沿用原圖", e)
+        return image_bytes
 
 
 def _image_dimensions(image_bytes: bytes) -> tuple[int, int]:

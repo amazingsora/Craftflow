@@ -8,10 +8,16 @@ import TrainingTab from './components/TrainingTab.jsx'
 import SettingsTab from './components/SettingsTab.jsx'
 import NovelTab from './components/NovelTab.jsx'
 import { ensureNotifyPermission, notifyDone } from './notify.js'
+import { GenerationInfo } from './components/GenerationInfo.jsx'
 
 const _HISTORY_KEY = 'craftflow_history_v2'
 const _MAX_HISTORY = 100
-const _THUMB_PX = 300
+// 2026-07-26：300 → 768。原值下「檢視」把 300px 圖放大到 80vw 顯示 → 明顯模糊。
+// 提高解析度會撐大 localStorage（見 _saveHistory 的配額降階），故同批加降階邏輯。
+const _THUMB_PX = 768
+const _THUMB_QUALITY = 0.85
+// localStorage 配額超出時，依序砍到剩幾筆再試（最後一階只留最新 5 筆）。
+const _HISTORY_QUOTA_STEPS = [100, 40, 15, 5]
 const _STATUS_POLL_MS = 20000  // 系統狀態輪詢間隔
 
 // header 服務狀態燈：顯示 Ollama / ComfyUI 是否在線，離線時 hover 顯示提示
@@ -55,7 +61,7 @@ async function _makeThumbnail(url) {
         c.width = Math.round((img.naturalWidth || 300) * scale)
         c.height = Math.round((img.naturalHeight || 300) * scale)
         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
-        resolve(c.toDataURL('image/jpeg', 0.72))
+        resolve(c.toDataURL('image/jpeg', _THUMB_QUALITY))
       } catch { resolve(null) }
     }
     img.onerror = () => resolve(null)
@@ -63,18 +69,19 @@ async function _makeThumbnail(url) {
   })
 }
 
+// 持久化時 url 一律換成縮圖：item.url 是 blob: object URL，重整後即失效。
+// 2026-07-26：縮圖放大到 768px 後單筆約 100-200KB，100 筆必爆 localStorage 5-10MB 配額，
+// 故改為逐階減量重試，而非原本「全部 → 40 筆」兩階（40 筆在新尺寸下仍會爆，等同靜默全丟）。
 function _saveHistory(items) {
-  try {
-    localStorage.setItem(_HISTORY_KEY, JSON.stringify(
-      items.map(h => ({ ...h, url: h.thumbnail ?? h.url }))
-    ))
-  } catch {
+  for (const n of _HISTORY_QUOTA_STEPS) {
     try {
       localStorage.setItem(_HISTORY_KEY, JSON.stringify(
-        items.slice(0, 40).map(h => ({ ...h, url: h.thumbnail ?? h.url }))
+        items.slice(0, n).map(h => ({ ...h, url: h.thumbnail ?? h.url }))
       ))
-    } catch {}
+      return n
+    } catch { /* 配額不足 → 再砍一階 */ }
   }
+  return 0
 }
 
 function _badgeStyle(type, S) {
@@ -377,7 +384,8 @@ export default function App() {
   const [workflows, setWorkflows] = useState([])
   const [activeWorkflow, setActiveWorkflow] = useState('text_to_image.json')
   // capability: { ipa_supported, cn_supported, family }（由 /settings/capabilities 統一取得）
-  const [capability, setCapability] = useState({ ipa_supported: true, cn_supported: true, family: 'sdxl' })
+  // cn_fallback（2026-07-25 D'-2）：CN 不支援但有替代路徑時為 'img2img'（Anima）。
+  const [capability, setCapability] = useState({ ipa_supported: true, cn_supported: true, cn_fallback: null, family: 'sdxl' })
   const [generationMode, setGenerationMode] = useState(
     () => localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint'
   )
@@ -472,7 +480,7 @@ export default function App() {
           : Promise.resolve()
         // 等 workflow 同步後再抓 capability（確保後端 state 已更新）
         doSync.then(() => fetch('/api/v1/settings/capabilities').then(r => r.ok ? r.json() : null).then(cap => {
-          if (cap) setCapability({ ipa_supported: !!cap.ipa_supported, cn_supported: !!cap.cn_supported, family: cap.family ?? 'sdxl' })
+          if (cap) setCapability({ ipa_supported: !!cap.ipa_supported, cn_supported: !!cap.cn_supported, cn_fallback: cap.cn_fallback ?? null, family: cap.family ?? 'sdxl' })
         }).catch(() => {}))
       })
       .catch(() => {})
@@ -552,6 +560,7 @@ export default function App() {
         setCapability({
           ipa_supported: !!data.ipa_supported,
           cn_supported:  !!data.cn_supported,
+          cn_fallback:   data.cn_fallback ?? null,
           family:        data.family ?? 'sdxl',
         })
       }
@@ -875,8 +884,11 @@ export default function App() {
         <div style={S.lightboxOverlay} onClick={() => setLightboxItem(null)}>
           <div style={S.lightboxBox} onClick={e => e.stopPropagation()}>
             <button style={S.lightboxClose} onClick={() => setLightboxItem(null)}>×</button>
+            {/* 2026-07-26：改為優先原圖。本次工作階段 item.url 是全解析度 blob，
+                原本寫 thumbnail ?? url 等於永遠拿 768px（舊版 300px）縮圖再放大到
+                80vw → 必糊。重整後 _saveHistory 已把 url 覆寫成縮圖，此處自動退回縮圖。 */}
             <img
-              src={lightboxItem.thumbnail ?? lightboxItem.url}
+              src={lightboxItem.url ?? lightboxItem.thumbnail}
               style={S.lightboxImg}
               alt=""
             />
@@ -906,6 +918,9 @@ export default function App() {
                     {lightboxItem.params.cnMode ? ` (${lightboxItem.params.cnMode})` : ''}
                   </div>
                 )}
+                <div style={{ maxWidth: '60vw' }}>
+                  <GenerationInfo historyId={lightboxItem.historyId} />
+                </div>
               </div>
               <a
                 href={lightboxItem.url}

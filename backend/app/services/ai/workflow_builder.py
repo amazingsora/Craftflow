@@ -320,9 +320,12 @@ def _load_checkpoint_styles() -> dict:
 
 def _detect_style(workflow_name: str = "text_to_image.json") -> PromptStyle:
     """
-    Read ckpt_name from a workflow's CheckpointLoaderSimple node,
-    then look it up in checkpoint_styles.yml.
+    Read the model name from a workflow, then look it up in checkpoint_styles.yml.
     Falls back to SDXL if not found.
+
+    2026-07-25 (AC-2)：模型名改由 capability.extract_checkpoint_from_wf 取得——原本只讀
+    CheckpointLoaderSimple，Anima 這類 UNETLoader 工作流一律落到 SDXL fallback，
+    prompt 被套錯家族配方。共用函式同時涵蓋 UNETLoader / GGUF 變體。
     """
     mapping = _load_checkpoint_styles()
     try:
@@ -330,19 +333,18 @@ def _detect_style(workflow_name: str = "text_to_image.json") -> PromptStyle:
     except Exception:
         return PromptStyle.SDXL
 
-    for node in wf.values():
-        if not isinstance(node, dict):
-            continue
-        if node.get("class_type") == "CheckpointLoaderSimple":
-            ckpt = node.get("inputs", {}).get("ckpt_name", "")
-            ckpt_base = Path(ckpt).stem.lower()
-            for pattern, style_str in mapping.items():
-                if pattern.lower() in ckpt_base:
-                    logger.debug("checkpoint '%s' matched pattern '%s' → style '%s'", ckpt, pattern, style_str)
-                    try:
-                        return PromptStyle(style_str)
-                    except ValueError:
-                        pass
+    from app.services.ai.capability import extract_checkpoint_from_wf
+    ckpt = extract_checkpoint_from_wf(wf)
+    if ckpt:
+        ckpt_base = Path(ckpt).stem.lower()
+        for pattern, style_str in mapping.items():
+            if str(pattern).lower() in ckpt_base:
+                logger.debug("checkpoint '%s' matched pattern '%s' → style '%s'", ckpt, pattern, style_str)
+                try:
+                    return PromptStyle(style_str)
+                except ValueError:
+                    # yml 寫了 enum 沒有的字串 → 不讓生成 crash，繼續找下一個 pattern
+                    logger.warning("checkpoint_styles.yml style '%s' 不是合法 PromptStyle，略過", style_str)
     logger.debug("checkpoint style not found in mapping, falling back to SDXL")
     return PromptStyle.SDXL
 

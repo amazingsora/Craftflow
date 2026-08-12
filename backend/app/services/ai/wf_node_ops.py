@@ -185,6 +185,131 @@ def _find_main_ksampler_id(wf: dict) -> str | None:
     return ks_ids[0]
 
 
+# ── 參數覆寫（上游來源優先，2026-07-25）────────────────────────────────────────
+# 問題：作者型工作流常把採樣參數集中在一個「參數節點」，再分送 KSampler 與
+# Image Saver Metadata（AnimaStandardV7 的 node 24 `Input Parameters (Image Saver)`
+# 即如此：steps/cfg/denoise 皆為 ["24", n] 節點參照）。後端若直接把字面值寫到
+# KSampler，metadata 仍讀原節點 → **實跑值與記錄值不符**（採樣雙真相）。
+# 同樣情形也發生在 EmptyLatentImage.width/height ← `easy int` 節點（解析度已在寫錯）。
+# 解法：覆寫前先看該輸入是不是節點參照，是就寫到來源節點，讓所有消費端同步。
+_PARAM_VALUE_KEYS = {
+    "easy int": "value",
+    "easy float": "value",
+    "easy string": "value",
+    "PrimitiveInt": "value",
+    "PrimitiveFloat": "value",
+    "PrimitiveString": "value",
+    "PrimitiveBoolean": "value",
+    "Seed (rgthree)": "seed",
+}
+
+
+def _set_node_input(wf: dict, node_id: str, key: str, value) -> bool:
+    """設定 wf[node_id].inputs[key]；若該輸入是上游節點參照，改寫到上游來源。
+
+    Returns:
+        True  — 值已寫入（字面值原地寫，或成功寫到上游來源）。
+        False — 該輸入是節點參照但來源無法解析，已退為在本節點寫字面值；
+                其他消費端（如 metadata）仍會讀到舊值，呼叫端應記錄警告。
+    """
+    node = wf.get(node_id)
+    if not isinstance(node, dict):
+        return False
+    inputs = node.setdefault("inputs", {})
+    cur = inputs.get(key)
+
+    # 非節點參照（含 key 不存在）→ 原地寫，無分歧疑慮
+    if not (isinstance(cur, list) and cur):
+        inputs[key] = value
+        return True
+
+    src_id = str(cur[0])
+    src = wf.get(src_id)
+    if isinstance(src, dict):
+        src_inputs = src.setdefault("inputs", {})
+        # 1) 來源節點有同名且為字面值的輸入（如 node 24 的 steps/cfg/denoise）
+        target_key = key if (key in src_inputs and not isinstance(src_inputs[key], list)) else None
+        # 2) 已知的參數節點型別（如 `easy int` 的 value）
+        if target_key is None:
+            mapped = _PARAM_VALUE_KEYS.get(src.get("class_type", ""))
+            if mapped and mapped in src_inputs and not isinstance(src_inputs[mapped], list):
+                target_key = mapped
+        if target_key is not None:
+            src_inputs[target_key] = value
+            logger.info("[param-override] %s.%s → 來源節點 %s(%s).%s = %r",
+                        node_id, key, src_id, src.get("class_type"), target_key, value)
+            return True
+
+    inputs[key] = value
+    logger.warning(
+        "[param-override] %s.%s 為節點參照 %s 但來源無法解析 → 改寫字面值；"
+        "其他消費端（如 Image Saver Metadata）可能仍讀到舊值",
+        node_id, key, cur,
+    )
+    return False
+
+
+# ── img2img（CN 替代路徑，2026-07-25 D'-2）─────────────────────────────────────
+# Anima 不支援 ControlNet（官方明言），但仍需要「依草圖控制構圖」的能力。
+# 以 img2img（VAEEncode + 低 denoise）取代：參考圖進 latent，denoise 越低越貼合原圖。
+# 工作流磁碟檔不動，節點只在記憶體注入（與既有 _inject_ipa_cn_nodes 同機制）。
+
+
+def _find_vae_ref(wf: dict) -> list | None:
+    """找出主取樣鏈使用的 VAE 來源 edge。
+
+    優先 VAEDecode.vae（必與 KSampler 同組），其次任一 VAELoader 的輸出。
+    """
+    for n in wf.values():
+        if isinstance(n, dict) and n.get("class_type") == "VAEDecode":
+            ref = n.get("inputs", {}).get("vae")
+            if isinstance(ref, list) and ref:
+                return list(ref)
+    for nid, n in wf.items():
+        if isinstance(n, dict) and n.get("class_type") == "VAELoader":
+            return [nid, 0]
+    return None
+
+
+def _inject_img2img(wf: dict, uploaded_name: str, denoise: float) -> bool:
+    """把主 KSampler 的 latent 來源改成參考圖（img2img），並設定 denoise。
+
+    Args:
+        uploaded_name: 已上傳到 ComfyUI 的檔名。**必須事先縮放成目標畫布尺寸** ——
+                       VAEEncode 的 latent 尺寸由輸入圖決定，會取代 EmptyLatentImage。
+        denoise:       0=完全照抄參考圖，1=完全重畫。
+
+    Returns:
+        True 注入成功；False 缺 KSampler 或找不到 VAE（呼叫端應視為 img2img 未啟用）。
+    """
+    ks_id = _find_main_ksampler_id(wf)
+    if ks_id is None:
+        logger.warning("[img2img] 找不到 KSampler，略過注入")
+        return False
+    vae_ref = _find_vae_ref(wf)
+    if vae_ref is None:
+        logger.warning("[img2img] 找不到 VAE 來源，略過注入")
+        return False
+
+    next_id = max((int(k) for k in wf if k.isdigit()), default=0) + 1
+    loadimg_id, encode_id = str(next_id), str(next_id + 1)
+    wf[loadimg_id] = {
+        "class_type": "LoadImage",
+        "inputs": {"image": uploaded_name, "upload": "image"},
+    }
+    wf[encode_id] = {
+        "class_type": "VAEEncode",
+        "inputs": {"pixels": [loadimg_id, 0], "vae": vae_ref},
+    }
+    wf[ks_id].setdefault("inputs", {})["latent_image"] = [encode_id, 0]
+    # denoise 走 _set_node_input：AnimaStandardV7 的 denoise 是 node 24 參照，
+    # 寫到來源才能讓 Image Saver Metadata 記到實際值。
+    _set_node_input(wf, ks_id, "denoise", float(denoise))
+    logger.info("[img2img] 已注入：KSampler(%s).latent_image ← VAEEncode(%s) ← LoadImage(%s)，denoise=%.2f",
+                ks_id, encode_id, loadimg_id, denoise)
+    return True
+
+
 def _inject_ipa_cn_nodes(
     wf: dict, *, inject_ipa: bool, inject_cn: bool, models: dict | None = None,
     cn_preprocessor: dict | None = None,
@@ -465,6 +590,41 @@ def _resolve_conditioning(
     return None
 
 
+# H-3（2026-07-26，原 B-3''）：Image Saver 系節點的 positive/negative 是**節點參照**，
+# 指向工作流內建的 wildcard→StringConcatenate 鏈（V37: node 54.positive ← 48 ← 47 ← 45 ← 3；
+# Anima: node 58.positive ← 51），而 _inject_prompts 只覆寫 CLIPTextEncode
+# → **metadata 記的是工作流內建 prompt，不是實際送出的那一份**，出圖無法重現。
+# 這裡在注入後把實際值以字面值寫進 saver，讓記錄與實跑同源。
+# 不用 _set_node_input：來源是 StringConcatenate（無同名字面欄位、非參數節點），
+# 走該函式只會落到 fallback 並記一筆誤導性 WARNING，結果與直接寫字面值相同。
+_METADATA_SAVER_PREFIX = "Image Saver"
+
+
+def _sync_saver_prompt_metadata(wf: dict, positive: str, negative: str) -> int:
+    """把實際送出的 positive/negative 同步進 Image Saver 系節點的 metadata 欄位。
+
+    Returns: 被同步的節點數（無 saver 節點時為 0，no-op）。
+    """
+    synced = 0
+    for nid, node in wf.items():
+        if not isinstance(node, dict):
+            continue
+        if not str(node.get("class_type", "")).startswith(_METADATA_SAVER_PREFIX):
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        hit = False
+        for key, text in (("positive", positive), ("negative", negative)):
+            if key in inputs:
+                inputs[key] = text
+                hit = True
+        if hit:
+            synced += 1
+            logger.debug("[saver-metadata] %s(%s) prompt 已同步為實跑值", nid, node.get("class_type"))
+    return synced
+
+
 def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
     """Inject positive/negative prompts into CLIPTextEncode nodes.
 
@@ -505,6 +665,7 @@ def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
                     logger.debug("[inject-prompts] KSampler.%s → (resolved) node %s", slot, clip_id)
 
     if pos_injected and neg_injected:
+        _sync_saver_prompt_metadata(wf, positive, negative)
         return
 
     # Pass 2: _meta.title keywords
@@ -520,6 +681,7 @@ def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
             logger.debug("[inject-prompts] title match negative → node %s", nid)
 
     if pos_injected and neg_injected:
+        _sync_saver_prompt_metadata(wf, positive, negative)
         return
 
     # Pass 3: first two nodes by sorted id
@@ -530,6 +692,8 @@ def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
     if not neg_injected and len(sorted_ids) > 1:
         clips[sorted_ids[1]]["inputs"]["text"] = negative
         logger.debug("[inject-prompts] fallback negative → node %s", sorted_ids[1])
+
+    _sync_saver_prompt_metadata(wf, positive, negative)
 
 
 def _inject_controlnet_compose(

@@ -32,7 +32,7 @@ from app.services.ai.generation_recorder import record_generation
 from app.services.ai import generation_jobs
 from app.services.ai import character_design_service
 from app.services.ai import image_edit_service
-from app.services.ai.capability import resolve_capability
+from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
 from app.schemas.art_generate import (
     CompilePromptRequest,
     GenerateRequest,
@@ -80,8 +80,11 @@ def _current_capability(wf_name: str | None = None) -> dict:
     wf_name 預設使用 state.get_workflow()；caller 可傳入實際要用的 workflow 名稱。
     若 workflow 無法載入（檔案不存在）則以空 dict 計算，僅依家族查表。
     """
-    ckpt = state.get_checkpoint()
+    # 2026-07-25 AC-2'：checkpoint 改由工作流內嵌值解析（CheckpointLoaderSimple →
+    # UNETLoader.unet_name → 全域），與 gen_profile 走同一函式，避免 UI 與生成端
+    # 對同一工作流解析出不同 family。
     name = wf_name or state.get_workflow()
+    ckpt = resolve_checkpoint_for_workflow(name)
     try:
         wf = _load_workflow(name)
     except Exception:
@@ -495,7 +498,9 @@ async def generate_character_design(
     _cap = _current_capability()
     if not _cap["ipa_supported"]:
         use_ipa = False
-    if not _cap["cn_supported"]:
+    # 2026-08-05 D'-2 補洞：家族不支援 CN 但有替代路徑（Anima → img2img）時不可打成 False，
+    # 否則 service 的 cn_fallback 分支永遠進不去（前端 cnUsable 已同此判斷，後端漏改）。
+    if not _cap["cn_supported"] and not _cap.get("cn_fallback"):
         use_controlnet = False
     return await character_design_service.generate_character_design(
         character_id=character_id, expression=expression, art_style_id=art_style_id,
@@ -525,7 +530,9 @@ async def generate_variant_design(
     _cap = _current_capability()
     if not _cap["ipa_supported"]:
         use_ipa = False
-    if not _cap["cn_supported"]:
+    # 2026-08-05 D'-2 補洞：家族不支援 CN 但有替代路徑（Anima → img2img）時不可打成 False，
+    # 否則 service 的 cn_fallback 分支永遠進不去（前端 cnUsable 已同此判斷，後端漏改）。
+    if not _cap["cn_supported"] and not _cap.get("cn_fallback"):
         use_controlnet = False
     return await character_design_service.generate_variant_design(
         character_id=character_id, slot=slot, expression=expression, art_style_id=art_style_id,

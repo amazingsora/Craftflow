@@ -1,7 +1,7 @@
 {
   "anythingxl_heterochromia": {
     "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name",
-    "positive": "newest, masterpiece, best quality, heterochromia, red eye (left), green eye (right), looking at viewer, source_anime"
+    "positive": "newest, masterpiece, best quality, red eyes, green eyes, heterochromia, looking at viewer, source_anime"
   },
   "child_age_phrase_leak": {
     "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
@@ -21,7 +21,7 @@
   },
   "heterochromia_female": {
     "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",
-    "positive": "masterpiece, best quality, amazing quality, absurdres, heterochromia, red eye (left), green eye (right), brown hair, short hair"
+    "positive": "masterpiece, best quality, amazing quality, absurdres, red eyes, green eyes, heterochromia, brown hair, short hair"
   },
   "male_mage": {
     "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts, signature, watermark, username, text, blurry, cropped, extra limbs, deformed",

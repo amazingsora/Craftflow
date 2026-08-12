@@ -57,7 +57,10 @@ from app.services.ai.image_ops import (
     _border_color,
     _dedup_tags,
     _fullbody_canvas,
+    _strip_sheet_tags,
     _is_flat_color_draft,
+    _normalize_i2i_ref,
+    _fit_to_canvas,
     _letterbox_to_aspect,
     _pixel_coverage_check,
     _pixel_fullness_check,
@@ -71,9 +74,11 @@ from app.services.ai.wf_node_ops import (
     _bypass_controlnet_nodes,
     _bypass_ipa_nodes,
     _inject_controlnet_image,
+    _inject_img2img,
     _inject_ipa_cn_nodes,
     _inject_ipa_image,
     _inject_prompts,
+    _set_node_input,
     _wf_has_controlnet,
     _wf_has_ipa,
 )
@@ -393,6 +398,26 @@ class _DesignInputs:
     height: Optional[int]
 
 
+# ── 全身人設 suffix（E-1，2026-07-26）──────────────────────────────────────────
+# 原本 coverage=full 送 "character design sheet, character reference sheet"，等於主動
+# 要求多視圖排版 —— 這是 2026-07-26 附件一（Anima img2img）出現雙人的根因。danbooru
+# 語義下 solo 與 multiple views 可共存，補 solo 擋不住；partial/bust 早已改走單張插畫
+# 模式，本次把同一模式放寬到全 coverage（使用者 2026-07-26 拍板：角色版目標產出為
+# 單張全身插畫，不再產多視角設定稿）。
+# 抽為純函式以便單測直接執行組裝結果，而非只驗常數內容。
+def _build_fullbody_suffix(bg_tag: str) -> str:
+    """組出全身人設圖的固定 suffix（單張全身插畫、單人、簡潔背景）。"""
+    return (
+        ", character illustration, full body portrait, full body, front view"
+        f", {_FULLBODY_POS_TAGS}"
+        ", solo, single character"
+        # S2（2026-07-12）：拔正向 "no background detail, no scenery"——正向 no-xxx
+        # 是反效果（SD 讀到的是 xxx 本身）；extra_neg 已含 detailed background/
+        # scenery（見 negative 組裝），拔除零損失。
+        ", simple background, flat background" + bg_tag
+    )
+
+
 async def _generate_design_core(
     *,
     character: Character,
@@ -410,7 +435,6 @@ async def _generate_design_core(
     cn_weight: float,
     canvas_expand_mode: str,      # "pre"=角色版(SDXL前/概念圖/提早return) | "post"=變體版(SDXL後/輸出圖/try)
     use_pixel_override: bool,     # 角色版 True：coverage=full 時像素二次確認
-    use_solo_tag: bool,           # 變體版 True：partial/bust 加 solo 標籤
     log_label: str,
     record_endpoint: str,
 ):
@@ -446,6 +470,7 @@ async def _generate_design_core(
     all_flat = True  # no images → treat as flat, use core_traits for anchors
     _ipa_ref_bytes: bytes | None = None
     _cn_ref_bytes: bytes | None = None
+    _i2i_ref_bytes: bytes | None = None   # D'-2：CN 替代（img2img）參考圖
     _cn_coverage: str = "full"
     _coverage_original: str = "full"   # T0-1：pre_ref/fullness 改寫前的原始判定（badge 觀測用）
     _coverage_end_pct: float | None = None
@@ -473,6 +498,10 @@ async def _generate_design_core(
                 _ipa_ref_bytes = valid_images[0]
             if use_controlnet and _profile.cn_enabled:
                 _cn_ref_bytes = valid_images[0]
+            # D'-2（2026-07-25）：家族不支援 CN 但有替代路徑（Anima → img2img）時，
+            # 使用者開了「ControlNet」仍要拿到結構控制，只是換一條路實作。
+            elif use_controlnet and _profile.cn_fallback == "img2img":
+                _i2i_ref_bytes = valid_images[0]
 
             # Merge coverage detection + visual extraction into one Ollama call
             # (cached by image hash — repeat generations skip the vision call)
@@ -623,23 +652,7 @@ async def _generate_design_core(
         )
         width, height, steps = 512, 640, 20
     else:
-        # partial/bust：用單張全身插畫模式，避免 design sheet 觸發多視圖構圖
-        _design_tags = (
-            "character illustration, full body portrait"
-            if _cn_coverage in ("partial", "bust")
-            else "character design sheet, character reference sheet"
-        )
-        # 變體版：partial/bust 加 solo 避免 IPA 把設計稿多視角構圖帶進來
-        _solo_tag = ", solo, single character" if (use_solo_tag and _cn_coverage in ("partial", "bust")) else ""
-        suffix = (
-            f", {_design_tags}, full body, front view"
-            f", {_FULLBODY_POS_TAGS}"
-            f"{_solo_tag}"
-            # S2（2026-07-12）：拔正向 "no background detail, no scenery"——正向 no-xxx
-            # 是反效果（SD 讀到的是 xxx 本身）；extra_neg 已含 detailed background/
-            # scenery（見下方 negative 組裝），拔除零損失。
-            ", simple background, flat background" + bg_tag
-        )
+        suffix = _build_fullbody_suffix(bg_tag)
         width, height = _fullbody_canvas(inp.height)
         steps = _profile.steps
 
@@ -682,6 +695,8 @@ async def _generate_design_core(
 
     final_positive = gender_prefix + body_prefix + style_front + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
     final_positive = _dedup_tags(final_positive)  # 去框架/眼睛等重複,收稀釋
+    # E-2（2026-07-26）：剝除 LLM 自行吐出的多視圖/設定稿 tag（只作用於正向）。
+    final_positive = _strip_sheet_tags(final_positive)
 
     extra_neg = ("detailed background, complex background, scenery, landscape, buildings, environment"
                  # 2026-06-21：抑制無端能量/火焰/光暈假影（不放 plain "glowing" 以免壓掉異色瞳/眼神光）
@@ -692,8 +707,9 @@ async def _generate_design_core(
                  ", nsfw, nude, naked, nipples, pubic hair, topless, bottomless, exposed breasts")
     if not is_expression:
         extra_neg = f"{extra_neg}, {_FULLBODY_NEG_TAGS}"
-        if _cn_coverage in ("partial", "bust"):
-            extra_neg += ", multiple views, reference sheet, design sheet, multiple poses, chibi inset, inset image, sketch overlay"
+        # E-1（2026-07-26）：多視圖抑制自 partial/bust 放寬到全 coverage —— 與正向端
+        # 改走單張全身插畫同批；只改正向不改負向，工作流內建 wildcard 仍可能帶回多視圖。
+        extra_neg += ", multiple views, reference sheet, design sheet, multiple poses, chibi inset, inset image, sketch overlay"
     base_neg = negative
     # P1：negative 優先序 art_style > workflow profile > PERSONAL_NEGATIVE > family 預設。
     # _overrides 有 negative_override 代表 compile_prompt 已採用 art_style 或 workflow
@@ -873,20 +889,23 @@ async def _generate_design_core(
         _ipa_weight_eff = max(0.1, round(ipa_weight * IPA_FLAT_DRAFT_SCALE, 2))
         logger.info("[%s] flat_draft 概念圖 → IPA 權重 %.2f→%.2f（IPA_FLAT_DRAFT_SCALE=%.2f，避免平塗拉平）",
                     log_label, ipa_weight, _ipa_weight_eff, IPA_FLAT_DRAFT_SCALE)
-    for node in wf.values():
+    for _nid, node in list(wf.items()):
         if not isinstance(node, dict):
             continue
         ct = node.get("class_type")
         inputs = node.get("inputs", {})
         if ct == "EmptyLatentImage":
-            inputs["width"] = width
-            inputs["height"] = height
+            # B-3'（2026-07-25）：改走 _set_node_input。width/height 在部分作者型工作流
+            # （如 AnimaStandardV7）是 `easy int` 節點參照，且同一節點另接 Image Saver
+            # Metadata → 直接寫字面值只改到 latent，metadata 仍記舊值（解析度已在寫錯）。
+            _set_node_input(wf, _nid, "width", width)
+            _set_node_input(wf, _nid, "height", height)
         elif ct == "KSampler":
-            inputs["seed"] = seed
+            _set_node_input(wf, _nid, "seed", seed)
             # R3：steps=None（illustrious 家族現況）→ 不覆寫，沿用 workflow JSON 內建值
             # （如 V37 官方 28 步）；有值的家族維持既有覆寫行為，零回歸。
             if steps is not None:
-                inputs["steps"] = steps
+                _set_node_input(wf, _nid, "steps", steps)
         elif ct == "IPAdapterAdvanced" and ipa_used:
             inputs["weight"] = round(_ipa_weight_eff, 2)
         elif ct in _CN_APPLY_TYPES and _cn_ref_bytes is not None:
@@ -915,6 +934,32 @@ async def _generate_design_core(
         _inject_controlnet_image(wf, uploaded_cn_ref)
         cn_used = True
         logger.info("[%s] ControlNet (%s) injected, weight=%.2f", log_label, cn_mode, cn_weight)
+
+    # D'-2（2026-07-25）：CN 替代 —— img2img 低 denoise。
+    # 觸發條件：家族 cn_enabled=False 但 cn_fallback="img2img"（目前僅 Anima），
+    # 且使用者確實開了 ControlNet 並提供概念圖。SDXL 系家族 _i2i_ref_bytes 永遠是
+    # None（走既有 CN 路徑）→ 零回歸。
+    i2i_used = False
+    i2i_denoise: float | None = None
+    if _i2i_ref_bytes is not None:
+        # 2026-08-05：先做色彩正規化再對齊畫布。草圖原色（粉底/粉線）直接進 VAEEncode
+        # 會把整個色場帶進 latent → 出圖泛粉、角色沒有自己的顏色。CN 路徑有前處理器
+        # 做這件事，img2img 路徑原本缺這一段（見 image_ops._normalize_i2i_ref）。
+        # 順序不可對調：正規化只動色彩，縮放只動幾何，先色後形避免縮放插值糊掉二值線稿。
+        _i2i_bytes = _normalize_i2i_ref(_i2i_ref_bytes)
+        # VAEEncode 的 latent 尺寸由輸入圖決定，會取代 EmptyLatentImage → 必須先縮到目標畫布。
+        _i2i_bytes = _fit_to_canvas(_i2i_bytes, width, height)
+        _t = time.perf_counter()
+        _i2i_uploaded = comfyui_client.upload_image_bytes(_i2i_bytes, "char_i2i_ref.png")
+        timings["upload"] = round(timings.get("upload", 0.0) + (time.perf_counter() - _t), 1)
+        i2i_denoise = _profile.img2img_denoise(_cn_weight_user)
+        i2i_used = _inject_img2img(wf, _i2i_uploaded, i2i_denoise)
+        if i2i_used:
+            logger.info("[%s] CN 替代：img2img 啟用（family=%s，cn_weight=%.2f → denoise=%.2f，"
+                        "Anima 不支援 ControlNet）", log_label, _gen_family, _cn_weight_user, i2i_denoise)
+        else:
+            i2i_denoise = None
+            logger.warning("[%s] CN 替代：img2img 注入失敗（缺 KSampler 或 VAE）→ 退回純 txt2img", log_label)
 
     _replace_negative_seeds(wf, seed)
     _log_wf_snapshot(wf, label=log_label)
@@ -1044,7 +1089,7 @@ async def generate_character_design(
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight,
-        canvas_expand_mode="pre", use_pixel_override=True, use_solo_tag=False,
+        canvas_expand_mode="pre", use_pixel_override=True,
         log_label="char-gen", record_endpoint="character_design",
     )
 
@@ -1087,6 +1132,6 @@ async def generate_variant_design(
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight,
-        canvas_expand_mode="post", use_pixel_override=False, use_solo_tag=True,
+        canvas_expand_mode="post", use_pixel_override=False,
         log_label="variant-gen", record_endpoint="variant_design",
     )

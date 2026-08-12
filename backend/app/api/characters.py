@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -15,8 +15,10 @@ from app.core.config import UPLOAD_DIR
 from app.core.database import get_db
 from app.core import state
 from app.models.character import Character
+from app.models.generation_history import GenerationHistory
 from app.models.project import Project
 from app.schemas.character import CharacterCreate, CharacterUpdate, CharacterResponse
+from app.schemas.generation_history import GenerationHistoryResponse
 from app.services.ai import character_service
 from app.services.ai.ollama_client import is_error as _ollama_is_error
 from app.services.ai.variant_helpers import (
@@ -29,6 +31,38 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 _PORTRAIT_DIR = UPLOAD_DIR / "portraits"
 _ALLOWED = {"image/jpeg", "image/png", "image/webp"}
+
+
+# ── 已存圖 ↔ 生成資訊關聯（2026-07-26）──────────────────────────────────────────
+# 生圖回應以 X-History-Id header 帶回 generation_history.id；前端按「儲存此圖」時把它
+# 一併送上來，這裡回填 saved_filename，讓「已存的圖 → 當初的 prompt/seed/參數/耗時」
+# 可反查。generation_history 已存齊所有欄位（含 params.timings），故不另存一份。
+def _bind_history_to_file(db: Session, history_id: Optional[int], filename: str) -> None:
+    """把 history 記錄綁到成品檔名。永不 raise —— 綁定失敗不該讓存圖失敗。"""
+    if not history_id:
+        return
+    try:
+        rec = db.get(GenerationHistory, history_id)
+        if rec is not None:
+            rec.saved_filename = filename
+    except Exception:  # noqa: BLE001 — resilient errors（CLAUDE.md 規則 3）
+        pass
+
+
+def _history_for_file(db: Session, filename: str) -> GenerationHistory:
+    rec = (db.query(GenerationHistory)
+             .filter(GenerationHistory.saved_filename == filename)
+             .order_by(GenerationHistory.id.desc())
+             .first())
+    if not rec:
+        raise HTTPException(status_code=404, detail="這張圖沒有留下生成資訊（可能存於本功能上線前）")
+    return rec
+
+
+def _nth_ai_image(existing: list[str], index: int) -> str:
+    if index < 0 or index >= len(existing):
+        raise HTTPException(status_code=404, detail="AI 圖不存在")
+    return existing[index]
 
 
 @router.get("/characters/default-project")
@@ -237,6 +271,7 @@ async def save_ai_image(
     character_id: int,
     file: Annotated[UploadFile, File(...)],
     db: DbDep,
+    history_id: Annotated[Optional[int], Form()] = None,
 ):
     character = db.get(Character, character_id)
     if not character:
@@ -253,6 +288,7 @@ async def save_ai_image(
         shutil.copyfileobj(file.file, f)
 
     character.ai_generated_images = [*existing, filename]
+    _bind_history_to_file(db, history_id, filename)
     db.commit()
     db.refresh(character)
     return character
@@ -289,6 +325,17 @@ def get_ai_image(character_id: int, index: int, db: DbDep):
     if not path.exists():
         raise HTTPException(status_code=404, detail="AI 圖檔案不存在")
     return FileResponse(str(path))
+
+
+@router.get("/characters/{character_id}/ai-images/{index}/generation-info",
+            response_model=GenerationHistoryResponse)
+def get_ai_image_generation_info(character_id: int, index: int, db: DbDep):
+    """已存 AI 人設圖 → 當初的 prompt / seed / 參數 / 耗時。"""
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    filename = _nth_ai_image(list(character.ai_generated_images or []), index)
+    return _history_for_file(db, filename)
 
 
 # ── Variant text-field CRUD ───────────────────────────────────────────────────
@@ -405,6 +452,7 @@ def get_variant_concept_image(character_id: int, slot: int, index: int, db: DbDe
 async def save_variant_ai_image(
     character_id: int, slot: int,
     file: Annotated[UploadFile, File(...)], db: DbDep,
+    history_id: Annotated[Optional[int], Form()] = None,
 ):
     character = db.get(Character, character_id)
     if not character:
@@ -425,6 +473,7 @@ async def save_variant_ai_image(
     variants[idx]["ai_generated_images"] = [*existing, filename]
     character.variants = variants
     flag_modified(character, 'variants')
+    _bind_history_to_file(db, history_id, filename)
     db.commit()
     db.refresh(character)
     return character
@@ -462,6 +511,17 @@ def get_variant_ai_image(character_id: int, slot: int, index: int, db: DbDep):
     if not path.exists():
         raise HTTPException(status_code=404, detail="AI 圖檔案不存在")
     return FileResponse(str(path))
+
+
+@router.get("/characters/{character_id}/variants/{slot}/ai-images/{index}/generation-info",
+            response_model=GenerationHistoryResponse)
+def get_variant_ai_image_generation_info(character_id: int, slot: int, index: int, db: DbDep):
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    idx = _slot_index(slot)
+    existing = list((_get_variants(character)[idx].get("ai_generated_images")) or [])
+    return _history_for_file(db, _nth_ai_image(existing, index))
 
 
 # ── Variant summarize ─────────────────────────────────────────────────────────

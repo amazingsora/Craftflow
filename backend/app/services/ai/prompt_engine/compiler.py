@@ -85,7 +85,40 @@ _RIGHT_EYE_RE = re.compile(rf'右眼(?:為|是|呈)?({_COLOR_ALT_RE.pattern})')
 # S6（2026-07-12）：方向瞳色 tag（"golden eye (left)" / "blue eye (right)"）。A5 原版只清
 # heterochromia/odd eyes，漏掉 LLM 幻覺出的方向眼色（本輪 golden eye (left) 實證漏網 →
 # 生成圖一藍一金）。無異色瞳來源時連同這類 tag 一併清除。
+#
+# 2026-08-05 S6' 根因翻案：`{color} eye (left)` 這個格式**本身就是壞的**，不只是幻覺才要清。
+# ComfyUI 的 CLIPTextEncode 走 A1111 風格權重語法，`(left)` 會被解析成「emphasis 群組」
+# → 實際送進 conditioning 的是 `red eye` + 加權 1.1 的孤立 token `left`：
+#   (a) 顏色↔左右的綁定完全消失（模型只看到兩個顏色 + 兩個沒有歸屬的方向詞）；
+#   (b) `left`/`right` 被加權後污染整體構圖（會影響手/姿勢的左右）；
+#   (c) 單數 `red eye` 不是 danbooru tag（danbooru 用複數 `red eyes`），訓練分佈稀薄，
+#       容易被鄰近的常見眼色蓋掉（實證：green eye → 出圖藍眼）。
+# 故改為輸出 danbooru 標準複數 tag `heterochromia, red eyes, green eyes`。
+# 代價：左右指定能力放棄——但它原本就沒有真的生效（見上），現在只是不再假裝有。
+# 左右控制屬未解項，需另循 FaceDetailer 分眼 prompt 或後製，見開發清單。
 _DIRECTIONAL_EYE_RE = re.compile(r'\beye\s*\((?:left|right)\)', re.IGNORECASE)
+# 把 LLM 仍可能吐出的舊格式 `{color} eye (left/right)` 就地轉成複數色 tag。
+_DIRECTIONAL_EYE_CAPTURE_RE = re.compile(r'\b([a-z]+)\s+eye\s*\((?:left|right)\)', re.IGNORECASE)
+
+
+def _normalize_directional_eye_tags(tags: list[str]) -> list[str]:
+    """把 `{color} eye (left/right)` 就地換成 danbooru 複數 `{color} eyes`，並去重。
+
+    LLM 受舊 few-shot 影響或自行幻覺時仍會產出括號格式；在此統一收斂，避免壞語法
+    流進 CLIPTextEncode（見 _DIRECTIONAL_EYE_RE 上方說明）。
+    """
+    out: list[str] = []
+    seen = {t.lower().strip("() ") for t in tags if not _DIRECTIONAL_EYE_RE.search(t)}
+    for t in tags:
+        m = _DIRECTIONAL_EYE_CAPTURE_RE.search(t)
+        if not m:
+            out.append(t)
+            continue
+        plural = f"{m.group(1).lower()} eyes"
+        if plural not in seen:
+            seen.add(plural)
+            out.append(plural)
+    return out
 
 
 def _inject_heterochromia(tags: list[str], text: str, anchor_source: str = "") -> list[str]:
@@ -103,21 +136,26 @@ def _inject_heterochromia(tags: list[str], text: str, anchor_source: str = "") -
     if "heterochromia" not in tag_lowers:
         to_prepend.append("heterochromia")
 
-    for side, side_re in (("left", _LEFT_EYE_RE), ("right", _RIGHT_EYE_RE)):
+    # 2026-08-05 S6'：輸出 danbooru 標準複數 tag，不再用 `{color} eye (left)` 括號格式
+    # （會被 CLIPTextEncode 當權重群組解析，綁定失效＋方向詞污染構圖，詳見上方註解）。
+    wanted: list[str] = []
+    for side_re in (_LEFT_EYE_RE, _RIGHT_EYE_RE):
         m = side_re.search(combined)
         if m:
             eng = lexicon.COLOR_MAP.get(m.group(1))
-            if eng:
-                tag = f"{eng} eye ({side})"
-                # 比對需與 tag_lowers 同樣正規化（去括號/空白），否則帶括號的 tag 永遠
-                # 判定為「不存在」→ 重複注入（眼睛標籤出現兩份的根因）。
-                if tag.lower().strip("() ") not in tag_lowers:
-                    to_prepend.append(tag)
+            if eng and f"{eng} eyes" not in wanted:
+                wanted.append(f"{eng} eyes")
 
-    # Remove any single-color eye tag that would conflict (e.g. LLM picked one color)
-    if to_prepend:
+    if wanted:
+        # 先清掉所有既有眼色 tag（含 LLM 只挑一色、或挑錯色的情況），再放上權威版本，
+        # 避免「兩個來源各給一色」導致三色以上互相稀釋。
         eye_color_tags = {f"{c} eyes" for c in lexicon.COLOR_MAP.values()}
-        tags = [t for t in tags if t.lower().strip("() ") not in eye_color_tags]
+        tags = [
+            t for t in tags
+            if t.lower().strip("() ") not in eye_color_tags
+            and not _DIRECTIONAL_EYE_RE.search(t)
+        ]
+        to_prepend.extend(wanted)
 
     return to_prepend + tags
 
@@ -334,6 +372,9 @@ def compile(
                 and not _DIRECTIONAL_EYE_RE.search(t)
             ]
         cleaned_tags = _inject_heterochromia(cleaned_tags, text, anchor_source=anchor_text)
+        # S6'（2026-08-05）：無論有無異色瞳來源，最後統一收斂殘留的括號格式眼色 tag
+        # （LLM 可能對非異色瞳角色也吐出 "blue eye (left)"），確保不留壞語法給 CLIP。
+        cleaned_tags = _normalize_directional_eye_tags(cleaned_tags)
 
         # ── [停用] Group B Anchor 系統（抽髮/眼色→清衝突→重排並 :1.1 加權，強制覆蓋模型）──
         # 還原：取消下列三段註解，並改回 final_body = _reorder_tags(cleaned_tags, anchors)。
