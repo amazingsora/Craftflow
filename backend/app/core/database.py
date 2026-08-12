@@ -54,6 +54,23 @@ def _migrate() -> None:
     _add_columns("chapters", [
         ("volume_id", "INTEGER"),
     ])
+    # 2026-07-26：已存圖 ↔ 生成資訊關聯（見 models/generation_history.saved_filename）
+    _add_columns("generation_history", [
+        ("saved_filename", "VARCHAR(200)"),
+    ])
+    # ALTER TABLE 不會補建 model 上宣告的 index（只有 create_all 會），舊庫需自行建。
+    _add_index("ix_generation_history_saved_filename", "generation_history", "saved_filename")
+
+
+def _add_index(index_name: str, table: str, column: str) -> None:
+    """為既有資料表補建索引（create_all 只對新建的表生效）。表不存在時靜默略過。"""
+    with engine.connect() as conn:
+        if not list(conn.execute(text(f"PRAGMA table_info({table})"))):
+            return
+        conn.execute(text(
+            f"CREATE INDEX IF NOT EXISTS {index_name} ON {table} ({column})"
+        ))
+        conn.commit()
 
 
 def _add_columns(table: str, columns: list[tuple[str, str]]) -> None:

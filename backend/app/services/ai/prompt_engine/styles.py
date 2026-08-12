@@ -29,6 +29,10 @@ class PromptStyle(str, Enum):
     NOOBAI      = "noobai"
     ILLUSTRIOUS = "illustrious"
     ANYTHINGXL  = "anythingxl"
+    # 2026-07-25 (AC-1)：Anima（Cosmos-Predict2-2B 衍生，非 SDXL 架構）。
+    # 必須與 workflow_builder._detect_style 的 UNETLoader fallback 同批上線——
+    # 先補 fallback 而未補此 enum 時，PromptStyle("anima") 會拋 ValueError。
+    ANIMA       = "anima"
 
 
 class StyleConfig(BaseModel):
@@ -73,6 +77,15 @@ _QUALITY_TAGS_ILLUSTRIOUS = {
     "ultra detailed", "highly detailed",
 }
 
+# Anima 蒼白 tag 待用清單（2026-07-23 決策③：**不進 banned_tags**，僅記錄）。
+# 這組去飽和 tag 是 Anima 出圖「洗白／蒼白空靈」的主因（非 FP8，見 07-23 開發清單 §一）。
+# 使用者要蒼白風時仍可手動帶入，故不封鎖。觸發條件：日後洗白復發，才考慮併入 banned
+# 或改為 UI 警示。此常數目前未被引用，屬刻意保留的文件化清單。
+_PALE_TAGS_ANIMA_WATCHLIST = {
+    "pale skin", "fair skin", "pale color", "pastel colors", "limited palette",
+    "blue theme", "white theme", "yellow theme",
+}
+
 _YEAR_TAGS = {"newest", "recent", "mid", "early", "old"}
 _RATING_TAGS_ANYTHINGXL = set()
 
@@ -115,7 +128,7 @@ _DANBOORU_COMMON_RULES = f"""- FORMAT: Output ONLY comma-separated tags. NO key-
 - NO-GO: No "Output:" prefix, No "Tags:" prefix, No explanations, No capital letters.
 - CONFLICT: "外貌與個性" (Priority Traits) and "服裝設定" (Outfit Setting) ALWAYS override "視覺參考特徵" (Visual Traits). (a) If Visual says "pink jacket" but Outfit Setting says "grey combat suit", output ONLY the Outfit Setting outfit — discard the Visual outfit entirely. (b) If Visual says "purple eyes" but Priority Traits says "brown hair" / "異色瞳", use Priority Traits only.
 - MODIFIERS: Pay extreme attention to hair length and style modifiers. "短雙馬尾" = "short hair, short twin tails" or "short hair, short ponytail".
-- HETEROCHROMIA: If "異色瞳" is present, always output "heterochromia" plus each eye's color with direction. Example: 左眼紅右眼綠 → heterochromia, red eye (left), green eye (right).
+- HETEROCHROMIA: If "異色瞳" is present, output "heterochromia" plus BOTH eye colors as PLURAL danbooru tags. Example: 左眼紅右眼綠 → heterochromia, red eyes, green eyes. NEVER write a side in parentheses (no "red eye (left)") — parentheses are weight syntax and corrupt the prompt.
 - PASSTHROUGH: English tags already present in the input MUST be copied to the output verbatim, unchanged.
 - STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
 - QUALITY: Do NOT add quality tags (e.g., masterpiece, best quality). They are handled elsewhere.
@@ -142,7 +155,7 @@ Input: 銀髮紫瞳的魔法師少年
 Output: 1boy, solo, silver hair, purple eyes, mage, magic, robe, serious expression
 
 Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮
-Output: 1girl, solo, heterochromia, red eye (left), green eye (right), brown hair, short hair
+Output: 1girl, solo, heterochromia, red eyes, green eyes, brown hair, short hair
 
 [INPUT]
 {{prompt}}
@@ -226,7 +239,7 @@ Input: 一個女孩右手拿傘
 Output: 1girl, solo, holding umbrella, right hand, standing, outdoors, source_anime
 
 Input: 左眼為紅色，右眼為綠色的異色瞳女孩
-Output: 1girl, solo, heterochromia, red eye (left), green eye (right), looking at viewer, source_anime
+Output: 1girl, solo, heterochromia, red eyes, green eyes, looking at viewer, source_anime
 
 [INPUT]
 {{prompt}}
@@ -246,7 +259,36 @@ Input: 白色長捲髮，金色眼睛，天使氣質的少女
 Output: 1girl, solo, white hair, long hair, curly hair, golden eyes, angel, angelic, gentle expression
 
 Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮，灰色戰鬥服
-Output: 1girl, solo, heterochromia, red eye (left), green eye (right), brown hair, short hair, grey combat suit, tactical vest
+Output: 1girl, solo, heterochromia, red eyes, green eyes, brown hair, short hair, grey combat suit, tactical vest
+
+Input: 銀髮紫瞳的魔法師少年
+Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
+
+[INPUT]
+{{prompt}}
+
+[RESULT]"""
+
+
+_ANIMA_TEMPLATE = f"""[TASK]
+Convert Chinese descriptions into anime danbooru tags for Anima (Cosmos-Predict2 based).
+
+[CRITICAL RULES]
+- VOCABULARY: Use standard danbooru anime tags. Anima is trained on danbooru-style captions.
+- ANTI-LEAK: Translate ONLY what the input states. NEVER copy vocabulary, props, or settings
+  from the EXAMPLES below into your output unless the input itself mentions them.
+- NO-PALE: Do NOT add desaturating tags (pale skin, fair skin, pastel colors, limited palette,
+  or any colour-theme tag such as blue theme / white theme / yellow theme). They wash the image
+  out. Only keep them if the input explicitly asks for that look.
+- NO-SAFETY: Do NOT add rating tags (safe, sensitive, questionable, explicit). Handled elsewhere.
+{_DANBOORU_COMMON_RULES}
+
+[EXAMPLES]
+Input: 藍色長髮雙馬尾，藍色眼睛的少女，微笑
+Output: 1girl, solo, blue hair, long hair, twintails, blue eyes, smile, closed mouth, looking at viewer
+
+Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮，灰色戰鬥服
+Output: 1girl, solo, heterochromia, red eyes, green eyes, brown hair, short hair, grey combat suit, tactical vest
 
 Input: 銀髮紫瞳的魔法師少年
 Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
@@ -305,6 +347,24 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
         ),
         banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_ILLUSTRIOUS | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
         llm_template=_ILLUSTRIOUS_TEMPLATE,
+    ),
+    # Anima family（2026-07-25 AC-1）。配方來源：doc/2026-07-23 開發清單 §4.3「定案配方」，
+    # 由附件二（＝A3）實測基準拆解而來，非 Anima 官方 prompt（官方那組是「蒼白空靈」美學，
+    # 追它會洗白，見 07-23 §一）。三項已拍板決策：
+    #   ① 不做 safety 分級 → quality_prefix 不含 safe/sensitive/explicit
+    #   ② 光影組（bokeh/depth of field/backlighting/light particles）不寫死 → 交由角色/場景 prompt
+    #   ③ 蒼白 tag 不擋 → 僅記錄於 _PALE_TAGS_ANIMA_WATCHLIST
+    PromptStyle.ANIMA: StyleConfig(
+        quality_prefix="masterpiece, best quality, absurdres, ultra detailed, high contrast",
+        # 前段為通用品質負向；後段 overexposed…pale 為 **Anima 專屬對比項**——
+        # 07-22 實測：缺這段時 Anima 出圖必偏白、低對比（官方負向與 07-20 規劃皆無此段）。
+        negative=(
+            "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, "
+            "jpeg artifacts, bad anatomy, watermark, artist name, "
+            "overexposed, washed out, faded, low contrast, blown out highlights, pale"
+        ),
+        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
+        llm_template=_ANIMA_TEMPLATE,
     ),
     PromptStyle.ANYTHINGXL: StyleConfig(
         quality_prefix="newest, masterpiece, best quality",

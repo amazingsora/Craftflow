@@ -6,6 +6,7 @@ import { request, apiDelete, apiUrl } from '../api/client'
 import { S } from './characterTabStyles.js'
 import { Spinner, ImageLightbox, GenderPicker, DeleteConfirm } from './characterTabParts.jsx'
 import { apiFetch } from './characterTabShared.js'
+import { GenerationInfo } from './GenerationInfo.jsx'
 
 
 const DEFAULT_TAB_NAMES = ['主版本', 'Tab 2', 'Tab 3']
@@ -65,6 +66,24 @@ function _initVariant(v = {}, charId = null, slot = null) {
 export function CharacterDetailView({ character: initChar, project, allFactions, onBack, onDeleted, onAddHistory, onSendToGenerate, capability = { ipa_supported: true, cn_supported: true } }) {
   const ipaSupported = capability.ipa_supported
   const cnSupported  = capability.cn_supported
+  // D'（2026-07-25）能力閘控可視化：
+  //   cnFallback = 家族不支援 CN 但有替代路徑（Anima → 'img2img'）。
+  //   cnUsable   = 控制項是否可操作 —— 有替代路徑時仍要能勾選，否則送出 use_controlnet=0，
+  //                後端的 cn_fallback 分支永遠進不去（替代方案等於死代碼）。
+  const cnFallback = capability.cn_fallback || null
+  const cnUsable   = cnSupported || !!cnFallback
+  const cnLabel    = cnSupported ? 'ControlNet' : '構圖引導 (img2img)'
+  const cnHint     = cnSupported ? '' : 'Anima 不支援 ControlNet，已自動改用 img2img 低重繪貼合草圖構圖。'
+  const ipaHint    = 'Anima 無對應 IP-Adapter；改用「視覺特徵」把參考圖轉成文字特徵帶入提示詞。'
+
+  const capChip = (label, title) => (
+    <span title={title}
+      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--muted)',
+               cursor: 'not-allowed', userSelect: 'none', opacity: 0.65 }}>
+      <input type="checkbox" checked={false} disabled readOnly style={{ cursor: 'not-allowed' }} />
+      {label}
+    </span>
+  )
 
   const [char, setChar] = useState(initChar)
   const [charName, setCharName] = useState(initChar.name)
@@ -234,7 +253,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         use_vision: visionEnabled ? '1' : '0',
         use_ipa: (ipaSupported && ipaEnabled) ? '1' : '0',
         ipa_weight: String(ipaWeight),
-        use_controlnet: (cnSupported && cnEnabled) ? '1' : '0',
+        use_controlnet: (cnUsable && cnEnabled) ? '1' : '0',
         cn_weight: String(cnWeight),
       })
       const resp = await request(`/characters/${char.id}/generate-design?${params}`, { method: 'POST' })
@@ -286,9 +305,13 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
-      setPendingQueue([{ blob, url, label: '全身人設圖' }])
+      // 2026-07-26：X-History-Id 一路帶到「儲存此圖」，後端才能把 generation_history
+      // 綁到成品檔名，之後點已存的圖就能查回當初的 prompt/參數/耗時。
+      const historyId = resp.headers.get('X-History-Id') || null
+      setPendingQueue([{ blob, url, label: '全身人設圖', historyId }])
       onAddHistory?.({
         type: 'character', url, filename: `${char.name}_design_${Date.now()}.png`, label: `${char.name} 人設圖`,
+        historyId,
         model: resp.headers.get('X-Style') || null,
         params: {
           ipa: ipaEnabled ? Number(ipaWeight) : null,
@@ -306,6 +329,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
     const item = pendingQueue[0]
     const fd = new FormData()
     fd.append('file', item.blob, `${char.name}_${item.expression ?? 'design'}.png`)
+    if (item.historyId) fd.append('history_id', item.historyId)
     try {
       const updated = await apiFetch(`/characters/${char.id}/ai-images`, { method: 'POST', body: fd })
       setChar(updated)
@@ -460,7 +484,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         use_vision: (vState.visionEnabled ?? true) ? '1' : '0',
         use_ipa: (ipaSupported && vState.ipaEnabled) ? '1' : '0',
         ipa_weight: String(vState.ipaWeight ?? 0.6),
-        use_controlnet: (cnSupported && (vState.cnEnabled ?? true)) ? '1' : '0',
+        use_controlnet: (cnUsable && (vState.cnEnabled ?? true)) ? '1' : '0',
         cn_weight: String(vState.cnWeight ?? 0.85),
       })
       const resp = await request(`/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
@@ -496,10 +520,11 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         lastIpaUsed: ipaUsed,
         lastPromptProfile: promptProfile,
         lastCoverage: coverage,
-        pendingQueue: [{ blob, url, label: '全身人設圖' }],
+        pendingQueue: [{ blob, url, label: '全身人設圖', historyId: resp.headers.get('X-History-Id') || null }],
       })
       onAddHistory?.({
         type: 'character', url, filename: `${char.name}_v${slot}_design_${Date.now()}.png`, label: `${char.name} 人設圖（Tab ${slot}）`,
+        historyId: resp.headers.get('X-History-Id') || null,
         model: resp.headers.get('X-Style') || null,
         params: {
           ipa: vState.ipaEnabled ? Number(vState.ipaWeight ?? 0.6) : null,
@@ -518,6 +543,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
     setV(slot, { savingGen: true })
     const fd = new FormData()
     fd.append('file', item.blob, `${char.name}_v${slot}_design.png`)
+    if (item.historyId) fd.append('history_id', item.historyId)
     try {
       const updated = await apiFetch(`/characters/${char.id}/variants/${slot}/ai-images`, { method: 'POST', body: fd })
       const serverVar = (updated.variants || [])[slot - 1] || {}
@@ -661,21 +687,21 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
           {/* AI 人設圖 */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (ipaSupported && ipaEnabled) || (cnSupported && cnEnabled) ? 8 : 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (ipaSupported && ipaEnabled) || (cnUsable && cnEnabled) ? 8 : 6 }}>
               <span style={S.sectionLabel}>AI 人設圖（{aiImages.length}/8）</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {ipaSupported && (
+                {ipaSupported ? (
                   <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
                     <input type="checkbox" checked={ipaEnabled} onChange={e => { setIpaEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'ipaEnabled', e.target.checked) }}
                       style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
                     概念圖參考
                   </label>
-                )}
-                {cnSupported && (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: cnEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                ) : capChip('概念圖參考（不支援）', ipaHint)}
+                {cnUsable && (
+                  <label title={cnHint} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: cnEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
                     <input type="checkbox" checked={cnEnabled} onChange={e => { setCnEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'cnEnabled', e.target.checked) }}
                       style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                    ControlNet
+                    {cnLabel}
                   </label>
                 )}
                 <button style={S.btnSm} disabled={generating} onClick={generateDesignImage}>
@@ -694,7 +720,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                 <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{ipaWeight.toFixed(2)}</span>
               </div>
             )}
-            {cnSupported && cnEnabled && (
+            {cnUsable && cnEnabled && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>CN 強度</span>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
@@ -804,6 +830,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                         : <button style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px' }} onClick={() => setDeletingAiIdx(idx)}>移除</button>
                       }
                     </div>
+                    <GenerationInfo fetchPath={`/characters/${char.id}/ai-images/${idx}/generation-info`} />
                   </div>
                 ))}
               </div>
@@ -1173,21 +1200,21 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
           {/* Variant AI images */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (ipaSupported && vState.ipaEnabled) || (cnSupported && (vState.cnEnabled ?? true)) ? 8 : 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (ipaSupported && vState.ipaEnabled) || (cnUsable && (vState.cnEnabled ?? true)) ? 8 : 6 }}>
               <span style={S.sectionLabel}>AI 人設圖（{vState.aiImages.length}/8）</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {ipaSupported && (
+                {ipaSupported ? (
                   <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: vState.ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
                     <input type="checkbox" checked={vState.ipaEnabled} onChange={e => { setV(activeTab, { ipaEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'ipaEnabled', e.target.checked) }}
                       style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
                     概念圖參考
                   </label>
-                )}
-                {cnSupported && (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: (vState.cnEnabled ?? true) ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                ) : capChip('概念圖參考（不支援）', ipaHint)}
+                {cnUsable && (
+                  <label title={cnHint} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: (vState.cnEnabled ?? true) ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
                     <input type="checkbox" checked={vState.cnEnabled ?? true} onChange={e => { setV(activeTab, { cnEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'cnEnabled', e.target.checked) }}
                       style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                    ControlNet
+                    {cnLabel}
                   </label>
                 )}
                 <button style={S.btnSm} disabled={vState.generating} onClick={generateVariantDesignImage}>
@@ -1206,7 +1233,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                 <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.ipaWeight ?? 0.6).toFixed(2)}</span>
               </div>
             )}
-            {cnSupported && (vState.cnEnabled ?? true) && (
+            {cnUsable && (vState.cnEnabled ?? true) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>CN 強度</span>
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
@@ -1292,6 +1319,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                         : <button style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px' }} onClick={() => setV(activeTab, { deletingAiIdx: idx })}>移除</button>
                       }
                     </div>
+                    <GenerationInfo fetchPath={`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}/generation-info`} />
                   </div>
                 ))}
               </div>

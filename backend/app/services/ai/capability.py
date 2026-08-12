@@ -46,6 +46,60 @@ INJECT_MODELS: dict[str, dict[str, str]] = {
 }
 
 
+# ── Checkpoint 解析（單一真相，2026-07-25 AC-2'）─────────────────────────────
+# Anima 等 diffusion-model 工作流無 CheckpointLoaderSimple，模型名在 UNETLoader.unet_name。
+# 過去 gen_profile 已補此 fallback，但 workflow_builder._detect_style 與本模組的 caller
+# （api/settings.py、api/art_generate.py）未補 → 同一工作流被解析成兩種 family：
+# 生成端 anima（正確閘控），UI 端 sdxl（謊報 cn_supported=True）。集中於此避免再分歧。
+_UNET_LOADER_TYPES = ("UNETLoader", "UnetLoaderGGUF", "UNETLoaderGGUF")
+
+
+def extract_checkpoint_from_wf(wf: dict) -> str:
+    """從 workflow dict 取出模型檔名。純函式，無 I/O。
+
+    優先序：CheckpointLoaderSimple.ckpt_name → UNETLoader 系 .unet_name → ""。
+    回 "" 表示此工作流未內嵌模型名，呼叫端應退回全域 checkpoint。
+    """
+    if not isinstance(wf, dict):
+        return ""
+    ckpt = next(
+        (n["inputs"].get("ckpt_name", "") for n in wf.values()
+         if isinstance(n, dict) and n.get("class_type") == "CheckpointLoaderSimple"
+         and isinstance(n.get("inputs"), dict)),
+        "",
+    ) or ""
+    if ckpt:
+        return ckpt
+    return next(
+        (n["inputs"].get("unet_name", "") for n in wf.values()
+         if isinstance(n, dict) and n.get("class_type") in _UNET_LOADER_TYPES
+         and isinstance(n.get("inputs"), dict)),
+        "",
+    ) or ""
+
+
+def resolve_checkpoint_for_workflow(workflow_name: str) -> str:
+    """工作流名 → 實際生效的模型檔名（內嵌優先，讀不到才退回全域 checkpoint）。
+
+    custom workflow 的模型內嵌於 JSON（不被全域覆寫），是實際生成所用，故以內嵌值為準。
+    任何錯誤 → 退回全域 checkpoint，不讓呼叫端 crash。
+    """
+    wf: dict = {}
+    try:
+        from app.services.ai.workflow_builder import _load_workflow
+        wf = _load_workflow(workflow_name)
+    except Exception as e:
+        logger.warning("[capability] 讀工作流 '%s' 失敗（%s），改用全域 checkpoint", workflow_name, e)
+    ckpt = extract_checkpoint_from_wf(wf)
+    if ckpt:
+        return ckpt
+    try:
+        from app.core import state
+        return state.get_checkpoint() or ""
+    except Exception:
+        return ""
+
+
 def _load_families() -> dict[str, str]:
     """Load checkpoint-pattern → family from checkpoint_styles.yml `families` section."""
     try:
@@ -100,9 +154,21 @@ def resolve_capability(wf: dict, checkpoint_name: str) -> dict:
     ipa_supported = _wf_has_ipa(wf) or (models is not None and "ipa_adapter" in models)
     cn_supported = _wf_has_controlnet(wf) or (models is not None and "cn_model" in models)
 
+    # D'-2（2026-07-25）：家族不支援 CN 但有替代路徑時一併回報，前端才能保留控制項
+    # （Anima → "img2img"）。若不回報，前端會因 cn_supported=False 送出 use_controlnet=0，
+    # 後端的 cn_fallback 分支就永遠進不去。lazy import 避免與 gen_profile 循環相依。
+    cn_fallback = None
+    if not cn_supported:
+        try:
+            from app.services.ai.gen_profile import get_profile
+            cn_fallback = get_profile(family).cn_fallback
+        except Exception as e:
+            logger.debug("[capability] cn_fallback 解析略過：%s", e)
+
     return {
         "ipa_supported": ipa_supported,
         "cn_supported":  cn_supported,
+        "cn_fallback":   cn_fallback,
         "family":        family,
         "models":        models,
     }

@@ -66,6 +66,30 @@ def test_anima_profile_disables_ipa_and_cn():
     assert p.steps is None  # KSampler 由內部節點鏈驅動，後端不覆寫
 
 
+def test_anima_img2img_denoise_maps_full_slider_without_dead_zone():
+    """2026-08-05：img2img 換算改為滑桿全域線性映射（原 `1 - w*scale` 兩端撞 clamp → 死區）。
+
+    要求：
+      (1) 端點錨定 —— 滑桿底/頂剛好對到 denoise 上/下限，語義明確；
+      (2) 全段嚴格單調遞減，任兩相鄰滑桿刻度（step=0.05）算出的值都不相同 = 零死區；
+      (3) 值域恆落在 [min, max]，定義域外的輸入被夾住不外溢。
+    """
+    p = gp.get_profile("anima")
+    assert p.img2img_denoise_min == 0.20
+    assert p.img2img_denoise_max == 0.85
+    # (1) 端點錨定
+    assert p.img2img_denoise(gp.CN_WEIGHT_SLIDER_MIN) == p.img2img_denoise_max
+    assert p.img2img_denoise(gp.CN_WEIGHT_SLIDER_MAX) == p.img2img_denoise_min
+    # (2) 零死區：滑桿 0.10~1.50 每 0.05 一格，共 29 格，算出 29 個相異值
+    steps = [round(gp.CN_WEIGHT_SLIDER_MIN + i * 0.05, 2) for i in range(29)]
+    values = [p.img2img_denoise(w) for w in steps]
+    assert len(set(values)) == len(values), "出現死區：相鄰滑桿刻度算出相同 denoise"
+    assert all(a > b for a, b in zip(values, values[1:])), "非嚴格單調遞減"
+    # (3) 定義域外夾制
+    assert p.img2img_denoise(0.0) == p.img2img_denoise_max
+    assert p.img2img_denoise(9.9) == p.img2img_denoise_min
+
+
 def test_resolve_profile_reads_unet_loader_for_anima(monkeypatch):
     """Anima 工作流無 CheckpointLoaderSimple，須改讀 UNETLoader.unet_name → 解析到 anima family。"""
     wf = {"1": {"class_type": "UNETLoader",

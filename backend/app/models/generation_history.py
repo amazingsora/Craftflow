@@ -27,4 +27,7 @@ class GenerationHistory(Base):
     positive: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     negative: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=dict)
+    # 2026-07-26：使用者按「儲存此圖」後，把成品檔名回填到這裡，讓「已存的圖 → 生成
+    # 資訊」可反查。nullable：未被保存的生成（試了不滿意就丟）仍是有效歷史，不強制有值。
+    saved_filename: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

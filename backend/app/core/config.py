@@ -46,6 +46,10 @@ BACKUP_INTERVAL_HOURS = float(os.getenv("BACKUP_INTERVAL_HOURS", "24"))  # 0 = �
 VRAM_COEXIST_ENABLED: bool = os.getenv("VRAM_COEXIST_ENABLED", "true").lower() == "true"
 COMFYUI_REQUIRED_VRAM_GB = float(os.getenv("COMFYUI_REQUIRED_VRAM_GB", "8"))   # SDXL fp16 + CLIP/VAE
 OLLAMA_REQUIRED_VRAM_GB = float(os.getenv("OLLAMA_REQUIRED_VRAM_GB", "7"))     # 7B Q4/Q8 vision/text
+# 2026-07-27：checkpoint 已駐留時的 free 下限。舊版在 reserved≥4G 時「無視 free」直接
+# 判定可共存，實測 free=0.1G 仍放行 → ComfyUI 溢出到系統 RAM，40s 的工作變 >300s timeout。
+# 這是「增量需求」門檻：CN/preprocessor/latent/activations 仍要空間，不是零。
+COMFYUI_RESIDENT_MIN_FREE_GB = float(os.getenv("COMFYUI_RESIDENT_MIN_FREE_GB", "6"))
 
 # ── Personal Style Preset（個人風格預設，.env 啟用 / git 預設關閉）────────────
 # PERSONAL_STYLE_ENABLED=true  → 角色生圖時附加 PERSONAL_STYLE_EXTRA_TAGS

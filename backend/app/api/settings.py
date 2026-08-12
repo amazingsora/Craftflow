@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from app.core.config import COMFYUI_BASE, OLLAMA_BASE, CUSTOM_WORKFLOWS_DIR, DEFAULT_VISION_MODEL, DEFAULT_TEXT_MODEL
 from app.core import state
 from app.services.ai.wf_node_ops import _wf_has_controlnet
-from app.services.ai.capability import resolve_capability
+from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
 
 _CUSTOM_DIR = CUSTOM_WORKFLOWS_DIR
 _SYSTEM_DIR = Path("/app/tools/Craftflow/diffusion/workflows")
@@ -141,13 +141,20 @@ def get_capabilities():
     回傳目前生效的 checkpoint + workflow 能力組合。
     前端切換 checkpoint / workflow / 生成模式後應重抓此端點。
     """
-    ckpt = state.get_checkpoint()
+    # 2026-07-25 AC-2'：改讀「工作流實際生效的模型」而非全域 checkpoint。
+    # 舊寫法在 Anima 工作流下會拿到全域 SDXL checkpoint → family 誤判 sdxl →
+    # 回報 cn_supported/ipa_supported=True，但生成端 gen_profile 解析為 anima 並閘掉
+    # → UI 顯示可用、後端靜默丟棄（使用者回報「CN 沒有效果」的根因）。
     wf_name = state.get_workflow()
+    ckpt = resolve_checkpoint_for_workflow(wf_name)
     wf_dict = _wf_load_dict(wf_name)
     cap = resolve_capability(wf_dict, ckpt)
     return {
         "ipa_supported": cap["ipa_supported"],
         "cn_supported":  cap["cn_supported"],
+        # D'-2：CN 不支援但有替代路徑時回傳其名稱（目前僅 "img2img"，Anima 用）。
+        # 前端據此保留「草圖引導」控制項並改標示，而非隱藏。
+        "cn_fallback":   cap.get("cn_fallback"),
         "family":        cap["family"],
     }
 

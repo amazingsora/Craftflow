@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import CapabilityNotice from './CapabilityNotice'
 
 const S = {
   root: { display: 'flex', gap: 24, alignItems: 'flex-start' },
@@ -131,6 +132,9 @@ const PLACEHOLDER_QUESTIONS = [
 export default function ComposeTab({ onAddHistory, activeVisionModel, capability = { ipa_supported: true, cn_supported: true }, onSendToGenerate }) {
   const ipaSupported = capability.ipa_supported
   const cnSupported  = capability.cn_supported
+  // D'（2026-07-25）：cnFallback 有值（Anima → 'img2img'）時控制項仍可用，只是換一條路實作。
+  const cnFallback = capability.cn_fallback || null
+  const cnUsable   = cnSupported || !!cnFallback
 
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
@@ -203,7 +207,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
         body.append('use_sketch_as_ref', 'true')
         body.append('ipa_weight', String(ipaWeight))
       }
-      if (cnSupported && cnEnabled) {
+      if (cnUsable && cnEnabled) {
         body.append('use_cn', 'true')
         body.append('cn_weight', String(cnWeight))
       }
@@ -273,7 +277,10 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
           onChange={(e) => handleFile(e.target.files[0])}
         />
 
-        {/* IP-Adapter 角色外觀參考：不支援時完全隱藏（非停用變灰） */}
+        {/* IP-Adapter 角色外觀參考。D'（2026-07-25）：不支援時不再隱藏，改顯示原因＋替代方案 */}
+        {!ipaSupported && (
+          <CapabilityNotice title="角色外觀參考" kind="ipa" family={capability.family} />
+        )}
         {ipaSupported && (
         <div style={{
           border: '1px solid var(--border)', borderRadius: 10,
@@ -315,14 +322,19 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
         </div>
         )}
 
-        {/* ControlNet 草圖引導：不支援時完全隱藏 */}
-        {cnSupported && (
+        {/* 草圖引導。cnUsable 涵蓋「原生 CN」與「img2img 替代」；兩者皆無才顯示不支援卡片 */}
+        {!cnUsable && (
+          <CapabilityNotice title="草圖線稿引導" kind="cn" family={capability.family} fallback={cnFallback} />
+        )}
+        {cnUsable && (
         <div style={{
           border: '1px solid var(--border)', borderRadius: 10,
           padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10,
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>草圖線稿引導 (CN)</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+              {cnSupported ? '草圖線稿引導 (CN)' : '構圖引導 (img2img)'}
+            </span>
             <button
               style={{
                 fontSize: 12, padding: '3px 10px', borderRadius: 6,

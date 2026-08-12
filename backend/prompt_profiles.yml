@@ -14,14 +14,24 @@
 #
 # 未登錄的 workflow 檔名＝這份設定完全不介入，行為與新增本機制前一致（零回歸）。
 #
-# quality_suffix：附加在 compile() 組出的 body 之後（角色/畫風 tags 之前），用於未來
-# 需要「尾綴權重 tag」（如官方範例的 pixiv 尾綴 `(:0.6)`）的 workflow；V37 本輪未採用，留空。
+# quality_suffix：附加在 compile() 組出的 body 之後（角色/畫風 tags 之前），用於需要
+# 「尾綴權重 tag」（如官方範例的 pixiv 尾綴 `(:0.6)`）的 workflow。
+# 2026-07-26（G-2）：Standard_V37 已啟用，內容見下。
 
 profiles:
   Standard_V37.json:
     # 2026-07-12 實測三版對照（doc/2026-07-12_工作流提示詞優化規劃.md 表格）：
-    # C 官方簡化版，介於 A(官方權重版)/B(現行強化版) 之間、平衡最佳 → 暫定採用。
-    quality_prefix: "masterpiece, best quality, absurdres"
+    # C 官方簡化版，介於 A(官方權重版)/B(現行強化版) 之間、平衡最佳 → 曾暫定採用。
+    # G-1（2026-07-26）：對齊 V37 工作流內建 wildcard（node 3）與附件三 metadata 的
+    # 品質段——補 (newest:0.6) 與 very aesthetic，並改用權重群組語法。
+    # 權重語法安全性：compiler.compile 已對 override 做 _WEIGHT_GROUP_RE 展開後併入
+    # banned_tags（compiler.py:275-278），LLM 重複吐 highres/absurdres 仍會被剝除。
+    # 回滾：把下行換回 "masterpiece, best quality, absurdres" 即可，無程式相依。
+    quality_prefix: "masterpiece, best quality, (newest:0.6), (highres, absurdres, very aesthetic:0.8)"
+    # G-2（2026-07-26）：啟用尾綴美學段（機制早已實作，見 compiler.py:359-364）。
+    # ⚠️ 附件三原文含 "detailed background" —— **刻意拿掉**：人設圖需求為簡潔背景，
+    # 且與本 profile negative 的 "detailed background, scenery" 直接對衝。
+    quality_suffix: "(A highly aesthetic illustration, clean composition, high-quality digital art, sharp focus on facial expressions:0.6)"
     # negative：B 版（現行 illustrious 強化版 + 補強 worst detail/sketch/patreon/浮水印署名 +
     # 抑制 detailed background/scenery，人設圖 profile 禁用場景細節），實測優於官方短版。
     negative: >-
@@ -29,3 +39,15 @@ profiles:
       missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts,
       signature, watermark, username, text, blurry, cropped, extra limbs,
       worst detail, sketch, patreon, twitter username, detailed background, scenery
+
+  # ── AnimaStandardV7.json（2026-07-25 AC-3）────────────────────────────────
+  # **刻意不登錄任何覆寫欄位**，讓它落回 checkpoint family（PromptStyle.ANIMA，
+  # prompt_engine/styles.py）。理由：AC-1 已把 07-23 §4.3 定案配方寫進 family，
+  # 若在此再抄一份相同的 quality_prefix/negative，就成了兩份真相——日後調配方
+  # 必然只改一邊而不自知。workflow profile 只在「同家族不同工作流需要不同 prompt」
+  # 時才登錄（如 Standard_V37 之於 illustrious 家族）。
+  #
+  # 要為 AnimaStandardV7 單獨調 prompt 時，取消下面註解並只填要覆寫的欄位：
+  # AnimaStandardV7.json:
+  #   quality_prefix: "..."
+  #   negative: "..."
