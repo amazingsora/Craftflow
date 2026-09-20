@@ -95,9 +95,7 @@ def describe_illustration_bytes(
     prompt = load_prompt("art/describe_illustration")
     return ollama_client.analyze_image_bytes(image_bytes, prompt, model=model)
 
-# ==========================================
 # 舊接口相容轉接層 (Backward Compatibility)
-# ==========================================
 
 @dataclass
 class ArtAnalysisResult:

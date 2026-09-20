@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 
 class Chapter(Base):
+    """章節 — 小說正文。內容有變即寫一筆 ChapterRevision 快照（見 chapter_revision.py）。volume_id 可為 NULL（未分卷）。"""
+
     __tablename__ = "chapters"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

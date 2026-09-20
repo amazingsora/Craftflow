@@ -1,0 +1,801 @@
+{
+  "11": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)"
+    }
+  },
+  "15": {
+    "inputs": {
+      "model_name": "bbox/face_yolov9c.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "20": {
+    "inputs": {
+      "wildcard": "[CONCAT] {face|face,detailed face}",
+      "Select to add LoRA": "Select the LoRA to add to the text",
+      "Select to add Wildcard": "Select the Wildcard to add to the text",
+      "detailer_pipe": [
+        "29",
+        0
+      ],
+      "bbox_detector": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "EditDetailerPipe",
+    "_meta": {
+      "title": "Edit DetailerPipe"
+    }
+  },
+  "22": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "82",
+        0
+      ],
+      "input3": [
+        "103",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch Detailers Model"
+    }
+  },
+  "27": {
+    "inputs": {
+      "model_name": "bbox/face_yolov9c.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "Default DetectorProvider"
+    }
+  },
+  "29": {
+    "inputs": {
+      "wildcard": "",
+      "Select to add LoRA": "Select the LoRA to add to the text",
+      "Select to add Wildcard": "Select the Wildcard to add to the text",
+      "model": [
+        "63",
+        0
+      ],
+      "clip": [
+        "82",
+        1
+      ],
+      "vae": [
+        "95",
+        0
+      ],
+      "positive": [
+        "80",
+        0
+      ],
+      "negative": [
+        "106",
+        0
+      ],
+      "bbox_detector": [
+        "27",
+        0
+      ],
+      "sam_model_opt": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "ToDetailerPipe",
+    "_meta": {
+      "title": "ToDetailerPipe"
+    }
+  },
+  "33": {
+    "inputs": {
+      "guide_size": [
+        "68",
+        0
+      ],
+      "guide_size_for": true,
+      "max_size": [
+        "65",
+        0
+      ],
+      "seed": [
+        "108",
+        0
+      ],
+      "steps": 14,
+      "cfg": [
+        "60",
+        2
+      ],
+      "sampler_name": [
+        "79",
+        0
+      ],
+      "scheduler": [
+        "84",
+        0
+      ],
+      "denoise": 0.26,
+      "feather": 16,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.4,
+      "bbox_dilation": 8,
+      "bbox_crop_factor": [
+        "72",
+        0
+      ],
+      "sam_detection_hint": "none",
+      "sam_dilation": 4,
+      "sam_threshold": 0.9,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 16,
+      "refiner_ratio": 0.2,
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 64,
+      "tiled_encode": [
+        "76",
+        0
+      ],
+      "tiled_decode": [
+        "76",
+        0
+      ],
+      "image": [
+        "101",
+        0
+      ],
+      "detailer_pipe": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "FaceDetailerPipe",
+    "_meta": {
+      "title": "FaceDetailer (pipe)"
+    }
+  },
+  "57": {
+    "inputs": {
+      "wildcard_text": "masterpiece, best quality, amazing quality, absurdres,\n1girl, solo, looking at viewer,",
+      "populated_text": "masterpiece, best quality, amazing quality, absurdres,\n1girl, solo, looking at viewer,",
+      "mode": "populate",
+      "seed": [
+        "108",
+        0
+      ],
+      "Select to add Wildcard": "Select the Wildcard to add to the text"
+    },
+    "class_type": "ImpactWildcardProcessor",
+    "_meta": {
+      "title": "POSITIVE"
+    }
+  },
+  "58": {
+    "inputs": {
+      "__lm_autocomplete_meta_text": {
+        "version": 1,
+        "textWidgetName": "text"
+      },
+      "text": "",
+      "loras": {
+        "__value__": []
+      },
+      "model": [
+        "103",
+        0
+      ],
+      "clip": [
+        "81",
+        0
+      ]
+    },
+    "class_type": "Lora Loader (LoraManager)",
+    "_meta": {
+      "title": "Lora Loader (LoraManager)"
+    }
+  },
+  "59": {
+    "inputs": {
+      "wildcard_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, deformed, artist name, watermark, signature, patreon, twitter username",
+      "populated_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, deformed, artist name, watermark, signature, patreon, twitter username",
+      "mode": "populate",
+      "seed": [
+        "108",
+        0
+      ],
+      "Select to add Wildcard": "Select the Wildcard to add to the text"
+    },
+    "class_type": "ImpactWildcardProcessor",
+    "_meta": {
+      "title": "NEGATIVE"
+    }
+  },
+  "60": {
+    "inputs": {
+      "seed": [
+        "108",
+        0
+      ],
+      "steps": 28,
+      "cfg": 6,
+      "sampler": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 1
+    },
+    "class_type": "Input Parameters (Image Saver)",
+    "_meta": {
+      "title": "Input Parameters (Image Saver)"
+    }
+  },
+  "63": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "DifferentialDiffusion",
+    "_meta": {
+      "title": "差分擴散"
+    }
+  },
+  "65": {
+    "inputs": {
+      "value": 1280
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Max Size"
+    }
+  },
+  "68": {
+    "inputs": {
+      "value": 512
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Guide Size"
+    }
+  },
+  "70": {
+    "inputs": {
+      "value": 1024
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "72": {
+    "inputs": {
+      "value": 2.0
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "BBOX Crop Factor"
+    }
+  },
+  "73": {
+    "inputs": {
+      "value": 1536
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "76": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Tiled Detailer"
+    }
+  },
+  "78": {
+    "inputs": {
+      "value": 1
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Batch Size"
+    }
+  },
+  "79": {
+    "inputs": {
+      "text": "euler_ancestral",
+      "anything": [
+        "60",
+        3
+      ]
+    },
+    "class_type": "easy showAnything",
+    "_meta": {
+      "title": "Show Any"
+    }
+  },
+  "80": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "102",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "81": {
+    "inputs": {
+      "stop_at_clip_layer": -2,
+      "clip": [
+        "103",
+        1
+      ]
+    },
+    "class_type": "CLIPSetLastLayer",
+    "_meta": {
+      "title": "CLIP 設定最後一層"
+    }
+  },
+  "82": {
+    "inputs": {
+      "model": [
+        "58",
+        0
+      ],
+      "clip": [
+        "58",
+        1
+      ]
+    },
+    "class_type": "CLIPNegPip",
+    "_meta": {
+      "title": "CLIP NegPip"
+    }
+  },
+  "83": {
+    "inputs": {
+      "string_a": [
+        "92",
+        0
+      ],
+      "string_b": [
+        "57",
+        0
+      ],
+      "delimiter": ","
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "串接"
+    }
+  },
+  "84": {
+    "inputs": {
+      "text": "normal",
+      "anything": [
+        "60",
+        4
+      ]
+    },
+    "class_type": "easy showAnything",
+    "_meta": {
+      "title": "Show Any"
+    }
+  },
+  "90": {
+    "inputs": {
+      "rgthree_comparer": {
+        "images": []
+      },
+      "image_a": [
+        "33",
+        0
+      ],
+      "image_b": [
+        "101",
+        0
+      ]
+    },
+    "class_type": "Image Comparer (rgthree)",
+    "_meta": {
+      "title": "Image FaceDetailer"
+    }
+  },
+  "92": {
+    "inputs": {
+      "group_mode": true,
+      "default_active": false,
+      "allow_strength_adjustment": {
+        "__value__": []
+      },
+      "toggle_trigger_words": {
+        "__value__": []
+      },
+      "orinalMessage": "",
+      "trigger_words": [
+        "58",
+        2
+      ]
+    },
+    "class_type": "TriggerWord Toggle (LoraManager)",
+    "_meta": {
+      "title": "TriggerWord Toggle (LoraManager)"
+    }
+  },
+  "93": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "83",
+        0
+      ],
+      "input2": [
+        "94",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Pre/Append Triggerwords"
+    }
+  },
+  "94": {
+    "inputs": {
+      "string_a": [
+        "57",
+        0
+      ],
+      "string_b": [
+        "92",
+        0
+      ],
+      "delimiter": ","
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "串接"
+    }
+  },
+  "95": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "103",
+        2
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "96": {
+    "inputs": {
+      "string": [
+        "93",
+        0
+      ],
+      "regex_pattern": "^,|,$",
+      "replace": "",
+      "case_insensitive": true,
+      "multiline": false,
+      "dotall": false,
+      "count": 0
+    },
+    "class_type": "RegexReplace",
+    "_meta": {
+      "title": "正則表達式替換"
+    }
+  },
+  "97": {
+    "inputs": {
+      "width": [
+        "70",
+        0
+      ],
+      "height": [
+        "73",
+        0
+      ],
+      "batch_size": [
+        "78",
+        0
+      ]
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent"
+    }
+  },
+  "98": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "96",
+        0
+      ],
+      "input2": [
+        "96",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "99": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "97",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "100": {
+    "inputs": {
+      "string_a": [
+        "98",
+        0
+      ],
+      "string_b": [
+        "58",
+        3
+      ],
+      "delimiter": " "
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "串接"
+    }
+  },
+  "101": {
+    "inputs": {
+      "samples": [
+        "111",
+        0
+      ],
+      "vae": [
+        "95",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE 解碼"
+    }
+  },
+  "102": {
+    "inputs": {
+      "text": [
+        "96",
+        0
+      ],
+      "clip": [
+        "82",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive)"
+    }
+  },
+  "103": {
+    "inputs": {
+      "ckpt_name": "fabricatedXL_v70.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "載入檢查點"
+    }
+  },
+  "106": {
+    "inputs": {
+      "text": [
+        "59",
+        0
+      ],
+      "clip": [
+        "82",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative)"
+    }
+  },
+  "108": {
+    "inputs": {
+      "seed": 869608966104700
+    },
+    "class_type": "SeedNode",
+    "_meta": {
+      "title": "種子"
+    }
+  },
+  "111": {
+    "inputs": {
+      "seed": [
+        "108",
+        0
+      ],
+      "steps": [
+        "60",
+        1
+      ],
+      "cfg": [
+        "60",
+        2
+      ],
+      "sampler_name": [
+        "79",
+        0
+      ],
+      "scheduler": [
+        "84",
+        0
+      ],
+      "denoise": [
+        "60",
+        5
+      ],
+      "model": [
+        "82",
+        0
+      ],
+      "positive": [
+        "80",
+        0
+      ],
+      "negative": [
+        "106",
+        0
+      ],
+      "latent_image": [
+        "99",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "112": {
+    "inputs": {
+      "id": 103,
+      "widget_name": "ckpt_name",
+      "return_all": false,
+      "node_title": "",
+      "allowed_float_decimals": 2
+    },
+    "class_type": "WidgetToString",
+    "_meta": {
+      "title": "Widget To String"
+    }
+  },
+  "124": {
+    "inputs": {
+      "filename": "%time_%basemodelname_%seed",
+      "path": "",
+      "extension": "png",
+      "steps": [
+        "60",
+        1
+      ],
+      "cfg": [
+        "60",
+        2
+      ],
+      "modelname": [
+        "112",
+        0
+      ],
+      "sampler_name": [
+        "79",
+        0
+      ],
+      "scheduler_name": [
+        "84",
+        0
+      ],
+      "positive": [
+        "100",
+        0
+      ],
+      "negative": [
+        "59",
+        0
+      ],
+      "seed_value": [
+        "108",
+        0
+      ],
+      "width": [
+        "70",
+        0
+      ],
+      "height": [
+        "73",
+        0
+      ],
+      "lossless_webp": true,
+      "quality_jpeg_or_webp": 100,
+      "optimize_png": false,
+      "counter": 0,
+      "denoise": [
+        "60",
+        5
+      ],
+      "clip_skip": 2,
+      "time_format": "%Y-%m-%d-%H%M%S",
+      "save_workflow_as_json": false,
+      "embed_workflow": true,
+      "additional_hashes": "",
+      "download_civitai_data": true,
+      "easy_remix": false,
+      "show_preview": true,
+      "custom": "",
+      "images": [
+        "164",
+        0
+      ]
+    },
+    "class_type": "Image Saver",
+    "_meta": {
+      "title": "Image Saver"
+    }
+  },
+  "164": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "33",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  }
+}

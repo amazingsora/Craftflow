@@ -1,3 +1,14 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
+"""所有環境變數旋鈕的單一入口（讀專案根 .env）。
+
+分區：路徑 / AI 服務位址 / LoRA 訓練 / 資料安全（快照·備份）/ VRAM Guardian /
+Personal Style / Prompt 擴寫 / 生圖微調。
+
+慣例：
+  - 每個旋鈕都要有預設值，缺 .env 也能啟動。
+  - 新增旋鈕時預設值必須是「零行為變更」，需要實驗的功能預設關閉。
+  - 執行期可切換的設定（checkpoint/workflow/模型）不在這裡，在 core/state.py。
+"""
 import os
 from pathlib import Path
 
@@ -40,39 +51,53 @@ BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(BASE_DIR.parent / "data" / "backup
 BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "7"))                         # 保留備份份數
 BACKUP_INTERVAL_HOURS = float(os.getenv("BACKUP_INTERVAL_HOURS", "24"))  # 0 = 停用定時備份
 
-# ── VRAM Guardian（條件式卸載）────────────────────────────────────────────
-# 切換 Ollama/ComfyUI 前先查實際 VRAM；兩者放得下就不卸載（省去模型重載 10~30s）。
-# VRAM_COEXIST_ENABLED=false 退回舊行為（切換時一律卸載另一方）。
+# [CN-001] VRAM Guardian：兩者放得下就不卸載，省模型重載 10~30s；COEXIST=false 退回舊行為
 VRAM_COEXIST_ENABLED: bool = os.getenv("VRAM_COEXIST_ENABLED", "true").lower() == "true"
-COMFYUI_REQUIRED_VRAM_GB = float(os.getenv("COMFYUI_REQUIRED_VRAM_GB", "8"))   # SDXL fp16 + CLIP/VAE
+# [CN-002] 門檻 8→11：舊值只估 SDXL，實際常駐 10.2G → 溢位後 KSampler 2.4it/s 掉到 30s/it
+COMFYUI_REQUIRED_VRAM_GB = float(os.getenv("COMFYUI_REQUIRED_VRAM_GB", "11"))  # SDXL + CN + CLIPVision + CLIP/VAE + LoRA patch
 OLLAMA_REQUIRED_VRAM_GB = float(os.getenv("OLLAMA_REQUIRED_VRAM_GB", "7"))     # 7B Q4/Q8 vision/text
-# 2026-07-27：checkpoint 已駐留時的 free 下限。舊版在 reserved≥4G 時「無視 free」直接
-# 判定可共存，實測 free=0.1G 仍放行 → ComfyUI 溢出到系統 RAM，40s 的工作變 >300s timeout。
-# 這是「增量需求」門檻：CN/preprocessor/latent/activations 仍要空間，不是零。
-COMFYUI_RESIDENT_MIN_FREE_GB = float(os.getenv("COMFYUI_RESIDENT_MIN_FREE_GB", "6"))
+# [CN-003] 駐留時 free 下限 6→10：這是「增量需求」門檻（CN+IPA+CLIP+LoRA備份+activations）
+COMFYUI_RESIDENT_MIN_FREE_GB = float(os.getenv("COMFYUI_RESIDENT_MIN_FREE_GB", "10"))
 
-# ── Personal Style Preset（個人風格預設，.env 啟用 / git 預設關閉）────────────
-# PERSONAL_STYLE_ENABLED=true  → 角色生圖時附加 PERSONAL_STYLE_EXTRA_TAGS
-# PERSONAL_NEGATIVE_ENABLED=true → 取代預設負向提示詞（art_style 未設定 negative 時）
+# [CN-004] 單次任務上限 300→1200s：逾時後 ComfyUI 仍會跑完存檔，白付 GPU 時間
+COMFYUI_JOB_TIMEOUT_SEC = int(os.getenv("COMFYUI_JOB_TIMEOUT_SEC", "1200"))
+
+# [CN-005] /free 是非同步排程，送出後須 poll 到 reserved 真的下降，否則量到的必是舊值
+VRAM_FREE_WAIT_SEC: float = float(os.getenv("VRAM_FREE_WAIT_SEC", "5"))
+VRAM_FREE_POLL_SEC: float = float(os.getenv("VRAM_FREE_POLL_SEC", "0.25"))
+# true = ComfyUI 沒讓出顯存就**不轉移 focus 到 ollama**（request_focus 回 False）。
+# 預設 false：現行呼叫端都忽略回傳值，維持零行為變更，先讓 log 累積實證再決定開不開。
+VRAM_STRICT_FREE: bool = os.getenv("VRAM_STRICT_FREE", "false").lower() == "true"
+# 2026-09-21 訂正：舊版只要 reserved 有「下降」就算成功，實測 15.2G 只還 0.1G
+# 也被判定為 True —— 那不是釋放，是量測雜訊。改為要求最低歸還量。
+VRAM_FREE_MIN_DROP_GB: float = float(os.getenv("VRAM_FREE_MIN_DROP_GB", "1.0"))
+# reserved / total 超過此比例 ⇒ 顯卡已經塞滿、極可能正在用共享系統記憶體。
+# 這個狀態**不會自己恢復**（被換出的頁不會自動搬回 VRAM），只能重啟 ComfyUI。
+VRAM_STUCK_RATIO: float = float(os.getenv("VRAM_STUCK_RATIO", "0.92"))
+
+# [CN-006] keep_alive 預設 0（用完即退）；-1 回到舊行為（不送欄位＝吃 Ollama 的 5 分鐘）
+OLLAMA_KEEP_ALIVE_SEC: int = int(os.getenv("OLLAMA_KEEP_ALIVE_SEC", "0"))
+
+# [CN-007] sysmem fallback 在 ComfyUI 端完全無聲，只能靠耗時警戒補 log。0=停用
+COMFYUI_SLOW_JOB_WARN_SEC: int = int(os.getenv("COMFYUI_SLOW_JOB_WARN_SEC", "150"))
+
+# [CN-008] 本組 .env 是全域基準線＋總開關，非唯一來源；PERSONAL_STYLE_ENABLED 不節制 yml
 PERSONAL_STYLE_ENABLED: bool = os.getenv("PERSONAL_STYLE_ENABLED", "false").lower() == "true"
 PERSONAL_STYLE_EXTRA_TAGS: str = os.getenv("PERSONAL_STYLE_EXTRA_TAGS", "")
 PERSONAL_NEGATIVE_ENABLED: bool = os.getenv("PERSONAL_NEGATIVE_ENABLED", "false").lower() == "true"
 PERSONAL_NEGATIVE: str = os.getenv("PERSONAL_NEGATIVE", "")
-# 畫風 tags 加權係數（G1-3）：!=1.0 時，角色生圖把 style_extra 每個 tag 包成 (tag:weight)
-# 並前置到 identity 區塊（與角色身分同級優先），讓畫風由 prompt 承擔、CN 可安心降權。
-# 1.0（預設）= 維持現行末端 append、不加權，git 預設零行為變更。
+# [CN-009] 畫風 tags 加權係數：!=1.0 時包成 (tag:w) 並前置到 identity；1.0=末端 append
 PERSONAL_STYLE_WEIGHT: float = float(os.getenv("PERSONAL_STYLE_WEIGHT", "1.0"))
 
-# ── Prompt 擴寫 stage2（G1-2，.env 啟用 / git 預設關閉）────────────────────────
-# PROMPT_UPSAMPLE_ENABLED=true → compile() 翻譯+sanitize 後，多一次 LLM 呼叫把稀疏
-#   tags 擴寫成更密的 danbooru tags（V37 booru upsampler 規則）。additive 合併、原始
-#   tags 為 identity 錨不可被覆蓋；FLUX（自然語言）不套用。
-#   ⚠️ 預設關閉——需先手動 A/B 驗證(G1-1)再開，避免未驗證污染線上出圖。
+# [CN-010] prompt 擴寫 stage2，預設關閉（需先手動 A/B 驗證），FLUX 不套用
 PROMPT_UPSAMPLE_ENABLED: bool = os.getenv("PROMPT_UPSAMPLE_ENABLED", "false").lower() == "true"
 PROMPT_UPSAMPLE_MODEL: str = os.getenv("PROMPT_UPSAMPLE_MODEL", "")  # 空 = 沿用 compile() 的 text model
 # 擴寫後 body tag 數上限（token 預算，G1-4）：擴寫會膨脹 tags，超限時從擴寫尾端砍，
 # 受保護的原始翻譯 tags（identity/subject）一律保留。0（預設）= 停用。
 PROMPT_MAX_BODY_TAGS: int = int(os.getenv("PROMPT_MAX_BODY_TAGS", "0"))
+
+# [CN-011] 編譯快取：命中則完全不呼叫 Ollama，省掉整段 11GB 卸載/重載。預設 0=停用
+PROMPT_CACHE_TTL_SEC: int = int(os.getenv("PROMPT_CACHE_TTL_SEC", "0"))
 
 # ── 生圖微調旋鈕 ──────────────────────────────────────────────
 # flat_draft(線稿/平塗概念圖)當 IPA 參考會把成像拉平 → 自動把 IPA 權重乘此係數(下限0.1)。1.0=不降。

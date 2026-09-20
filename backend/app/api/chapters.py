@@ -1,3 +1,9 @@
+"""章節 CRUD + 版本快照（revision）。
+
+每次更新章節前自動存快照，每章保留 CHAPTER_REVISIONS_KEEP 份（預設 20）；
+支援列出／取單筆／還原。reorder 走 PATCH，卷內排序見 api/volumes.py。
+「絕不覆蓋原始創作內容」的實作基礎。
+"""
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status

@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """
 Lexicon — Vocabulary and patterns for trait extraction and tag classification.
 """
@@ -76,11 +77,7 @@ EYE_COLORS = {
     "orange eyes", "grey eyes", "gray eyes", "amber eyes",
 }
 
-# ── Personal Term Map（P3，2026-07-12）─────────────────────────────────────────
-# LLM 翻譯前的確定性字串替換：中文原文子字串 → 英文 tag，直接進 LLM 輸入，降低特定
-# 詞彙（角色名、專有名詞、易誤譯的服裝/神韻描述）被誤譯或幻覺的機率。管理於
-# personal_term_map.yml；未建檔／解析失敗 → {}（這層機制完全不介入，零回歸）。
-# 與上方 TRAIT_MAP（掛在已停用的 _inject_traits，LLM 翻譯「後」修正）是不同機制。
+# [CN-033] Personal Term Map：LLM 翻譯「前」的確定性替換，與已停用的 TRAIT_MAP 是不同機制
 
 _PERSONAL_TERM_MAP_YML = Path("/app/backend/personal_term_map.yml")
 if not _PERSONAL_TERM_MAP_YML.exists():
@@ -98,6 +95,17 @@ def _load_personal_term_map() -> dict[str, str]:
         return {}
     except Exception:
         return {}
+
+
+def personal_term_map_tags() -> list[str]:
+    """A3 P3-1（2026-08-22）：回傳個人詞庫所有英文 tag 值（逗號展開、去空白），
+    供 compiler._recall_dropped_outfit_terms() 判斷「有塞進 LLM 輸入、輸出卻漏掉」時
+    要召回哪些 tag。與 apply_personal_term_map() 共用同一份詞庫，不重複維護。"""
+    terms = _load_personal_term_map()
+    tags: list[str] = []
+    for v in terms.values():
+        tags.extend(t.strip() for t in v.split(",") if t.strip())
+    return tags
 
 
 def apply_personal_term_map(text: str) -> str:

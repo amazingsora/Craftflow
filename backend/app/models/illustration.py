@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 
 class Illustration(Base):
+    """插圖 — 可用 linked_chapter_id 綁章節，匯出時附於該章末（services/export_service.py）。"""
+
     __tablename__ = "illustrations"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

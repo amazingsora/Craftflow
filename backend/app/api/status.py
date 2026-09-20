@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """
 GET /api/v1/status  — overall system health check
 GET /api/v1/status/ollama   — Ollama availability + installed models
@@ -5,18 +6,38 @@ GET /api/v1/status/comfyui  — ComfyUI availability
 """
 from __future__ import annotations
 
+import threading
+import time
+
 import requests
 from fastapi import APIRouter
 from sqlalchemy import text
 
 from app.core.config import OLLAMA_BASE, COMFYUI_BASE
 from app.core.database import engine
+from app.services.http_local import SESSION
 
 router = APIRouter(prefix="/status", tags=["status"])
+
+# [CN-113] 2 秒 TTL + 鎖：前端輪詢單次爆發 9~16 並發，會佔住 threadpool 並戳採樣中的 ComfyUI
+_STATUS_TTL_SEC = 2.0
+_status_lock = threading.Lock()
+_status_cache: tuple[float, dict] | None = None
 
 
 @router.get("/")
 def system_status():
+    global _status_cache
+    with _status_lock:
+        cached = _status_cache
+        if cached is not None and time.monotonic() - cached[0] < _STATUS_TTL_SEC:
+            return cached[1]
+        payload = _build_status()
+        _status_cache = (time.monotonic(), payload)
+        return payload
+
+
+def _build_status() -> dict:
     ollama = _check_ollama()
     comfyui = _check_comfyui()
     db = _check_db()
@@ -50,7 +71,7 @@ def comfyui_status():
 
 def _check_ollama() -> dict:
     try:
-        r = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=3)
+        r = SESSION.get(f"{OLLAMA_BASE}/api/tags", timeout=3)
         r.raise_for_status()
         models = [m["name"] for m in r.json().get("models", [])]
         return {"available": True, "models": models}
@@ -62,7 +83,7 @@ def _check_ollama() -> dict:
 
 def _check_comfyui() -> dict:
     try:
-        r = requests.get(f"{COMFYUI_BASE}/system_stats", timeout=3)
+        r = SESSION.get(f"{COMFYUI_BASE}/system_stats", timeout=3)
         r.raise_for_status()
         return {"available": True}
     except requests.exceptions.ConnectionError:

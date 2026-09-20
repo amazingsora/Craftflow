@@ -1,3 +1,7 @@
+"""章節分析報告查詢 API（唯讀）。
+
+報告的產生端在 api/ai_text.py，這裡只負責讀回。
+"""
 from typing import Annotated
 
 from fastapi import APIRouter, Depends

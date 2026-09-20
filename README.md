@@ -19,7 +19,8 @@
 
 | 分頁 | 功能 |
 |------|------|
-| **草稿 → 線稿**（ProcessTab） | 上傳草稿，經 ComfyUI ControlNet 轉乾淨線稿 |
+| **小說**（NovelTab） | 卷／章節管理與正文編輯，含版本快照 |
+| **草稿 → 線稿**（ProcessTab） | 上傳草稿 → ComfyUI ControlNet 轉線稿（*目前隱藏，見 `App.jsx:103`*） |
 | **文字 → 生圖**（GenerateTab） | 文字提示詞 → SDXL 生圖（txt2img / IP-Adapter / ControlNet） |
 | **草圖問答**（ComposeTab） | 上傳草圖，視覺模型分析、構圖與配色建議 |
 | **角色管理**（CharacterTab） | 角色設定、概念圖 → 全身人設圖生成（IPA + ControlNet） |
@@ -35,9 +36,8 @@
 |---|---|
 | 後端 | FastAPI · SQLAlchemy 2.0 · Pydantic v2 · SQLite · Python 3.11 |
 | 前端 | React 18 · Vite 5 · Vanilla CSS-in-JS（無框架） |
-| 文字 LLM | `dolphin-llama3`（生成 / 翻譯 / 分析） |
-| 視覺 LLM | `qwen2.5vl:7b`（圖像分析，可全域切換） |
-| 圖像生成 | ComfyUI（SDXL · ControlNet Union ProMax · IP-Adapter · Flux2） |
+| 文字 / 視覺 LLM | 由設定 UI 切換並持久化於 `data/runtime_state.json`（清單來自 Ollama `/api/tags`）。常用：`dolphin-llama3` / `qwen2.5vl:7b` |
+| 圖像生成 | ComfyUI（SDXL · ControlNet Union ProMax · IP-Adapter · Anima + LLLite） |
 | LoRA 訓練 | kohya_ss（subprocess） |
 
 ---
@@ -81,7 +81,12 @@ Craftflow/
 │       └── api/                 # client / endpoints / useAsync
 ├── tools/Craftflow/            # legacy CLI（分析 / 繪圖邏輯，逐步遷移至 services/ai/）
 ├── data/                       # custom_workflows · training_images
-├── doc/                        # 開發記錄 · 規劃 · 技術架構 · 安裝手冊
+├── doc/                        # INDEX.md 為導航入口
+│   ├── MODULE_MAP.md           #   程式碼地圖（該改哪個檔）
+│   ├── BACKLOG.md              #   待辦唯一真相
+│   ├── VRAM分析報告.md          #   顯存/共存分析
+│   ├── reference/              #   長青參考（安裝手冊、技術架構）
+│   └── archive/YYYY-MM/        #   歷史開發記錄（各月附摘要）
 ├── docker-compose.yml          # 後端容器
 ├── start.bat                   # Windows 一鍵啟動（前後端）
 └── .env.example                # 環境設定範本
@@ -91,7 +96,7 @@ Craftflow/
 
 ## 快速開始
 
-> 完整步驟（含硬體對照、ComfyUI 節點 / 模型清單、Docker 與無 GPU 情境）見 **[`doc/setup_guide.md`](doc/setup_guide.md)**。以下為精簡版。
+> 完整步驟（含硬體對照、ComfyUI 節點 / 模型清單、Docker 與無 GPU 情境）見 **[`doc/reference/setup_guide.md`](doc/reference/setup_guide.md)**。以下為精簡版。
 
 ### 前置需求
 
@@ -148,10 +153,9 @@ npm run dev
 
 | 變數 | 說明 | 預設 |
 |------|------|------|
-| `OLLAMA_BASE` | Ollama 位址（Docker 用 `host.docker.internal`，本機用 `localhost`） | `http://host.docker.internal:11434` |
-| `COMFYUI_BASE` | ComfyUI 位址 | `http://host.docker.internal:8188` |
-| `TEXT_MODEL` | 文字模型 | `dolphin-llama3` |
-| `VISION_MODEL` | 視覺模型 | `qwen2.5vl:7b` |
+| `OLLAMA_BASE` | Ollama 位址（Docker 用 `host.docker.internal`，本機用 `localhost`） | `http://localhost:11434` |
+| `COMFYUI_BASE` | ComfyUI 位址 | `http://localhost:8188` |
+| `COMFYUI_REQUIRED_VRAM_GB` | 共存門檻；⚠️ 預設 8 對 SDXL 1024×1536 偏低，見 `doc/VRAM分析報告.md` | `8` |
 | `COMFYUI_CHECKPOINT` | 覆寫所有工作流的 ckpt | （空＝用工作流內建） |
 | `TRAINING_RUNNER_MODE` | LoRA 訓練模式 `local` / `remote` | `local` |
 | `KOHYA_PATH` | kohya_ss 安裝目錄 | `C:\kohya_ss` |
@@ -185,11 +189,14 @@ npm run dev
 
 | 文件 | 內容 |
 |------|------|
-| [`doc/product_plan.md`](doc/product_plan.md) | 產品願景、功能範疇、開發分期 |
-| [`doc/Craftflow_技術架構.md`](doc/Craftflow_技術架構.md) | 完整技術架構、資料模型、AI 流程 |
-| [`doc/setup_guide.md`](doc/setup_guide.md) | 安裝建置手冊（含 ComfyUI 節點 / 模型清單） |
-| [`doc/comfyui_setup.md`](doc/comfyui_setup.md) | ComfyUI 設定細節 |
-| [`doc/YYYY-MM-DD_開發記錄.md`](doc/) | 每日開發記錄與決策 |
+| [`doc/INDEX.md`](doc/INDEX.md) | **文件導航入口 — 先看這裡** |
+| [`doc/MODULE_MAP.md`](doc/MODULE_MAP.md) | 程式碼地圖：該改哪個檔、生圖主流程 |
+| [`doc/BACKLOG.md`](doc/BACKLOG.md) | 待辦唯一真相（已去重、已核碼） |
+| [`doc/VRAM分析報告.md`](doc/VRAM分析報告.md) | 顯存佔用、共存矩陣、參數建議 |
+| [`doc/reference/setup_guide.md`](doc/reference/setup_guide.md) | 安裝建置手冊（含 ComfyUI 節點 / 模型清單） |
+| [`doc/reference/Craftflow_技術架構.md`](doc/reference/Craftflow_技術架構.md) | 完整技術架構、資料模型、AI 流程 |
+| [`doc/reference/product_plan.md`](doc/reference/product_plan.md) | 產品願景、功能範疇、開發分期 |
+| [`doc/archive/`](doc/archive/) | 歷史開發記錄（每月附 `YYYY-MM_摘要.md`） |
 
 ---
 

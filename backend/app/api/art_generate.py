@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """
 ComfyUI image generation endpoints:
   POST /api/v1/art/compile-prompt  — 中文 → model-aware prompt (自動偵測 checkpoint style)
@@ -80,9 +81,7 @@ def _current_capability(wf_name: str | None = None) -> dict:
     wf_name 預設使用 state.get_workflow()；caller 可傳入實際要用的 workflow 名稱。
     若 workflow 無法載入（檔案不存在）則以空 dict 計算，僅依家族查表。
     """
-    # 2026-07-25 AC-2'：checkpoint 改由工作流內嵌值解析（CheckpointLoaderSimple →
-    # UNETLoader.unet_name → 全域），與 gen_profile 走同一函式，避免 UI 與生成端
-    # 對同一工作流解析出不同 family。
+    # [CN-109] checkpoint 改由工作流內嵌值解析，與 gen_profile 走同一函式，避免 UI 與生成端 family 不一致
     name = wf_name or state.get_workflow()
     ckpt = resolve_checkpoint_for_workflow(name)
     try:
@@ -491,6 +490,8 @@ async def generate_character_design(
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
     cn_weight: float = 0.85,
+    seed: int = -1,  # A3 P0-1：-1=維持現行隨機（零回歸），>=0 沿用指定 seed
+    reuse_prompt: bool = False,  # A3 P0-3：沿用上次 prompt，不重新編譯
     db: Session = Depends(get_db),
 ):
     """主流程見 services/ai/character_design_service.py。"""
@@ -506,7 +507,8 @@ async def generate_character_design(
         character_id=character_id, expression=expression, art_style_id=art_style_id,
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
-        use_controlnet=use_controlnet, cn_weight=cn_weight, db=db,
+        use_controlnet=use_controlnet, cn_weight=cn_weight, seed=seed,
+        reuse_prompt=reuse_prompt, db=db,
     )
 
 
@@ -523,6 +525,8 @@ async def generate_variant_design(
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
     cn_weight: float = 0.85,
+    seed: int = -1,  # A3 P0-1：-1=維持現行隨機（零回歸），>=0 沿用指定 seed
+    reuse_prompt: bool = False,  # A3 P0-3：沿用上次 prompt，不重新編譯
     db: Session = Depends(get_db),
 ):
     """主流程見 services/ai/character_design_service.py。"""
@@ -538,7 +542,8 @@ async def generate_variant_design(
         character_id=character_id, slot=slot, expression=expression, art_style_id=art_style_id,
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
-        use_controlnet=use_controlnet, cn_weight=cn_weight, db=db,
+        use_controlnet=use_controlnet, cn_weight=cn_weight, seed=seed,
+        reuse_prompt=reuse_prompt, db=db,
     )
 
 

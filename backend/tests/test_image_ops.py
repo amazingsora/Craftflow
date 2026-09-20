@@ -245,3 +245,31 @@ def test_break_thin_waist_not_flagged():
 def test_break_blank_output_not_flagged():
     img = _png_bytes(500, 1000, color=(240, 90, 90))
     assert _detect_body_break(img) is False
+
+
+# ── IPA 參考圖補方（SYNC-005 軌 I，2026-09-19）────────────────────────────────
+
+def test_letterbox_to_square_for_ipa():
+    """IPA 走 CLIPImageProcessor，非正方形會被**置中裁切** → 直長草圖只剩腰部。
+
+    ComfyUI 端實錘訊息：
+      "the IPAdapter reference image is not a square, CLIPImageProcessor will
+       resize and crop it at the center."
+    補方後頭與腿都保住。用實際草圖比例 476x1098 驗。
+    """
+    out = _letterbox_to_aspect(_png_bytes(476, 1098), 1, 1, label="ipa-letterbox")
+    w, h = Image.open(io.BytesIO(out)).size
+    assert w == h == 1098          # 以長邊為準補寬，內容不被縮小
+
+
+def test_letterbox_square_input_is_passthrough():
+    """已是 1:1 → 原樣回傳（is 比較），不付多餘的編解碼成本。"""
+    raw = _png_bytes(1024, 1024)
+    assert _letterbox_to_aspect(raw, 1, 1, label="ipa-letterbox") is raw
+
+
+def test_letterbox_label_defaults_keep_cn_callers_unchanged():
+    """label 是新增的具名參數且有預設值 → CN 既有呼叫端零行為變更。"""
+    out_default = _letterbox_to_aspect(_png_bytes(300, 900), 768, 1344)
+    out_labeled = _letterbox_to_aspect(_png_bytes(300, 900), 768, 1344, label="cn-letterbox")
+    assert Image.open(io.BytesIO(out_default)).size == Image.open(io.BytesIO(out_labeled)).size

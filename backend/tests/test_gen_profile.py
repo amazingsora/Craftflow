@@ -108,3 +108,29 @@ def test_resolve_profile_sdxl_checkpoint_loader_still_wins(monkeypatch):
     monkeypatch.setattr("app.services.ai.workflow_builder._load_workflow", lambda name: wf)
     _, family = gp.resolve_profile_for_workflow("Standard_V37.json")
     assert family == "illustrious"  # CheckpointLoaderSimple 優先，UNETLoader 僅在其缺席時 fallback
+
+
+# ── lllite_strength_scale（SYNC-005 N1，2026-09-19）──────────────────────────
+
+def test_lllite_strength_scale_defaults_to_one_everywhere():
+    """零回歸鎖：本輪只把旋鈕接出來，**不順手改值**。
+
+    任何一個 family 的 scale 一旦不是 1.0，LLLite 的實際 strength 就與改動前不同，
+    當輪的 A/B 會變成雙變因。要掃描請一次只改一個 family 的值，並在當日開發記錄
+    寫下掃了哪些值 —— 不要靠這裡的預設值偷渡。
+    """
+    for family, prof in gp.GEN_PROFILE.items():
+        assert prof.lllite_strength_scale == 1.0, family
+
+
+def test_lllite_scale_is_a_multiplier_not_a_clamp():
+    """語義鎖：scale 是**乘數**（LoRA-like，節點 range -10~10），不是 0~1 的夾值。
+
+    誤當成夾值是這個缺陷的成因本身 —— 把 UI 的 CN 滑桿（0~1 語義）直接餵給
+    AnimaLLLiteApply（default 1.0 的乘數），於是常用的 0.6 只給了六成。
+    """
+    p = gp.get_profile("anima")
+    slider = 0.6
+    assert round(slider * p.lllite_strength_scale, 3) == 0.6      # scale 1.0 = 現況
+    assert round(slider * 1.7, 3) == 1.02                          # 掃描檔位：過 1.0
+    assert round(slider * 2.2, 3) == 1.32

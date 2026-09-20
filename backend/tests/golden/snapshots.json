@@ -1,4 +1,8 @@
 {
+  "anima_v8turbo_profile_negative": {
+    "negative": "worst quality, low quality, lowres, blurry, jpeg artifacts, bad anatomy, watermark, artist name, drop shadow, cast shadow, floor, ground, reflection, overexposed, washed out, faded, low contrast, blown out highlights, pale",
+    "positive": "masterpiece, best quality, absurdres, ultra detailed, high contrast, white hair, red eyes, tactical vest, standing"
+  },
   "anythingxl_heterochromia": {
     "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, artist name",
     "positive": "newest, masterpiece, best quality, red eyes, green eyes, heterochromia, looking at viewer, source_anime"

@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """
 Prompt style definitions — one config per model family.
 
@@ -15,10 +16,7 @@ from enum import Enum
 from pydantic import BaseModel, model_validator
 
 
-# P2：quality_prefix 可能含 SD 權重語法，如 "(highres, absurdres, very aesthetic:0.8)"
-# 或單一 "(newest:0.6)"。_sync_banned_tags 純逗號 split 會把整組拆成 "(highres" 等破碎
-# 字串，banned_tags 比對永遠失敗、LLM 仍可能吐出重複的 highres/absurdres 灌爆正向。
-# 這裡先把 "(tag1, tag2:0.8)" 展開成 "tag1, tag2"（丟權重與外層括號），再交給逐一 split。
+# [CN-023] quality_prefix 可能含 SD 權重語法，純逗號 split 會拆爛 → 先展開再 split
 _WEIGHT_GROUP_RE = re.compile(r'\(([^()]+):[\d.]+\)')
 
 
@@ -29,9 +27,7 @@ class PromptStyle(str, Enum):
     NOOBAI      = "noobai"
     ILLUSTRIOUS = "illustrious"
     ANYTHINGXL  = "anythingxl"
-    # 2026-07-25 (AC-1)：Anima（Cosmos-Predict2-2B 衍生，非 SDXL 架構）。
-    # 必須與 workflow_builder._detect_style 的 UNETLoader fallback 同批上線——
-    # 先補 fallback 而未補此 enum 時，PromptStyle("anima") 會拋 ValueError。
+    # [CN-024] anima enum 必須與 workflow_builder._detect_style 的 UNETLoader fallback 同批上線
     ANIMA       = "anima"
 
 
@@ -77,14 +73,7 @@ _QUALITY_TAGS_ILLUSTRIOUS = {
     "ultra detailed", "highly detailed",
 }
 
-# Anima 蒼白 tag 待用清單（2026-07-23 決策③：**不進 banned_tags**，僅記錄）。
-# 這組去飽和 tag 是 Anima 出圖「洗白／蒼白空靈」的主因（非 FP8，見 07-23 開發清單 §一）。
-# 使用者要蒼白風時仍可手動帶入，故不封鎖。觸發條件：日後洗白復發，才考慮併入 banned
-# 或改為 UI 警示。此常數目前未被引用，屬刻意保留的文件化清單。
-_PALE_TAGS_ANIMA_WATCHLIST = {
-    "pale skin", "fair skin", "pale color", "pastel colors", "limited palette",
-    "blue theme", "white theme", "yellow theme",
-}
+# [CN-025] Anima 蒼白 tag 待用清單：刻意不進 banned_tags，僅文件化保留
 
 _YEAR_TAGS = {"newest", "recent", "mid", "early", "old"}
 _RATING_TAGS_ANYTHINGXL = set()
@@ -94,10 +83,7 @@ _QUALITY_TAGS_ANYTHINGXL = {
     "normal quality", "low quality", "worst quality",
 }
 
-# 線稿／未上色參考圖的視覺屬性：這些描述的是輸入素材，不是期望生成的彩色人設圖。
-# S7.1（2026-07-13）：原枚舉式 set 被新變體不斷繞過（colorless eyes / line art style skin /
-# no iris detail / simple line art outline …打地鼠）。改 regex「含即丟」，由 compiler
-# _sanitize_to_list 對每個 tag 做 search，涵蓋全部舊枚舉＋未來變體。
+# [CN-026] 線稿視覺屬性改 regex「含即丟」——枚舉式 set 被新變體不斷繞過
 _LINEART_ARTIFACT_RE = re.compile(
     r'colou?rless|uncolou?red|unpainted|no colou?r|no iris'
     r'|no skin colou?r|line[ -]?art|achromatic'
@@ -246,13 +232,21 @@ Output: 1girl, solo, heterochromia, red eyes, green eyes, looking at viewer, sou
 
 [RESULT]"""
 
+# [CN-027] SKIN/SCOPE 抽成兩 family 共用常數；措辭必須維持正向，不得回到列舉禁用詞
+_SKIN_SCOPE_RULES = """- SKIN: Output a skin-tone tag ONLY when the input names one. If the input says nothing about
+  skin, output no skin tag at all. When the input does name a light or fair complexion, write
+  it as `porcelain skin`.
+- SCOPE: Tag what the character IS, never how the picture looks overall. No image-mood and
+  no colour-scheme descriptors.
+"""
+
 _ILLUSTRIOUS_TEMPLATE = f"""[TASK]
 Convert Chinese descriptions into anime semantic tags for Illustrious XL.
 
 [CRITICAL RULES]
 - VOCABULARY: Use anime-appropriate semantic vocabulary.
 - ANTI-LEAK: Translate ONLY what the input states. NEVER copy vocabulary, effects, props, or settings from the EXAMPLES below into your output (e.g. do not add magic, glowing, particles, forest, fantasy) unless the input itself mentions them.
-{_DANBOORU_COMMON_RULES}
+{_SKIN_SCOPE_RULES}{_DANBOORU_COMMON_RULES}
 
 [EXAMPLES]
 Input: 白色長捲髮，金色眼睛，天使氣質的少女
@@ -270,6 +264,7 @@ Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
 [RESULT]"""
 
 
+# [CN-028] NO-PALE 列舉式禁用詞本身就是 pale skin 的來源 → 改寫為正向指令，template 內零蒼白字面
 _ANIMA_TEMPLATE = f"""[TASK]
 Convert Chinese descriptions into anime danbooru tags for Anima (Cosmos-Predict2 based).
 
@@ -277,10 +272,7 @@ Convert Chinese descriptions into anime danbooru tags for Anima (Cosmos-Predict2
 - VOCABULARY: Use standard danbooru anime tags. Anima is trained on danbooru-style captions.
 - ANTI-LEAK: Translate ONLY what the input states. NEVER copy vocabulary, props, or settings
   from the EXAMPLES below into your output unless the input itself mentions them.
-- NO-PALE: Do NOT add desaturating tags (pale skin, fair skin, pastel colors, limited palette,
-  or any colour-theme tag such as blue theme / white theme / yellow theme). They wash the image
-  out. Only keep them if the input explicitly asks for that look.
-- NO-SAFETY: Do NOT add rating tags (safe, sensitive, questionable, explicit). Handled elsewhere.
+{_SKIN_SCOPE_RULES}- NO-SAFETY: Do NOT add rating tags (safe, sensitive, questionable, explicit). Handled elsewhere.
 {_DANBOORU_COMMON_RULES}
 
 [EXAMPLES]
@@ -336,9 +328,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
         llm_template=_NOOBAI_TEMPLATE,
     ),
     PromptStyle.ILLUSTRIOUS: StyleConfig(
-        # 2026-06-23：fabricatedXL/Illustrious 主路。原 newest, highres 偏弱、negative 過薄；
-        # 換成實測有效組合並補強手指/解剖/壓縮假影。newest/highres 仍留在 banned_tags
-        # （_QUALITY_TAGS_ILLUSTRIOUS）阻止 LLM 自行吐出。
+        # [CN-029] Illustrious 主路配方：newest/highres 留在 banned_tags 阻止 LLM 自行吐出
         quality_prefix="masterpiece, best quality, amazing quality, absurdres",
         negative=(
             "worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions, "
@@ -348,19 +338,14 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
         banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_ILLUSTRIOUS | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
         llm_template=_ILLUSTRIOUS_TEMPLATE,
     ),
-    # Anima family（2026-07-25 AC-1）。配方來源：doc/2026-07-23 開發清單 §4.3「定案配方」，
-    # 由附件二（＝A3）實測基準拆解而來，非 Anima 官方 prompt（官方那組是「蒼白空靈」美學，
-    # 追它會洗白，見 07-23 §一）。三項已拍板決策：
-    #   ① 不做 safety 分級 → quality_prefix 不含 safe/sensitive/explicit
-    #   ② 光影組（bokeh/depth of field/backlighting/light particles）不寫死 → 交由角色/場景 prompt
-    #   ③ 蒼白 tag 不擋 → 僅記錄於 _PALE_TAGS_ANIMA_WATCHLIST
+    # [CN-030] Anima 配方來自附件二實測基準，非官方 prompt（官方那組追了會洗白）；三項決策見 CODE_NOTES
     PromptStyle.ANIMA: StyleConfig(
         quality_prefix="masterpiece, best quality, absurdres, ultra detailed, high contrast",
-        # 前段為通用品質負向；後段 overexposed…pale 為 **Anima 專屬對比項**——
-        # 07-22 實測：缺這段時 Anima 出圖必偏白、低對比（官方負向與 07-20 規劃皆無此段）。
+        # [CN-031] Anima 負向三段結構；刻意不加裸 shadow（會壓掉角色身上的 shading）
         negative=(
             "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, "
             "jpeg artifacts, bad anatomy, watermark, artist name, "
+            "drop shadow, cast shadow, floor, ground, reflection, "
             "overexposed, washed out, faded, low contrast, blown out highlights, pale"
         ),
         banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
@@ -383,12 +368,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
 }
 
 
-# ── Prompt 擴寫 stage2 system prompt（G1-2）─────────────────────────────────────
-# 移植自 F:\wk\workflow 的 V37 Advanced 三變體共用的 booru tag upsampler system prompt：
-# 把稀疏 danbooru tags 擴寫成 10-50 個更密的 tags，補足畫面資訊密度（畫風一致由此承擔，
-# 讓 CN 可降權只管結構）。規則對齊 V37：不可改主體、不可加 meta/quality、僅輸出 tag 字串。
-# ⚠️ 本常數為依規劃文件重建版本，最終措辭以 G1-1 手動 A/B 驗證結果為準。
-# {tags} 由 compiler 填入 stage1 清洗後的 tag 串；輸出經同一 _sanitize_to_list 守門。
+# [CN-032] booru upsampler system prompt 移植自 V37；措辭以 G1-1 手動 A/B 結果為準
 UPSAMPLE_SYSTEM_PROMPT = """[TASK]
 You are a Danbooru tag upsampler for anime Stable Diffusion. Expand the given SHORT tag list
 into a denser, richer set of danbooru tags that describe the SAME subject and scene.

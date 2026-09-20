@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 
 class Faction(Base):
+    """勢力/組織 — 與 Character 多對多（成員關係）。"""
+
     __tablename__ = "factions"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

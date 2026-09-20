@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """Workflow 載入 / 風格偵測 / LoRA 注入 / ComfyUI 執行。
 
 自 api/art_generate.py 下沉（2026-06-11 A1 階段 1）。
@@ -20,7 +21,7 @@ import random
 
 from sqlalchemy.orm import Session
 
-from app.core.config import CUSTOM_WORKFLOWS_DIR, COMFYUI_LORAS_DIR
+from app.core.config import CUSTOM_WORKFLOWS_DIR, COMFYUI_LORAS_DIR, COMFYUI_JOB_TIMEOUT_SEC
 from app.core import state
 from app.models.art_style import ArtStyle
 from app.services import comfyui_client
@@ -90,6 +91,37 @@ def _load_prompt_profiles() -> dict:
         return {}
 
 
+# SYNC-001（2026-09-15）：已就 profile miss 告警過的 workflow 檔名。
+# 每張圖都會查好幾次 profile，不去重會把 log 洗掉；用集合讓「同一檔名只吵一次」。
+_PROFILE_MISS_WARNED: set[str] = set()
+
+
+def _profile_for(workflow: str) -> dict:
+    """查 workflow 的 prompt profile；**miss 時記一次 WARNING**（SYNC-001）。
+
+    為什麼要這個函式：本機制以 workflow **檔名**為唯一鍵，改名即整組脫鉤，而原本
+    miss 是靜默的（`_prompt_profile_source()` 只在命中時回來源）。2026-09-15 盤點發現
+    六個現役 workflow 全部 miss、08-12～08-26 三輪 P5 調校成果 100% 未生效，且這是
+    同型缺陷第三次（07-25 novaAnimeXL 漏登錄、08-22 V8turbo 漏登錄）。
+
+    **刻意不做檔名正規化／模糊比對**：那會把「一個明確的鍵」換成「一組會誤命中的
+    猜測規則」，出事時更難查。這裡只負責讓脫鉤變成看得見的事件。
+
+    回傳 {} 代表未登錄 → 呼叫端落回 checkpoint family / .env（行為與本函式導入前一致）。
+    """
+    profile = _load_prompt_profiles().get(workflow)
+    if profile:
+        return profile
+    if workflow not in _PROFILE_MISS_WARNED:
+        _PROFILE_MISS_WARNED.add(workflow)
+        logger.warning(
+            "[prompt-profile] workflow '%s' 未登錄於 %s → 落回 checkpoint family + .env。"
+            "若這不是預期行為，請在該檔 profiles: 下補登錄（可用 YAML anchor 沿用既有配方）",
+            workflow, _PROMPT_PROFILES_YML,
+        )
+    return {}
+
+
 def _workflow_profile_overrides(workflow: str) -> dict:
     """P1：查 workflow 檔名在 prompt_profiles.yml 是否有登錄的 quality_prefix /
     quality_suffix / negative / negative_extra；只有實際登錄（非空）的欄位才放進回傳 dict，
@@ -98,7 +130,7 @@ def _workflow_profile_overrides(workflow: str) -> dict:
     negative（取代語義）與 negative_extra（補充語義，R4）互不排斥，可同時登錄：
     前者決定 negative 主體、後者附加於其後。
     """
-    profile = _load_prompt_profiles().get(workflow)
+    profile = _profile_for(workflow)
     if not profile:
         return {}
     out: dict = {}
@@ -111,6 +143,25 @@ def _workflow_profile_overrides(workflow: str) -> dict:
     if profile.get("negative_extra"):
         out["negative_extra_override"] = profile["negative_extra"]
     return out
+
+
+def _workflow_style_extra(workflow: str) -> tuple[str, Optional[float]]:
+    """P5-5：查 workflow 檔名在 prompt_profiles.yml 是否登錄 style_extra / style_extra_weight。
+    與 _workflow_profile_overrides 平行，共用同一個 _profile_for()（含 miss 告警）。
+
+    這兩個欄位**不進** _resolve_prompt_overrides() 的回傳 dict —— 那個 dict 是
+    compile_prompt() 的 kwargs，而 style_extra 是 compile 之後在 service 層組裝的
+    （character_design_service.py 的 _resolve_style_extra()／final_positive 組裝處）。
+
+    未登錄 workflow 或欄位留白 → ("", None)，呼叫端落回 .env
+    PERSONAL_STYLE_EXTRA_TAGS / PERSONAL_STYLE_WEIGHT（零回歸）。
+    """
+    profile = _profile_for(workflow)
+    if not profile:
+        return "", None
+    extra = (profile.get("style_extra") or "").strip()
+    weight = profile.get("style_extra_weight")
+    return extra, (float(weight) if weight is not None else None)
 
 
 def _resolve_prompt_overrides(art_style: Optional[ArtStyle], workflow: str) -> dict:
@@ -136,7 +187,7 @@ def _prompt_profile_source(art_style: Optional[ArtStyle], workflow: str) -> str:
       - 否則 → "family fallback"（compile() 內部 fallback 到 checkpoint family STYLE_CONFIG）
       - art_style 另有覆寫 quality_prefix/negative 時，附加 " +art_style#<id>" 標註疊加層。
     純標註用途，不影響任何生成邏輯。"""
-    if _load_prompt_profiles().get(workflow):
+    if _profile_for(workflow):
         src = f"profile: {workflow}"
     else:
         src = "family fallback"
@@ -149,6 +200,34 @@ def _extra_tags(art_style: Optional[ArtStyle]) -> str:
     return (art_style.extra_tags or "").strip() if art_style else ""
 
 
+_LORA_DIR_WARNED = False
+
+
+def _lora_dir_ok() -> bool:
+    """LoRA 目錄存在與否，warn-once。
+
+    SYNC-005 L3（2026-09-20）：`COMFYUI_LORAS_DIR` 預設是 `C:\\ComfyUI\\models\\loras`，
+    使用者機器上實際在 `F:\\wk\\ComfyUI_portable\\...`，而 .env 那行本來被註解掉。
+    兩個吃這個常數的功能都是**讀不到就安靜回 None／[]**：
+      · `_lora_arch()`  → 架構健檢從頭到尾空轉（LoRA 架構不符也不會警告）
+      · `lora_trigger_words()` → 觸發詞永遠空的，LoRA 只剩殘留效果
+    兩者都不該讓生成失敗，但**也不該一聲不吭** —— 沿用 SYNC-001／SYNC-002 的
+    warn-once 慣例（`_PROFILE_MISS_WARNED` / `_LLLITE_UNAVAILABLE_WARNED`），
+    同一個問題只吵一次，其餘走 DEBUG。
+    """
+    global _LORA_DIR_WARNED
+    if COMFYUI_LORAS_DIR.exists():
+        return True
+    if not _LORA_DIR_WARNED:
+        _LORA_DIR_WARNED = True
+        logger.warning(
+            "[lora] LoRA 目錄不存在：%s → 架構健檢與觸發詞注入都會靜默失效。"
+            "請在專案根 .env 設定 COMFYUI_LORAS_DIR 指向實際的 ComfyUI loras 目錄。",
+            COMFYUI_LORAS_DIR,
+        )
+    return False
+
+
 _LORA_ARCH_CACHE: dict = {}
 
 def _lora_arch(lora_name: str):
@@ -157,6 +236,9 @@ def _lora_arch(lora_name: str):
     if lora_name in _LORA_ARCH_CACHE:
         return _LORA_ARCH_CACHE[lora_name]
     arch = None
+    if not _lora_dir_ok():
+        _LORA_ARCH_CACHE[lora_name] = None
+        return None
     try:
         path = COMFYUI_LORAS_DIR / lora_name
         if path.exists():
@@ -172,6 +254,57 @@ def _lora_arch(lora_name: str):
         arch = None
     _LORA_ARCH_CACHE[lora_name] = arch
     return arch
+
+
+_LORA_TRIGGER_CACHE: dict = {}
+
+
+def lora_trigger_words(loras: list) -> list[str]:
+    """讀同名 `.civitai.info` 的 `trainedWords`，回傳去重後的觸發詞清單。
+
+    SYNC-005 軌 L（2026-09-19）。**為什麼需要這個**：`_inject_loras()` 只插節點，
+    不碰 prompt。而畫風 LoRA 的效果強度高度依賴觸發詞 —— 實例
+    `Blue_archive_style.safetensors` 的 `ss_tag_frequency` 只有**單一 tag**
+    `blue archive style`+U+200B，出現 270 次（＝每一張訓練圖都是這一句 caption）。
+    不帶觸發詞時 LoRA 仍會改權重、但效果剩殘留強度 ——
+    **付了全部 VRAM 與時間代價，只拿到一小部分畫風**（AGENT_SYNC §2.1 E11b）。
+
+    ⚠️ `trainedWords` 可能含**零寬空格 U+200B 等不可見字元**（上例就是），
+    那是訓練 caption 的一部分，必須**原樣保留**，不可 strip 掉或正規化 ——
+    使用者手打也打不出來，這正是自動注入的價值。此處只去頭尾的一般空白
+    （`str.strip()` 不會移除 U+200B）。
+
+    best-effort：檔案不存在／JSON 壞掉／欄位缺 → 回空 list，絕不讓生成失敗。
+    """
+    out: list[str] = []
+    if not _lora_dir_ok():
+        return out
+    for lora in (loras or []):
+        if not isinstance(lora, dict):
+            continue
+        name = (lora.get("model") or "").strip()
+        if not name:
+            continue
+        if name in _LORA_TRIGGER_CACHE:
+            words = _LORA_TRIGGER_CACHE[name]
+        else:
+            words = []
+            try:
+                info = COMFYUI_LORAS_DIR / (Path(name).stem + ".civitai.info")
+                if info.exists():
+                    data = json.loads(info.read_text(encoding="utf-8"))
+                    for w in (data.get("trainedWords") or []):
+                        w = str(w).strip()
+                        if w:
+                            words.append(w)
+            except Exception as e:
+                logger.debug("[lora] 讀 trainedWords 失敗 %s: %s", name, e)
+                words = []
+            _LORA_TRIGGER_CACHE[name] = words
+        for w in words:
+            if w not in out:
+                out.append(w)
+    return out
 
 
 def _inject_loras(wf: dict, loras: list) -> None:
@@ -224,12 +357,7 @@ def _inject_loras(wf: dict, loras: list) -> None:
         logger.debug("[lora] injected %s (weight=%.2f)", lora["model"], weight)
         prev_id = node_id
 
-    # Rewire every consumer of the checkpoint's model (slot 0) / clip (slot 1) outputs to
-    # the LoRA chain, so the LoRA applies even when the model/clip path first runs through
-    # other nodes (e.g. a workflow's built-in "Lora Loader (LoraManager)"). Edge-based, not
-    # type-based: the old type-list missed those intermediaries → injected LoRA dangled unused.
-    # VAE output (slot 2) is left on the checkpoint. The injected LoRA nodes are skipped to
-    # avoid rewiring the chain's own root reference into a cycle.
+    # [CN-106] LoRA rewire 改走 edge-based：type-based 會漏掉中間節點，注入的 LoRA 變成懸空未用
     lora_ids = {f"_lora_{i}" for i in range(len(valid))}
     for nid, node in wf.items():
         if nid in lora_ids or not isinstance(node, dict):
@@ -259,9 +387,7 @@ def _load_workflow(name: str) -> dict:
         wf = json.load(f)
     wf.pop("_comment", None)
 
-    # Detect ComfyUI UI-format workflows (exported via "Save", not "Save (API format)")
-    # UI format has top-level keys like "nodes" (list), "links", "last_node_id" — these are
-    # not valid node dicts and will cause TypeErrors in ComfyUI's on_prompt handlers.
+    # [CN-107] 偵測 UI-format（非 API format）工作流：其 nodes 是 list，會讓 ComfyUI on_prompt 拋 TypeError
     if isinstance(wf.get("nodes"), list):
         raise HTTPException(
             status_code=422,
@@ -401,8 +527,12 @@ def _run(workflow: dict) -> bytes:
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"ComfyUI workflow 驗證失敗：{e}")
     try:
-        filenames = comfyui_client.wait_for_result(prompt_id)
+        filenames = comfyui_client.wait_for_result(prompt_id, COMFYUI_JOB_TIMEOUT_SEC)
     except TimeoutError as e:
+        # [CN-108] 本路徑原本完全沒有 log，逾時只能靠 ComfyUI 端還原現場 —— 補上記錄
+        logger.error("[comfyui] 主生成逾時：prompt_id=%s timeout=%ss —— ComfyUI 很可能仍在跑並會把圖存進 output/，"
+                     "請查 ComfyUI 端 log 的 'Prompt executed in'。放寬上限：.env 的 COMFYUI_JOB_TIMEOUT_SEC",
+                     prompt_id, COMFYUI_JOB_TIMEOUT_SEC)
         raise HTTPException(status_code=504, detail=str(e))
     if not filenames:
         raise HTTPException(status_code=500, detail="ComfyUI 未回傳輸出圖片，請確認 workflow 設定。")

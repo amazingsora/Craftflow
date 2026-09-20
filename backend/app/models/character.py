@@ -22,6 +22,8 @@ character_factions = Table(
 
 
 class Character(Base):
+    """角色設定 — variants 欄位存變體/差分 slot（JSON），helper 見 services/ai/variant_helpers.py。ai_prompt 為使用者自訂提示詞覆寫。"""
+
     __tablename__ = "characters"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

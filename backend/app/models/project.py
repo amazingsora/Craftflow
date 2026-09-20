@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 
 class Project(Base):
+    """作品 — 資料模型最上層。Volume / Chapter / Character / Faction / Illustration 皆掛在其下，刪除為 cascade。"""
+
     __tablename__ = "projects"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
