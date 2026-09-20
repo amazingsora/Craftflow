@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """純影像處理工具（PIL / bytes 層級，無 app 狀態依賴）。
 
 自 api/art_generate.py 下沉（2026-06-11 A1 階段 1）：
@@ -19,21 +20,13 @@ logger = logging.getLogger(__name__)
 
 _FLAT_COLOR_STD_THRESHOLD = 25.0  # max per-channel std to be considered a flat-color draft
 
-# ── 全身人設取景常數（痛點3）─────────────────────────────────────────────────
-# 強化整體取景與手部/四肢補全，避免只生成中段（下巴到大腿）。集中為具名常數，
-# 避免 magic string 散落於主角色與變體兩處生成流程。
-# 2026-06-23：去語義稀釋。呼叫端 suffix 已含 "full body, front view"，此處不再重複
-# full body shot / head to toe / full body visible（同義詞攤平注意力）；只保留取景補強
-# 的 standing。
-# S1（2026-07-12）：拔 "detailed hands, five fingers"——Illustrious 正向手部 tag 無效
-# （手部品質應由負向擋，見下方 _FULLBODY_NEG_TAGS 的 missing fingers/extra digits/
-# bad hands/fused fingers + FaceDetailer），純稀釋且實測歸因為零效益 tag。
+# [CN-069] 全身取景常數只保留 standing：同義詞會攤平注意力，正向手部 tag 對 Illustrious 無效
 _FULLBODY_POS_TAGS = (
     "standing"
 )
-# 全身專屬負向：抑制裁切/特寫構圖，並補全手指相關防護（部分底模預設未含）。
+# [CN-070] 移除 close-up/portrait：它們壓低臉部佔比，與「臉部像素不足」訴求相反。回滾＝加回第一行
 _FULLBODY_NEG_TAGS = (
-    "cropped, out of frame, cut off, close-up, portrait, "
+    "cropped, out of frame, cut off, "
     "missing fingers, extra digits, bad hands, fused fingers"
 )
 
@@ -46,15 +39,11 @@ _FRAMING_SYNONYMS = {
     "whole body": "full body",
 }
 
-# E-2（2026-07-26）：多視圖／設定稿同義 tag —— 「含即丟」語義（與 styles._LINEART_ARTIFACT_RE
-# 同款機制）。人設圖自 E-1 起統一走「單張全身插畫」，但 LLM 翻譯「角色設定」類描述時仍會
-# 自行吐出 character design reference sheet / multiple views，直接把構圖拉回多視角（2026-07-26
-# 附件一雙人的根因之一）。注意：solo 與 multiple views 在 danbooru 語義可共存，補 solo 擋不住，
-# 必須從正向把這類 tag 移除。
-# ⚠️ 只可作用於**正向** —— 負向端刻意保留 multiple views/reference sheet 作為抑制項。
+# [CN-071] 多視圖／設定稿 tag「含即丟」，⚠️只作用於正向（負向刻意保留作抑制項）
 _SHEET_TAG_RE = re.compile(
     r'(reference|design|character|model|turn[ -]?around)\s+sheet'
-    r'|multiple\s+views?|multi[ -]?view|multiple\s+poses',
+    r'|multiple\s+views?|multi[ -]?view|multiple\s+poses'
+    r'|design\s+reference|reference\s+design',
     re.IGNORECASE,
 )
 
@@ -92,13 +81,38 @@ def _dedup_tags(prompt: str) -> str:
         seen.add(norm)
         out.append(tag)
     return ", ".join(out)
-# 全身畫布比例：依角色身形自動選取（「自動匹配大小」）。皆為 64 倍數、約 1MP，
-# 貼近 SDXL 訓練分佈。高瘦 → 更長縱向畫布（多給頭/腳空間，減少裁切）；矮/幼態 → 較方。
-# 2026-06-07：整體往上拉一個 SDXL 直幅 bucket，加大縱向空間。部分 checkpoint
-# （如 AnythingXL_xl）偏 portrait 構圖，較矮畫布會裁掉小腿/腳；加高後全身較完整。
-_FULLBODY_CANVAS_TALL = (704, 1408)    # 身高 ≥170：高挑/長腿（比例 1:2）
-_FULLBODY_CANVAS_STD = (768, 1344)     # 標準成人比例（預設，SDXL 直幅 bucket）
-_FULLBODY_CANVAS_SHORT = (832, 1216)   # 身高 <150 或幼態：矮/Q版
+def _clamp_dim(v: int) -> int:
+    """Round to nearest multiple of 64, clamped to [512, 2048] for SDXL."""
+    v = max(512, min(2048, v))
+    return (v // 64) * 64
+
+
+# [CN-072] _clamp_dim 必須定義在畫布常數之前：常數是模組載入時求值，放下面會 NameError
+def _env_wh(key: str, w: int, h: int) -> tuple[int, int]:
+    """讀 .env 的 `<key>=寬x高` 覆寫全身畫布尺寸；未設或格式錯 → 回預設值。
+
+    B2（SYNC-004，2026-09-19）：B1 把三檔畫布整體上調，但其中只有 STD 有官方/作者
+    背書，SHORT/TALL 是等比推的。需要能在本機即時退回舊值做 A/B 而不必改碼，
+    比照本檔 `_env_float`（:BODY_FILL_* ）的既有慣例。
+    值一律經 `_clamp_dim` 夾成 64 倍數且落在 [512, 2048]。
+    例：`FULLBODY_CANVAS_STD=768x1344` 即退回 B1 之前的舊值。
+    """
+    raw = (os.getenv(key) or "").strip()
+    if not raw:
+        return w, h
+    try:
+        raw_w, raw_h = raw.lower().split("x", 1)
+        return _clamp_dim(int(raw_w)), _clamp_dim(int(raw_h))
+    except (TypeError, ValueError):
+        logger.warning("[canvas] %s 格式錯誤（%r），應為「寬x高」如 768x1344 → 沿用預設 %sx%s",
+                       key, raw, w, h)
+        return w, h
+
+
+# [CN-073] 三檔畫布短邊統一 1024；⚠️只有 STD 有作者範例背書，SHORT/TALL 是等比推的
+_FULLBODY_CANVAS_TALL = _env_wh("FULLBODY_CANVAS_TALL", 1024, 1664)    # 身高 ≥170：高挑/長腿
+_FULLBODY_CANVAS_STD = _env_wh("FULLBODY_CANVAS_STD", 1024, 1536)      # 標準（預設，與官方範例同尺寸）
+_FULLBODY_CANVAS_SHORT = _env_wh("FULLBODY_CANVAS_SHORT", 1024, 1408)  # 身高 <150 或幼態：矮/Q版
 # 身高分界（cm）
 _FULLBODY_TALL_CM = 170
 _FULLBODY_SHORT_CM = 150
@@ -127,7 +141,8 @@ def _border_color(im) -> tuple[int, int, int]:
     return (sum(p[0] for p in pts) // n, sum(p[1] for p in pts) // n, sum(p[2] for p in pts) // n)
 
 
-def _letterbox_to_aspect(image_bytes: bytes, target_w: int, target_h: int) -> bytes:
+def _letterbox_to_aspect(image_bytes: bytes, target_w: int, target_h: int,
+                         label: str = "cn-letterbox") -> bytes:
     """
     把概念圖補邊（letterbox）成與生成畫布相同比例，避免 ComfyUI 對 ControlNet hint 圖
     做置中裁切而切掉頭/腳（窄長草圖塞進較寬畫布 → 上下被裁 → 只剩中段）。
@@ -147,7 +162,9 @@ def _letterbox_to_aspect(image_bytes: bytes, target_w: int, target_h: int) -> by
     canvas.paste(im, ((new_w - w) // 2, (new_h - h) // 2))
     out = io.BytesIO()
     canvas.save(out, "PNG")
-    logger.info("[cn-letterbox] %sx%s → %sx%s (target_ar=%.3f)", w, h, new_w, new_h, target_ar)
+    # label 預設 "cn-letterbox"（原字串）→ 既有 CN 呼叫端零行為變更；
+    # SYNC-005 軌 I 的 IPA 呼叫端傳 "ipa-letterbox" 以便在 log 分辨兩條路徑。
+    logger.info("[%s] %sx%s → %sx%s (target_ar=%.3f)", label, w, h, new_w, new_h, target_ar)
     return out.getvalue()
 
 
@@ -169,25 +186,91 @@ def _fit_to_canvas(image_bytes: bytes, target_w: int, target_h: int) -> bytes:
     return out.getvalue()
 
 
-# ── img2img 參考圖色彩正規化（2026-08-05）──────────────────────────────────────
-# 事故：Anima 走 img2img 時，原始草圖（粉紅背景 + 粉紅鉛筆線）直接進 VAEEncode，
-# 整個色場被帶進 latent → 出圖整張泛粉、角色沒有自己的顏色。CN 路徑有前處理器
-# （AnimeLineArt/Canny）把參考圖化為線稿，img2img 路徑卻只有 _fit_to_canvas
-# （純幾何、零色彩處理）→ 這是兩條路徑的能力落差，不是 denoise 調得不好。
-#
-# 模式（env `IMG2IMG_REF_MODE` 覆寫，供 A/B；預設 grayscale）：
-#   none      = 不處理（＝ 2026-08-05 前行為，回滾用）
-#   grayscale = 去色但保留明暗層次。中性灰不注入色相，顏色交還 prompt 決定。
-#   lineart   = 去色 + 反差拉滿成白底深線。結構最強，但白底在低 denoise 會蓋掉
-#               prompt 指定的背景色，需實測取捨。
+# [CN-074] img2img 參考圖需色彩正規化：草圖粉色場直接進 VAEEncode 會讓出圖泛粉
 _I2I_REF_MODES = ("none", "grayscale", "lineart")
 _I2I_REF_MODE_DEFAULT = "grayscale"
-# lineart 二值化門檻。⚠️ 必須先 autocontrast 再套用：草圖去色後背景是中灰（實測
-# 中位數 ~184、動態範圍僅 35~185），直接對原始灰階套門檻會把整張圖判成線條（全黑）。
-# autocontrast 把背景拉到 ~252 後，此門檻才落在「線 vs 背景」的正確位置（實測深色
-# 占比 5.5%，與草圖線條密度相符）。
+# [CN-075] lineart 二值化前必須先 autocontrast，否則整張判成線條（全黑）
 _I2I_LINEART_AUTOCONTRAST_CUTOFF = 1
 _I2I_LINEART_THRESHOLD = 190
+
+
+# [CN-076] lineart 白底要換成目標色；⚠️順序：二值化之後、縮放之前。auto 解析不到時退白底非草圖底色
+_I2I_BG_MODE_DEFAULT = "auto"
+_I2I_BG_WHITE = (255, 255, 255)
+
+# 英文色名 → RGB。鍵集合涵蓋 lexicon.COLOR_MAP 的所有 value（中文→英文的產出端），
+# 外加常見背景色寫法。lexicon 只做「中文→英文色名」，不帶 RGB，故此表獨立維護。
+_I2I_BG_COLORS: dict[str, tuple[int, int, int]] = {
+    "white": (255, 255, 255), "black": (0, 0, 0),
+    "grey": (128, 128, 128), "gray": (128, 128, 128),
+    "red": (200, 60, 60), "blue": (70, 110, 200), "green": (80, 170, 90),
+    "yellow": (240, 220, 90), "orange": (240, 150, 60), "purple": (150, 90, 190),
+    "pink": (240, 160, 190), "brown": (140, 100, 70), "beige": (235, 220, 190),
+    "cream": (250, 240, 215), "ivory": (255, 250, 235), "navy": (35, 55, 110),
+    "teal": (50, 140, 140), "cyan": (110, 210, 220), "magenta": (210, 70, 170),
+    "silver": (200, 200, 205), "golden": (215, 175, 70), "blonde": (230, 205, 140),
+    "amber": (230, 170, 60),
+}
+# 「<color> background」。允許一個修飾詞（light blue background），取最後一個色詞比對。
+_I2I_BG_TAG_RE = re.compile(r"([a-z]+(?:\s+[a-z]+)?)\s+background\b", re.I)
+
+
+def _parse_bg_color_from_prompt(prompt: str | None) -> tuple[int, int, int] | None:
+    """從 prompt 抓 "<color> background" 的顏色。抓不到色名回 None。
+
+    prompt 裡常見 simple/detailed/plain background 等非顏色寫法 → 逐一往下找，
+    第一個查得到色名的才算命中（不因非顏色 tag 排在前面就放棄）。
+    """
+    if not prompt:
+        return None
+    for m in _I2I_BG_TAG_RE.finditer(prompt):
+        words = m.group(1).lower().split()
+        for w in reversed(words):          # 取最靠近 background 的色詞
+            if w in _I2I_BG_COLORS:
+                return _I2I_BG_COLORS[w]
+    return None
+
+
+def _parse_hex_color(v: str) -> tuple[int, int, int] | None:
+    m = re.fullmatch(r"#?([0-9a-fA-F]{6})", v.strip())
+    if not m:
+        return None
+    h = m.group(1)
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def _resolve_i2i_ref_bg(prompt: str | None, sketch_bg: tuple[int, int, int] | None
+                        ) -> tuple[int, int, int] | None:
+    """依 env `IMG2IMG_REF_BG` 決定線稿要貼的底色。回 None 代表不合成（維持純白底）。"""
+    raw = os.getenv("IMG2IMG_REF_BG", _I2I_BG_MODE_DEFAULT).strip()
+    v = raw.lower()
+    if v == "none":
+        return None
+    if v not in ("auto", "sketch"):
+        rgb = _parse_hex_color(raw)
+        if rgb is None:
+            logger.warning("[i2i-ref] IMG2IMG_REF_BG=%r 非 auto/sketch/none/#RRGGBB，"
+                           "改用預設 %s", raw, _I2I_BG_MODE_DEFAULT)
+            v = _I2I_BG_MODE_DEFAULT
+        else:
+            return rgb
+    from_prompt = _parse_bg_color_from_prompt(prompt)
+    if from_prompt is not None:
+        return from_prompt
+    if v == "sketch" and sketch_bg is not None:
+        return sketch_bg
+    return None
+
+
+def _composite_lineart_on_bg(im, bg_rgb: tuple[int, int, int]):
+    """把二值線稿（255=背景、0=線條）貼到指定底色畫布。線條保持純黑，背景換色。
+
+    用 Image.composite 而非 paste：mask 為二值圖本身，255 處取底色、0 處取黑線，
+    不產生任何中間灰階 → 維持「純二值」前提，縮放前不引入邊緣過渡。
+    """
+    bg_canvas = Image.new("RGB", im.size, bg_rgb)
+    line_canvas = Image.new("RGB", im.size, (0, 0, 0))
+    return Image.composite(bg_canvas, line_canvas, im)
 
 
 def _resolve_i2i_ref_mode() -> str:
@@ -200,11 +283,15 @@ def _resolve_i2i_ref_mode() -> str:
     return mode
 
 
-def _normalize_i2i_ref(image_bytes: bytes, mode: str | None = None) -> bytes:
+def _normalize_i2i_ref(image_bytes: bytes, mode: str | None = None,
+                       prompt: str | None = None) -> bytes:
     """把 img2img 參考圖的色彩正規化，避免草圖底色污染整張輸出。
 
     只動色彩，不動幾何（尺寸對齊仍由 _fit_to_canvas 負責）。任何失敗都回傳原圖，
     讓生成繼續跑（Resilient errors）。
+
+    `prompt`（P0，2026-08-12）：僅 lineart 模式使用，供解析 "<color> background"
+    決定線稿底色。未傳入時等同解析不到 → 依 IMG2IMG_REF_BG 決定白底或草圖底色。
     """
     mode = (mode or _resolve_i2i_ref_mode()).strip().lower()
     if mode not in _I2I_REF_MODES:
@@ -213,10 +300,19 @@ def _normalize_i2i_ref(image_bytes: bytes, mode: str | None = None) -> bytes:
     if mode == "none":
         return image_bytes
     try:
-        im = Image.open(io.BytesIO(image_bytes)).convert("L")
+        src = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        im = src.convert("L")
         if mode == "lineart":
             im = ImageOps.autocontrast(im, cutoff=_I2I_LINEART_AUTOCONTRAST_CUTOFF)
             im = im.point(lambda v: 0 if v < _I2I_LINEART_THRESHOLD else 255, mode="L")
+            # 背景合成必須落在此處：二值化之後、_fit_to_canvas 縮放之前。
+            bg = _resolve_i2i_ref_bg(prompt, _border_color(src))
+            if bg is not None and bg != _I2I_BG_WHITE:
+                rgb = _composite_lineart_on_bg(im, bg)
+                out = io.BytesIO()
+                rgb.save(out, "PNG")
+                logger.info("[i2i-ref] 色彩正規化：mode=%s，線稿底色=%s", mode, bg)
+                return out.getvalue()
         out = io.BytesIO()
         im.convert("RGB").save(out, "PNG")
         logger.info("[i2i-ref] 色彩正規化：mode=%s", mode)
@@ -248,12 +344,6 @@ def _image_dimensions(image_bytes: bytes) -> tuple[int, int]:
     except Exception:
         pass
     return 1024, 1024
-
-
-def _clamp_dim(v: int) -> int:
-    """Round to nearest multiple of 64, clamped to [512, 2048] for SDXL."""
-    v = max(512, min(2048, v))
-    return (v // 64) * 64
 
 
 def _fullbody_canvas(height) -> tuple[int, int]:
@@ -361,12 +451,7 @@ def _pixel_coverage_check(image_bytes: bytes) -> str | None:
         pass
     return None
 
-# ── 反向升級檢查（2026-07-14 全身外擴誤判修復 T1A）─────────────────────────────
-# 事故：LLM 把「完整站立全身草圖」誤判 partial/bust → 觸發外擴 → 在已完整的身體
-# 下方再 inpaint 一套腿（幽靈下半身／比例被拉長）。coverage 誤判偏差中，
-# full→partial（少補腿）代價 << partial→full（憑空多生下半身），故只加「反向升級」單向
-# 防呆：LLM 判 partial/bust 時，用像素幾何反查草圖是否其實已是完整站立全身，是則升級
-# full、跳過外擴。雙條件「同時」成立才升級，任一不成立即維持 LLM 判定 → 對真半身零回歸。
+# [CN-077] 反向升級單向防呆：LLM 判 partial/bust 時用像素幾何反查是否其實已是全身，是則升級 full
 _FULLNESS_BOTTOM_MARGIN = _env_float("FULLNESS_BOTTOM_MARGIN", 0.015)  # ink bbox 底距畫布底 ≥ 此比例 → 角色收尾於畫面內。2026-07-15：實測真半身margin=0%、真全身≥2%，0.03太嚴會擋掉2%的全身(附件1/6)→降0.015；仍是調參(真全身腳觸底邊者仍漏)，根治見 T1B DWPose
 _FULLNESS_MIN_AR = _env_float("FULLNESS_MIN_AR", 2.0)                 # ink bbox 高/寬 ≥ 此值 → 站立全身 prior（胸像 AR≈1.0–1.3）
 _FULLNESS_INK_DELTA = _env_float("FULLNESS_INK_DELTA", 28.0)          # 偏離背景色歐氏距離 ≥ 此值 → 視為 ink（非固定灰階閾值，淡鉛筆稿才抓得到）
@@ -433,11 +518,7 @@ def _pixel_fullness_check(image_bytes: bytes) -> bool:
     )
     return upgrade
 
-# ── 外擴輸出斷裂偵測（2026-07-15 全身外擴誤判修復 Stage 3 T3A）──────────────────────
-# 最後防線：即使判定層誤放行、外擴仍生出「上半身完整 + 一段背景空帶 + 下方漂浮第二套腿」
-# 的幽靈下半身（附件三實例），這裡在外擴輸出上做行掃描攔截：主體垂直範圍內若存在一整段
-# 「整排幾乎純背景色」的空帶（≥ EXPAND_BREAK_MIN_FRAC 圖高），判定主體斷裂 → 呼叫端丟棄
-# 外擴、回退方案1（縮圖＋夾 CN）。用雙門檻避開腳踝/脖子等細窄處誤判為斷裂。
+# [CN-078] 外擴輸出行掃描攔截「幽靈下半身」：主體範圍內出現整段純背景空帶即判斷裂、回退方案1
 _EXPAND_BREAK_MIN_FRAC = _env_float("EXPAND_BREAK_MIN_FRAC", 0.08)  # 主體內連續空帶 ≥ 此比例圖高 → 判斷裂
 _EXPAND_BREAK_CONTENT_ROW = _env_float("EXPAND_BREAK_CONTENT_ROW", 0.02)  # 該列 ink 佔寬 ≥ 此比例 → 視為「有主體」列
 _EXPAND_BREAK_GAP_ROW = _env_float("EXPAND_BREAK_GAP_ROW", 0.005)         # 該列 ink 佔寬 ≤ 此比例 → 視為「純背景」列（腳踝等細處落在兩者間、不計為空帶）

@@ -14,7 +14,13 @@ from typing import Optional
 import requests
 from PIL import Image
 
-from app.core.config import OLLAMA_BASE, DEFAULT_TEXT_MODEL, DEFAULT_VISION_MODEL
+from app.core.config import (
+    OLLAMA_BASE,
+    DEFAULT_TEXT_MODEL,
+    DEFAULT_VISION_MODEL,
+    OLLAMA_KEEP_ALIVE_SEC,
+)
+from app.services.http_local import SESSION
 
 TIMEOUT_TEXT = 300
 TIMEOUT_VISION = 300
@@ -40,6 +46,21 @@ def _resize_for_vision(image_bytes: bytes, max_px: int = _VISION_MAX_PX) -> byte
         return image_bytes
 
 
+def _apply_keep_alive(payload: dict, keep_alive: Optional[int]) -> dict:
+    """keep_alive=None → 取 config 的 OLLAMA_KEEP_ALIVE_SEC（預設 0＝用完即退 VRAM）。
+
+    SYNC-006 N14（2026-09-20）：舊版 None 代表「不送這個欄位」，於是吃 Ollama 自己的
+    5 分鐘預設。char-gen 主線（compiler.py / vision_extract.py）早就自己傳 0，但
+    art_service / character_service / training 那幾條沒傳 —— 9B 模型就這樣在 16G 卡上
+    待 5 分鐘跟 ComfyUI 搶顯存，是主 KSampler 掉到 12.69 s/it 的上游成因之一。
+    設 OLLAMA_KEEP_ALIVE_SEC=-1 可回到舊行為（負值＝不送欄位，交還 Ollama 預設）。
+    """
+    v = OLLAMA_KEEP_ALIVE_SEC if keep_alive is None else keep_alive
+    if v >= 0:
+        payload["keep_alive"] = v
+    return payload
+
+
 def generate(
     prompt: str,
     model: str = DEFAULT_TEXT_MODEL,
@@ -60,19 +81,21 @@ def generate(
     payload: dict = {"model": model, "prompt": prompt, "stream": False, "think": False}
     if options:
         payload["options"] = options
-    if keep_alive is not None:
-        payload["keep_alive"] = keep_alive
+    _apply_keep_alive(payload, keep_alive)
     return _post_generate(payload, TIMEOUT_TEXT, "Ollama")
 
 
-def analyze_image(image_path: str, prompt: str, model: str = DEFAULT_VISION_MODEL) -> str:
+def analyze_image(
+    image_path: str,
+    prompt: str,
+    model: str = DEFAULT_VISION_MODEL,
+    keep_alive: Optional[int] = None,
+) -> str:
     try:
         image_b64 = base64.b64encode(Path(image_path).read_bytes()).decode()
-        return _post_generate(
-            {"model": model, "prompt": prompt, "images": [image_b64], "stream": False},
-            TIMEOUT_VISION,
-            "Vision",
-        )
+        payload: dict = {"model": model, "prompt": prompt, "images": [image_b64], "stream": False}
+        _apply_keep_alive(payload, keep_alive)
+        return _post_generate(payload, TIMEOUT_VISION, "Vision")
     except Exception as e:
         return f"[Vision error at {OLLAMA_BASE}: {e}]"
 
@@ -90,8 +113,7 @@ def analyze_image_bytes(
         payload: dict = {"model": model, "prompt": prompt, "images": [image_b64], "stream": False, "think": False}
         if options:
             payload["options"] = options
-        if keep_alive is not None:
-            payload["keep_alive"] = keep_alive
+        _apply_keep_alive(payload, keep_alive)
         return _post_generate(payload, TIMEOUT_VISION, "Vision")
     except Exception as e:
         return f"[Vision error at {OLLAMA_BASE}: {e}]"
@@ -119,8 +141,7 @@ def analyze_multi_images_bytes(
         payload: dict = {"model": model, "prompt": prompt, "images": encoded, "stream": False, "think": False}
         if options:
             payload["options"] = options
-        if keep_alive is not None:
-            payload["keep_alive"] = keep_alive
+        _apply_keep_alive(payload, keep_alive)
         return _post_generate(payload, TIMEOUT_VISION, "Vision")
     except Exception as e:
         return f"[Vision error at {OLLAMA_BASE}: {e}]"
@@ -128,7 +149,7 @@ def analyze_multi_images_bytes(
 
 def _post_generate(payload: dict, timeout: int, label: str) -> str:
     try:
-        r = requests.post(f"{OLLAMA_BASE}/api/generate", json=payload, timeout=timeout)
+        r = SESSION.post(f"{OLLAMA_BASE}/api/generate", json=payload, timeout=timeout)
         r.raise_for_status()
         return r.json().get("response", "").strip()
     except requests.exceptions.ConnectionError:
@@ -148,7 +169,7 @@ def is_error(response: str) -> bool:
 
 def is_available() -> bool:
     try:
-        requests.get(f"{OLLAMA_BASE}/api/tags", timeout=3)
+        SESSION.get(f"{OLLAMA_BASE}/api/tags", timeout=3)
         return True
     except Exception:
         return False

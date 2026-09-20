@@ -1,0 +1,604 @@
+{
+  "22": {
+    "inputs": {
+      "unet_name": "anima_aestheticV11.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "載入擴散模型"
+    }
+  },
+  "24": {
+    "inputs": {
+      "wildcard_text": "masterpiece, best quality, absurdres,1girl, solo, long hair, breasts, looking at viewer, blush, bangs, large breasts, simple background, long sleeves, white background, cleavage, very long hair, closed mouth, purple eyes, collarbone, ponytail, white hair, sidelocks, pov, halo, nightgown\nNegative prompt: worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name,\nSteps: 12, CFG scale: 1, Sampler: er_sde_simple, Seed: 1112819362967577, Model: anima_turboV10, width: 1024, height: 1536, Version: ComfyUI",
+      "populated_text": "masterpiece, best quality, absurdres,1girl, solo, long hair, breasts, looking at viewer, blush, bangs, large breasts, simple background, long sleeves, white background, cleavage, very long hair, closed mouth, purple eyes, collarbone, ponytail, white hair, sidelocks, pov, halo, nightgown\nNegative prompt: worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name,\nSteps: 12, CFG scale: 1, Sampler: er_sde_simple, Seed: 1112819362967577, Model: anima_turboV10, width: 1024, height: 1536, Version: ComfyUI",
+      "mode": "populate",
+      "seed": [
+        "63",
+        0
+      ],
+      "Select to add Wildcard": "Select the Wildcard to add to the text"
+    },
+    "class_type": "ImpactWildcardProcessor",
+    "_meta": {
+      "title": "POSITIVE"
+    }
+  },
+  "25": {
+    "inputs": {
+      "wildcard_text": "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name,",
+      "populated_text": "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name,",
+      "mode": "populate",
+      "seed": [
+        "63",
+        0
+      ],
+      "Select to add Wildcard": "Select the Wildcard to add to the text"
+    },
+    "class_type": "ImpactWildcardProcessor",
+    "_meta": {
+      "title": "NEGATIVE"
+    }
+  },
+  "26": {
+    "inputs": {
+      "__lm_autocomplete_meta_text": {
+        "version": 1,
+        "textWidgetName": "text"
+      },
+      "text": "",
+      "loras": {
+        "__value__": []
+      },
+      "model": [
+        "22",
+        0
+      ],
+      "clip": [
+        "40",
+        0
+      ]
+    },
+    "class_type": "Lora Loader (LoraManager)",
+    "_meta": {
+      "title": "Lora Loader (LoraManager)"
+    }
+  },
+  "27": {
+    "inputs": {
+      "seed": [
+        "63",
+        0
+      ],
+      "steps": [
+        "50",
+        1
+      ],
+      "cfg": [
+        "50",
+        2
+      ],
+      "sampler_name": [
+        "73",
+        0
+      ],
+      "scheduler": [
+        "72",
+        0
+      ],
+      "denoise": [
+        "50",
+        5
+      ],
+      "model": [
+        "85",
+        0
+      ],
+      "positive": [
+        "80",
+        0
+      ],
+      "negative": [
+        "84",
+        0
+      ],
+      "latent_image": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "28": {
+    "inputs": {
+      "model_name": "bbox/face_yolov9c.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "Default DetectorProvider"
+    }
+  },
+  "29": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)"
+    }
+  },
+  "35": {
+    "inputs": {
+      "filename": "%time_%basemodelname_%seed",
+      "path": "",
+      "extension": "png",
+      "lossless_webp": true,
+      "quality_jpeg_or_webp": 100,
+      "optimize_png": false,
+      "embed_workflow": true,
+      "save_workflow_as_json": false,
+      "counter": 0,
+      "time_format": "%Y-%m-%d-%H%M%S",
+      "show_preview": true,
+      "images": [
+        "112",
+        0
+      ],
+      "metadata": [
+        "89",
+        0
+      ]
+    },
+    "class_type": "Image Saver Simple",
+    "_meta": {
+      "title": "Image Saver Simple"
+    }
+  },
+  "40": {
+    "inputs": {
+      "clip_name": "qwen_3_06b_base.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "載入 CLIP"
+    }
+  },
+  "41": {
+    "inputs": {
+      "wildcard": "",
+      "Select to add LoRA": "Select the LoRA to add to the text",
+      "Select to add Wildcard": "Select the Wildcard to add to the text",
+      "model": [
+        "52",
+        0
+      ],
+      "clip": [
+        "85",
+        1
+      ],
+      "vae": [
+        "48",
+        0
+      ],
+      "positive": [
+        "80",
+        0
+      ],
+      "negative": [
+        "84",
+        0
+      ],
+      "bbox_detector": [
+        "28",
+        0
+      ],
+      "sam_model_opt": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "ToDetailerPipe",
+    "_meta": {
+      "title": "ToDetailerPipe"
+    }
+  },
+  "48": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "載入 VAE"
+    }
+  },
+  "50": {
+    "inputs": {
+      "seed": [
+        "63",
+        0
+      ],
+      "steps": 30,
+      "cfg": 4,
+      "sampler": "er_sde",
+      "scheduler": "simple",
+      "denoise": 1
+    },
+    "class_type": "Input Parameters (Image Saver)",
+    "_meta": {
+      "title": "Input Parameters (Image Saver)"
+    }
+  },
+  "52": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "85",
+        0
+      ]
+    },
+    "class_type": "DifferentialDiffusion",
+    "_meta": {
+      "title": "差分擴散"
+    }
+  },
+  "62": {
+    "inputs": {
+      "value": 1536
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Max Size"
+    }
+  },
+  "63": {
+    "inputs": {
+      "seed": 660345688402416
+    },
+    "class_type": "SeedNode",
+    "_meta": {
+      "title": "種子"
+    }
+  },
+  "66": {
+    "inputs": {
+      "group_mode": true,
+      "default_active": false,
+      "allow_strength_adjustment": {
+        "__value__": []
+      },
+      "toggle_trigger_words": {
+        "__value__": []
+      },
+      "orinalMessage": "",
+      "trigger_words": [
+        "26",
+        2
+      ]
+    },
+    "class_type": "TriggerWord Toggle (LoraManager)",
+    "_meta": {
+      "title": "TriggerWord Toggle (LoraManager)"
+    }
+  },
+  "67": {
+    "inputs": {
+      "value": 512
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Guide Size"
+    }
+  },
+  "68": {
+    "inputs": {
+      "value": 1024
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "70": {
+    "inputs": {
+      "value": 2.5
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "BBOX Crop Factor"
+    }
+  },
+  "71": {
+    "inputs": {
+      "value": 1536
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "72": {
+    "inputs": {
+      "text": "simple",
+      "anything": [
+        "50",
+        4
+      ]
+    },
+    "class_type": "easy showAnything",
+    "_meta": {
+      "title": "Show Any"
+    }
+  },
+  "73": {
+    "inputs": {
+      "text": "er_sde",
+      "anything": [
+        "50",
+        3
+      ]
+    },
+    "class_type": "easy showAnything",
+    "_meta": {
+      "title": "Show Any"
+    }
+  },
+  "75": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "86",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "76": {
+    "inputs": {
+      "samples": [
+        "27",
+        0
+      ],
+      "vae": [
+        "48",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE 解碼"
+    }
+  },
+  "77": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Tiled Detailer"
+    }
+  },
+  "78": {
+    "inputs": {
+      "value": 3
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Batch Size"
+    }
+  },
+  "79": {
+    "inputs": {
+      "string_a": [
+        "66",
+        0
+      ],
+      "string_b": [
+        "24",
+        0
+      ],
+      "delimiter": ","
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "串接"
+    }
+  },
+  "80": {
+    "inputs": {
+      "text": [
+        "83",
+        0
+      ],
+      "clip": [
+        "85",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "83": {
+    "inputs": {
+      "string": [
+        "79",
+        0
+      ],
+      "regex_pattern": "^,|,$",
+      "replace": "",
+      "case_insensitive": true,
+      "multiline": false,
+      "dotall": false,
+      "count": 0
+    },
+    "class_type": "RegexReplace",
+    "_meta": {
+      "title": "正則表達式替換"
+    }
+  },
+  "84": {
+    "inputs": {
+      "text": [
+        "25",
+        0
+      ],
+      "clip": [
+        "85",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "85": {
+    "inputs": {
+      "model": [
+        "26",
+        0
+      ],
+      "clip": [
+        "26",
+        1
+      ]
+    },
+    "class_type": "CLIPNegPip",
+    "_meta": {
+      "title": "CLIP NegPip"
+    }
+  },
+  "86": {
+    "inputs": {
+      "width": [
+        "68",
+        0
+      ],
+      "height": [
+        "71",
+        0
+      ],
+      "batch_size": [
+        "78",
+        0
+      ]
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "空白潛在影像"
+    }
+  },
+  "87": {
+    "inputs": {
+      "string_a": [
+        "83",
+        0
+      ],
+      "string_b": [
+        "26",
+        3
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "串接"
+    }
+  },
+  "88": {
+    "inputs": {
+      "id": 22,
+      "widget_name": "unet_name",
+      "return_all": false,
+      "node_title": "",
+      "allowed_float_decimals": 2
+    },
+    "class_type": "WidgetToString",
+    "_meta": {
+      "title": "Widget To String"
+    }
+  },
+  "89": {
+    "inputs": {
+      "modelname": [
+        "88",
+        0
+      ],
+      "positive": [
+        "87",
+        0
+      ],
+      "negative": [
+        "25",
+        0
+      ],
+      "width": [
+        "68",
+        0
+      ],
+      "height": [
+        "71",
+        0
+      ],
+      "seed_value": [
+        "63",
+        0
+      ],
+      "steps": [
+        "50",
+        1
+      ],
+      "cfg": [
+        "50",
+        2
+      ],
+      "sampler_name": [
+        "73",
+        0
+      ],
+      "scheduler_name": [
+        "72",
+        0
+      ],
+      "denoise": [
+        "50",
+        5
+      ],
+      "clip_skip": 0,
+      "additional_hashes": "",
+      "download_civitai_data": true,
+      "easy_remix": false,
+      "custom": ""
+    },
+    "class_type": "Image Saver Metadata",
+    "_meta": {
+      "title": "Image Saver Metadata"
+    }
+  },
+  "112": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "76",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  }
+}

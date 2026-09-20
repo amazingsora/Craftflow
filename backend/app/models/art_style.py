@@ -10,6 +10,8 @@ from app.core.database import Base
 
 
 class ArtStyle(Base):
+    """畫風定義 — LoRA 清單 + prompt 覆寫欄位。生圖時優先序：art_style 個別欄位 > prompt_profiles.yml > family 預設。"""
+
     __tablename__ = "art_styles"
 
     id:             Mapped[int]           = mapped_column(primary_key=True, autoincrement=True)

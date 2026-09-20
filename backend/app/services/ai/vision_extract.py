@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """Vision 抽取與角色 SD 標籤工具。
 
 自 api/art_generate.py 下沉（2026-06-11 A1 階段 1）：
@@ -227,9 +228,7 @@ _CLOTHING_KW = {
 _HAIRSTYLE_KW = {
     "馬尾", "雙馬尾", "辮子", "捲髮", "直髮", "髮型", "長髮",
 }
-# S8（2026-07-13）：線稿膚色洩漏詞族。未上色線稿的膚色被 vision 誤譯成
-# 「膚色未填色呈線條狀 / tan skin tone」進 prompt，壓深生成膚色（第五輪歸因）。
-# 有膚色線條/未填色類描述一律剝除；真正膚色由年齡/預設確定性決定。
+# [CN-103] 線稿膚色洩漏詞族一律剝除，真膚色由年齡/預設確定性決定
 _SKINTONE_LEAK_KW = {
     "膚色", "膚", "未上色", "未填色", "無色", "線條", "線稿",
     "tan skin", "skin tone", "uncolored", "colorless", "unpainted",
@@ -293,17 +292,10 @@ def _visual_extract_prompt(n: int) -> str:
         "格式：逗號分隔的中文短語，不加標號，不寫句子，控制在90字以內。"
     )
 
-# ── Vision extraction cache ──────────────────────────────────────────────────
-# concept images 不變 → vision 抽取結果不變。以 image bytes hash + 模式 + 模型為
-# key 快取，重複生成同角色時跳過最貴的 Ollama vision 呼叫（5~20s）。
-# 錯誤結果（"[...]" 開頭）不快取。dict 依插入序淘汰最舊項目。
-# 快取持久化至 data/vision_cache.json，重啟後仍命中（避免 LLM 非確定性導致行為飄移）。
+# [CN-104] vision 快取以 image hash+模式+模型為 key，持久化至 data/vision_cache.json；錯誤結果不快取
 _VISION_CACHE_MAX = 32
 
-# H1（2026-07-13）：cache 版本號。coverage 與 visual 存在同一 cache value，過去 cache key
-# 不含流程版本 → 改了 coverage 判定/prompt 後，舊的（可能誤判 full 的）coverage 仍被鎖死命中
-# （第六輪半身圖斷腿根因之一）。凡動到 coverage 判定或 vision prompt，就 bump 此版本號，
-# 讓全部舊快取自動失效、下次重判。
+# [CN-105] 凡動到 coverage 判定或 vision prompt 就 bump 版本號，否則舊誤判結果被鎖死命中
 _VISION_FLOW_VERSION = "v4-2026-07-14"  # T1A：加入像素反向升級（fullness-check），改動 coverage 決策鏈 → 清舊快取重判
 
 

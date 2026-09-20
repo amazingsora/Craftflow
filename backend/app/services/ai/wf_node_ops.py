@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """ComfyUI workflow（API-format dict）節點操作工具。
 
 自 api/art_generate.py 下沉（2026-06-11 A1 階段 1）：
@@ -185,13 +186,7 @@ def _find_main_ksampler_id(wf: dict) -> str | None:
     return ks_ids[0]
 
 
-# ── 參數覆寫（上游來源優先，2026-07-25）────────────────────────────────────────
-# 問題：作者型工作流常把採樣參數集中在一個「參數節點」，再分送 KSampler 與
-# Image Saver Metadata（AnimaStandardV7 的 node 24 `Input Parameters (Image Saver)`
-# 即如此：steps/cfg/denoise 皆為 ["24", n] 節點參照）。後端若直接把字面值寫到
-# KSampler，metadata 仍讀原節點 → **實跑值與記錄值不符**（採樣雙真相）。
-# 同樣情形也發生在 EmptyLatentImage.width/height ← `easy int` 節點（解析度已在寫錯）。
-# 解法：覆寫前先看該輸入是不是節點參照，是就寫到來源節點，讓所有消費端同步。
+# [CN-095] 覆寫前先看輸入是不是節點參照，是就寫到來源節點，否則實跑值與 metadata 記錄值不符
 _PARAM_VALUE_KEYS = {
     "easy int": "value",
     "easy float": "value",
@@ -202,6 +197,39 @@ _PARAM_VALUE_KEYS = {
     "PrimitiveBoolean": "value",
     "Seed (rgthree)": "seed",
 }
+
+
+def _get_node_input(wf: dict, node_id: str, key: str):
+    """讀 wf[node_id].inputs[key]；若該輸入是上游節點參照，往上游取實際字面值。
+
+    與 `_set_node_input` 共用同一組解析規則（同名字面輸入 → `_PARAM_VALUE_KEYS`），
+    寫入與讀出因此永遠對稱 —— 兩邊各寫一套解析必然會分歧。
+
+    Q5-1（2026-08-19）：作者型工作流（V37 node 18 / AnimaStandardV8 node 24）把
+    steps/cfg 集中在單一參數節點分送 KSampler 與 metadata，`KSampler.inputs.steps`
+    存的是 `["18", 1]` 這種參照。先前直接回傳它 → `generation_history.params.steps`
+    記成 list，可重現性記錄失真（08-19 §F7）。
+
+    Returns:
+        解析後的字面值；無法解析（找不到節點／來源不可解）時回 None。
+    """
+    node = wf.get(node_id)
+    if not isinstance(node, dict):
+        return None
+    cur = node.get("inputs", {}).get(key)
+    if not (isinstance(cur, list) and cur):
+        return cur
+
+    src = wf.get(str(cur[0]))
+    if not isinstance(src, dict):
+        return None
+    src_inputs = src.get("inputs", {})
+    if key in src_inputs and not isinstance(src_inputs[key], list):
+        return src_inputs[key]
+    mapped = _PARAM_VALUE_KEYS.get(src.get("class_type", ""))
+    if mapped and mapped in src_inputs and not isinstance(src_inputs[mapped], list):
+        return src_inputs[mapped]
+    return None
 
 
 def _set_node_input(wf: dict, node_id: str, key: str, value) -> bool:
@@ -249,10 +277,7 @@ def _set_node_input(wf: dict, node_id: str, key: str, value) -> bool:
     return False
 
 
-# ── img2img（CN 替代路徑，2026-07-25 D'-2）─────────────────────────────────────
-# Anima 不支援 ControlNet（官方明言），但仍需要「依草圖控制構圖」的能力。
-# 以 img2img（VAEEncode + 低 denoise）取代：參考圖進 latent，denoise 越低越貼合原圖。
-# 工作流磁碟檔不動，節點只在記憶體注入（與既有 _inject_ipa_cn_nodes 同機制）。
+# [CN-096] img2img 以 VAEEncode+低 denoise 取代 CN；只在記憶體注入，磁碟 workflow 檔不動
 
 
 def _find_vae_ref(wf: dict) -> list | None:
@@ -307,6 +332,75 @@ def _inject_img2img(wf: dict, uploaded_name: str, denoise: float) -> bool:
     _set_node_input(wf, ks_id, "denoise", float(denoise))
     logger.info("[img2img] 已注入：KSampler(%s).latent_image ← VAEEncode(%s) ← LoadImage(%s)，denoise=%.2f",
                 ks_id, encode_id, loadimg_id, denoise)
+    return True
+
+
+# [CN-097] LLLite 是 MODEL 層注入（不碰 latent），與 CN/img2img 三者互斥；node_class 由呼叫端傳入
+_LLLITE_NODE_CLASS_FALLBACK = "AnimaLLLiteApply_sdscripts"
+_LLLITE_START_PERCENT, _LLLITE_END_PERCENT = 0.0, 1.0
+
+
+def _wf_has_lllite(wf: dict) -> bool:
+    return any(isinstance(n, dict)
+               and isinstance(n.get("class_type"), str)
+               and n["class_type"].startswith("AnimaLLLiteApply")
+               for n in wf.values())
+
+
+def _inject_lllite(wf: dict, image_name: str, lllite_name: str, strength: float,
+                   start_percent: float = _LLLITE_START_PERCENT,
+                   end_percent: float = _LLLITE_END_PERCENT,
+                   node_class: str | None = None) -> bool:
+    """在 KSampler.model 上游插入 Anima LLLite 節點，回傳是否成功。
+
+    接線：  <原 model 來源> → <node_class>.model
+           LoadImage(草圖)  → <node_class>.image
+           <node_class>     → KSampler.model
+
+    node_class 由呼叫端傳入（capability 探測到的實際 class 名）；未傳時退到
+    _LLLITE_NODE_CLASS_FALLBACK，僅供相容，正常路徑不應觸發。
+
+    Resilient errors：找不到 KSampler 或 model 來源都回 False（讓呼叫端退 fallback），
+    不丟例外。
+    """
+    node_class = node_class or _LLLITE_NODE_CLASS_FALLBACK
+    if _wf_has_lllite(wf):
+        logger.info("[lllite] workflow 已含 LLLite 節點，不重複注入")
+        return False
+    ks_id = _find_main_ksampler_id(wf)
+    if ks_id is None:
+        logger.warning("[lllite] 找不到 KSampler，略過注入")
+        return False
+    ks_inputs = wf[ks_id].setdefault("inputs", {})
+    model_src = ks_inputs.get("model")
+    if model_src is None:
+        logger.warning("[lllite] KSampler(%s) 無 model 輸入，略過注入", ks_id)
+        return False
+
+    next_id = max((int(k) for k in wf if k.isdigit()), default=0) + 1
+    loadimg_id, lllite_id = str(next_id), str(next_id + 1)
+
+    wf[loadimg_id] = {
+        "class_type": "LoadImage",
+        "inputs": {"image": image_name, "upload": "image"},
+    }
+    wf[lllite_id] = {
+        "class_type": node_class,
+        "inputs": {
+            "model": model_src,
+            "lllite_name": lllite_name,
+            "image": [loadimg_id, 0],
+            "strength": round(float(strength), 2),
+            "start_percent": float(start_percent),
+            "end_percent": float(end_percent),
+            # 多個 wrapper 類節點串接時委派給前一個，避免外層靜默覆蓋內層（節點預設值）
+            "preserve_wrapper": True,
+        },
+    }
+    ks_inputs["model"] = [lllite_id, 0]
+    logger.info("[lllite] 已注入：KSampler(%s).model ← %s(%s)，weights=%s strength=%.2f "
+                "range=%.2f~%.2f", ks_id, node_class, lllite_id,
+                lllite_name, strength, start_percent, end_percent)
     return True
 
 
@@ -590,13 +684,7 @@ def _resolve_conditioning(
     return None
 
 
-# H-3（2026-07-26，原 B-3''）：Image Saver 系節點的 positive/negative 是**節點參照**，
-# 指向工作流內建的 wildcard→StringConcatenate 鏈（V37: node 54.positive ← 48 ← 47 ← 45 ← 3；
-# Anima: node 58.positive ← 51），而 _inject_prompts 只覆寫 CLIPTextEncode
-# → **metadata 記的是工作流內建 prompt，不是實際送出的那一份**，出圖無法重現。
-# 這裡在注入後把實際值以字面值寫進 saver，讓記錄與實跑同源。
-# 不用 _set_node_input：來源是 StringConcatenate（無同名字面欄位、非參數節點），
-# 走該函式只會落到 fallback 並記一筆誤導性 WARNING，結果與直接寫字面值相同。
+# [CN-098] Image Saver 的 prompt 是節點參照，注入後須補寫字面值，否則 metadata 記的是內建 prompt
 _METADATA_SAVER_PREFIX = "Image Saver"
 
 

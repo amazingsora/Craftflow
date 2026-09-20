@@ -10,6 +10,8 @@ from app.core.database import Base
 
 
 class TrainingImage(Base):
+    """LoRA 訓練用圖片 + caption。實體檔在 TRAINING_IMAGES_DIR。"""
+
     __tablename__ = "training_images"
 
     id:         Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)

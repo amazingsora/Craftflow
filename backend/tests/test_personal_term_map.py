@@ -99,3 +99,56 @@ def test_compile_unregistered_text_is_zero_regression():
         compiler.compile("白髮少女", style=PromptStyle.ILLUSTRIOUS)
 
     assert "白髮少女" in captured["prompt"]
+
+
+# ── A3 P3-1（2026-08-22）：服裝關鍵詞召回 ──────────────────────────────────────
+# D0-1 樣本矩陣實錘案例：tactical vest 時有時無（同輸入兩次編譯結果不同）。
+# apply_personal_term_map 已把「戰術背心」→"tactical vest" 塞進 LLM 輸入文字，
+# 但 LLM 仍可能漏譯——這裡鎖住「有塞進去、輸出卻沒有 → 補回」的召回行為。
+
+def test_recall_dropped_outfit_terms_reinserts_missing_tag():
+    out = compiler._recall_dropped_outfit_terms(
+        ["1girl", "solo", "white hair"], "1girl, tactical vest, white hair"
+    )
+    assert "tactical vest" in out
+
+
+def test_recall_dropped_outfit_terms_noop_when_already_present():
+    """已存在時不重複附加。"""
+    tags = ["1girl", "solo", "tactical vest"]
+    out = compiler._recall_dropped_outfit_terms(tags, "1girl, tactical vest")
+    assert out.count("tactical vest") == 1
+
+
+def test_recall_dropped_outfit_terms_noop_when_not_in_source():
+    """來源文字根本沒有該詞彙時不可誤補（只召回「本該在」的，不猜測）。"""
+    tags = ["1girl", "solo", "white hair"]
+    out = compiler._recall_dropped_outfit_terms(tags, "1girl, white hair")
+    assert out == tags
+    assert "tactical vest" not in out
+
+
+def test_compile_recalls_dropped_tactical_vest():
+    """端到端：compile() 輸入含「戰術背心」，LLM 模擬輸出漏掉 tactical vest，
+    最終 positive 仍須補回（不是只在送進 LLM 前存在，輸出也要有）。"""
+
+    def _fake_generate(prompt, **kwargs):
+        # 模擬 LLM 收到 "tactical vest" 但翻譯時漏掉（D0-1 實測症狀）。
+        return "1girl, solo, white hair"
+
+    with patch.object(ollama_client, "generate", side_effect=_fake_generate):
+        positive, _ = compiler.compile("戰術背心的白髮少女", style=PromptStyle.ILLUSTRIOUS)
+
+    assert "tactical vest" in positive
+
+
+def test_compile_flux_style_skips_tag_based_recall():
+    """FLUX 走自然語言句子，非 tag 清單——召回機制不應介入（避免把 tag 硬塞進句子）。"""
+
+    def _fake_generate(prompt, **kwargs):
+        return "A girl with white hair standing outdoors."
+
+    with patch.object(ollama_client, "generate", side_effect=_fake_generate):
+        positive, _ = compiler.compile("戰術背心的白髮少女", style=PromptStyle.FLUX)
+
+    assert "tactical vest" not in positive

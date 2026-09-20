@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 
 class Volume(Base):
+    """卷 — Project 與 Chapter 之間的分組層。order_index 決定排序。"""
+
     __tablename__ = "volumes"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

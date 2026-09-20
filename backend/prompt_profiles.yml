@@ -1,53 +1,329 @@
 # Craftflow — Workflow 級 Prompt Profile（P1，2026-07-12）
 #
 # key   = workflow 檔名（data/custom_workflows/ 或系統 workflow 目錄下的檔名，含副檔名）
-# value = quality_prefix / quality_suffix / negative / negative_extra，皆可省略；省略的
-#         欄位不覆寫，落回下一優先序（見下）。
+# value = quality_prefix / quality_suffix / negative / negative_extra / style_extra /
+#         style_extra_weight，皆可省略；省略的欄位不覆寫，落回下一優先序（見下）。
 #
 # negative（取代語義）vs negative_extra（補充語義，R4，2026-07-14）：
 #   negative       = 取代整個 negative 主體（優先序見下）。
 #   negative_extra = 不取代，附加於已選定的 negative 之後——family/art_style/PERSONAL_NEGATIVE
 #                    既有負向都保留，只是再補一段。兩者可同時登錄，也可只用其一。
 #
-# 解析優先序（三欄位各自獨立判斷）：
+# style_extra / style_extra_weight（P5-5，2026-08-26）：
+#   compile() 之後、service 層組裝 final_positive 時使用的畫風 tag／權重，供不同底模
+#   （Illustrious CLIP 語彙 vs Anima Qwen3 白話語彙）登錄各自適配的配方。
+#   解析在 character_design_service.py 的 _resolve_style_extra()，**不經** compile_prompt()
+#   kwargs（詳見 workflow_builder.py 的 _workflow_style_extra() docstring）。
+#   優先序：art_style.extra_tags（DB）> 這裡的 style_extra > .env PERSONAL_STYLE_EXTRA_TAGS
+#          > 無；weight 同理：這裡的 style_extra_weight > .env PERSONAL_STYLE_WEIGHT。
+#   未登錄＝零介入，落回 .env（零回歸）。實際配方登錄見 P5-6/7/8（本檔暫未登錄任何值）。
+#
+# 解析優先序（quality_prefix / quality_suffix / negative / negative_extra，各自獨立判斷）：
 #   art_style 個別欄位  >  這裡的 workflow profile  >  checkpoint family（prompt_engine/styles.py STYLE_CONFIG）
 #
 # 未登錄的 workflow 檔名＝這份設定完全不介入，行為與新增本機制前一致（零回歸）。
 #
 # quality_suffix：附加在 compile() 組出的 body 之後（角色/畫風 tags 之前），用於需要
 # 「尾綴權重 tag」（如官方範例的 pixiv 尾綴 `(:0.6)`）的 workflow。
-# 2026-07-26（G-2）：Standard_V37 已啟用，內容見下。
+# 2026-07-26（G-2）：Standard_V37 曾啟用。
+# 2026-08-12（R4-D）：Standard_V37 已停用該欄位（機制保留），改回不加尾綴。
+
+# ── 檔名改版與 YAML anchor（SYNC-001，2026-09-15）────────────────────────────
+# 本機制的鍵是 **workflow 檔名**，檔名一改就整組脫鉤，且 workflow_builder 的查表是
+# 精確比對、miss 不告警 → 靜默落回 family + .env。2026-09-15 盤點時六個現役 workflow
+# （*_V38 / *_Aesthetic / *_trubo11）全部 miss，08-12～08-26 三輪 P5 調校成果 100% 未生效。
+# 證據：doc/target/角色管理功能改進方案_20260915.docx「二、工具結果」四張圖的 prompt 帶
+#   `amazing quality`（illustrious family 預設）、`ultra detailed, high contrast`（anima
+#   family 預設）與 `(flat color:1.2)…`（.env PERSONAL_STYLE_EXTRA_TAGS），皆非本檔配方。
+# 修法有二，都做：
+#   1) 本檔用 YAML **anchor/merge key**（`&名稱` 定義、`<<: *名稱` 併入）把「同一顆底模的
+#      配方」寫一次、多個檔名共用 —— 直接消滅本檔原先自承的「兩份真相風險」。
+#      PyYAML 的 safe_load 支援 merge key（已驗證）；改 anchor 來源＝所有引用者一起改。
+#   2) workflow_builder._profile_for() 在 miss 時記 WARNING（同一檔名只記一次），
+#      並把來源寫進 generation_history.params.prompt_profile ——下次改名不會再默默降級。
+# ⚠️ 新增／改名 workflow 時，**務必同步在本檔登錄**；
+#    backend/tests/test_workflow_builder.py::test_all_custom_workflows_are_registered 會擋。
 
 profiles:
-  Standard_V37.json:
+  Standard_V37.json: &illustrious_fabricatedxl
     # 2026-07-12 實測三版對照（doc/2026-07-12_工作流提示詞優化規劃.md 表格）：
     # C 官方簡化版，介於 A(官方權重版)/B(現行強化版) 之間、平衡最佳 → 曾暫定採用。
     # G-1（2026-07-26）：對齊 V37 工作流內建 wildcard（node 3）與附件三 metadata 的
     # 品質段——補 (newest:0.6) 與 very aesthetic，並改用權重群組語法。
     # 權重語法安全性：compiler.compile 已對 override 做 _WEIGHT_GROUP_RE 展開後併入
     # banned_tags（compiler.py:275-278），LLM 重複吐 highres/absurdres 仍會被剝除。
-    # 回滾：把下行換回 "masterpiece, best quality, absurdres" 即可，無程式相依。
-    quality_prefix: "masterpiece, best quality, (newest:0.6), (highres, absurdres, very aesthetic:0.8)"
-    # G-2（2026-07-26）：啟用尾綴美學段（機制早已實作，見 compiler.py:359-364）。
-    # ⚠️ 附件三原文含 "detailed background" —— **刻意拿掉**：人設圖需求為簡潔背景，
-    # 且與本 profile negative 的 "detailed background, scenery" 直接對衝。
-    quality_suffix: "(A highly aesthetic illustration, clean composition, high-quality digital art, sharp focus on facial expressions:0.6)"
-    # negative：B 版（現行 illustrious 強化版 + 補強 worst detail/sketch/patreon/浮水印署名 +
-    # 抑制 detailed background/scenery，人設圖 profile 禁用場景細節），實測優於官方短版。
+    # R4-C（2026-08-12）：回滾 G-1 的美學加權段，退回樸素三段。理由見 08-05 開發記錄
+    # 第十三節——A（拿掉 BA LoRA）已驗有效，C/D/E 是同一組假設的其餘三項：
+    # (newest:0.6) 與 very aesthetic 屬「風格美學」而非「品質」訴求，疑為出圖蒼白扁平
+    # 的推手之一。對照組（G-1 版）保留於下行註解，改 yml 免重啟即生效（無程式相依）。
+    #   G-1 對照：masterpiece, best quality, (newest:0.6), (highres, absurdres, very aesthetic:0.8)
+    quality_prefix: "masterpiece, best quality, absurdres"
+    # R4-D（2026-08-12）：停用尾綴美學段。機制本身保留（compiler.py:359-364），只是本
+    # profile 不再登錄該欄位 → 落回 family（無 suffix），等同不加。回滾＝取消下行註解。
+    # quality_suffix: "(A highly aesthetic illustration, clean composition, high-quality digital art, sharp focus on facial expressions:0.6)"
+    # negative：B 版（illustrious 強化版 + worst detail/patreon/浮水印署名 + 抑制
+    # detailed background/scenery，人設圖 profile 禁用場景細節），實測優於官方短版。
+    #   R4-E（2026-08-12）移除 "sketch"：與本專案的 clean lineart 訴求直接對衝。
+    #   P1-1（2026-08-12）補環境/投影抑制，對應 R3「人設圖出現地面投影陰影」。
+    #   ⚠️ 刻意不加裸 "shadow"：danbooru 語彙中它涵蓋角色身上的 shading，放進 negative
+    #      會連立體光影一起壓掉、人物變平面。此處只擋落地投影與地面/反射等環境物件。
     negative: >-
       worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions,
       missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts,
       signature, watermark, username, text, blurry, cropped, extra limbs,
-      worst detail, sketch, patreon, twitter username, detailed background, scenery
+      worst detail, patreon, twitter username, detailed background, scenery,
+      drop shadow, cast shadow, floor, ground, reflection
 
-  # ── AnimaStandardV7.json（2026-07-25 AC-3）────────────────────────────────
-  # **刻意不登錄任何覆寫欄位**，讓它落回 checkpoint family（PromptStyle.ANIMA，
-  # prompt_engine/styles.py）。理由：AC-1 已把 07-23 §4.3 定案配方寫進 family，
-  # 若在此再抄一份相同的 quality_prefix/negative，就成了兩份真相——日後調配方
-  # 必然只改一邊而不自知。workflow profile 只在「同家族不同工作流需要不同 prompt」
-  # 時才登錄（如 Standard_V37 之於 illustrious 家族）。
+    # ── style_extra（P5-7，2026-08-26）─────────────────────────────────────
+    # 規劃書 `doc/target/畫風強化_開發規劃_20260826.md` §4.2 Illustrious 版配方。
+    # 設計約束（§4.1）：≤5 tag、不含版權詞/具名角色（P5-4 已否決）、不與上面
+    # quality_prefix 的 masterpiece/best quality/absurdres 重複、避開 "lineart"
+    # 字樣（styles.py:101 _LINEART_ARTIFACT_RE 只清 LLM 輸出、不清這裡，
+    # 這種不對稱是脆弱前提，改用語意等價的 thick outlines）。
+    # weight 1.2：CLIP 語彙的量級。**起始值非定案**，三檔位 A/B 見 P5-10。
+    # ── C4（SYNC-004，2026-09-19）：五項 → 三項，weight 維持 1.2 ──────────────
+    # 依據 T0-E2（AGENT_SYNC §2.5）：T0-2 官方復刻圖呈現乾淨平塗＋銳利描邊＋高飽和，
+    # 而它的正向 prompt 裡**一個平塗算子都沒有**。底模原生就會平塗 → 我們這五個同義
+    # 算子不只多餘，還在互相稀釋（"flat color" / "cel shading" / "anime coloring"
+    # 三者語義高度重疊，_dedup_tags 比對的是完整 tag 字串，收斂不掉）。
+    # 保留最不可替代的三項：上色方式（flat color）、陰影形式（cel shading）、
+    # 線條強度（thick outlines）。拿掉 "vibrant colors"（飽和度應由底模與背景色決定，
+    # 硬推會把深灰戰鬥服也拉艷）與 "anime coloring"（與前兩項同義）。
+    #
+    # ⚠️ **weight 刻意維持 1.2，不改 1.0** —— AGENT_SYNC §2.4 的 C4 原案寫「1.2→1.0」是錯的：
+    #    character_design_service.py:821 是 `if _style_weight != 1.0:`，設成 1.0 會走 else 分支，
+    #    畫風 tag 從「加權＋前置到 identity 區塊」變成「不加權＋append 到 prompt 最尾端」
+    #    （即 A3 P1-4 特地修掉的 D4 死代碼行為，會被 ComfyUI chunk 稀釋）。
+    #    那是**位置與權重兩個變因一起動**，違反單變因原則。要調權重請用 1.1，不要用 1.0。
+    # **回滾＝改回下行註解的五項版本**：
+    #   style_extra: "flat color, cel shading, thick outlines, vibrant colors, anime coloring"
+    # ── 2026-09-20：flat color 單獨降權（實測 v1→v5）───────────────────────
+    # 症狀：出圖平圖感重、衣服沒有光影（使用者實測 v1）。根因＝flat color 與
+    # cel shading 同為 1.2 互相對衝，平塗算子壓過硬邊陰影。
+    # 反例（不要重犯）：v2 曾改為「刪 flat color ＋ 負向補 no shading ＋ 加
+    # rim lighting/soft shadows/subsurface scattering」→ 皮膚與布料變油亮膠感、
+    # 整體品質下降。寫實光影詞與 cel shading 語義直接對衝，不可混用。
+    # 本次作法：只降 flat color 一項，其餘兩項維持 1.2（單變因）。
+    # 機制：character_design_service.py:821 對每個 tag 統一包 (tag:weight)，
+    # 無 per-tag 權重欄位 → 用巢狀權重繞過。展開後 ((flat color:0.5):1.2)，
+    # ComfyUI parser 相乘 ⇒ 有效 0.6；cel shading / thick outlines 仍為 1.2。
+    # ⚠️ style_extra_weight 不可改 1.0（會走 else 分支，畫風 tag 由前置變尾端
+    #    append，位置與權重雙變因）。
+    # ⚠️ 副作用：_dedup_tags（image_ops.py:102-104）正規化後得 `flat color:0.5)`，
+    #    不再等於 `flat color` ⇒ LLM 若也吐 flat color 不會被去重。驗收時看
+    #    generation_history 正向是否只有一處 flat color；若出現兩處，退路是直接
+    #    把 flat color 從本行移除（等同 0），不要再疊語法。
+    # 回滾：本行改回下一行註解的原值。
+    #   style_extra: "flat color, cel shading, thick outlines"
+    style_extra: "(flat color:0.7), cel shading, thick outlines"
+    style_extra_weight: 1.2
+
+  # ── Standard_V35.json（2026-08-22，A3 P4-1/P4-4）──────────────────────────
+  # 黃金對照組：commit 235d50e（2026-07-12 "fix fullbody"）把 Standard_V35.json 改名
+  # 為 Standard_V37.json 並動了 215 行 diff（見 doc/2026-08-22_開發記錄.md P4-2 節）。
+  # 這裡用 `git show 8c6dc36:data/custom_workflows/Standard_V35.json` 取回原始版本，
+  # 放回 data/custom_workflows/ 供未來 A/B（A3 P4-3，需 P0 可重現實驗台）直接比較。
   #
-  # 要為 AnimaStandardV7 單獨調 prompt 時，取消下面註解並只填要覆寫的欄位：
-  # AnimaStandardV7.json:
-  #   quality_prefix: "..."
-  #   negative: "..."
+  # 刻意逐字沿用 Standard_V37.json 的 quality_prefix/negative（不各自登錄一份），
+  # 理由：V35/V37 用同一顆 checkpoint（fabricatedXL_v70，checkpoint_styles.yml 同判
+  # illustrious family），若 V35 不登錄就會落回 family 預設值——與 V37 的 profile
+  # 覆寫值不同，比較時會多一個「prompt 配方也不同」的變因，稀釋掉真正要看的
+  # 「workflow 節點差異」訊號（規劃書 P4-4「避免對照組本身走錯 prompt 配方而誤判」）。
+  # 這裡是唯一允許「兩個 workflow 共用同一段字串」的例外——目的正是要讓它相同。
+  Standard_V35.json:
+    quality_prefix: "masterpiece, best quality, absurdres"
+    negative: >-
+      worst quality, low quality, lowres, bad anatomy, bad hands, bad proportions,
+      missing fingers, extra digits, fewer digits, fused fingers, jpeg artifacts,
+      signature, watermark, username, text, blurry, cropped, extra limbs,
+      worst detail, patreon, twitter username, detailed background, scenery,
+      drop shadow, cast shadow, floor, ground, reflection
+
+    # ── style_extra（P5-7，2026-08-26）─────────────────────────────────────
+    # 規劃書 `doc/target/畫風強化_開發規劃_20260826.md` §4.2 Illustrious 版配方。
+    # 設計約束（§4.1）：≤5 tag、不含版權詞/具名角色（P5-4 已否決）、不與上面
+    # quality_prefix 的 masterpiece/best quality/absurdres 重複、避開 "lineart"
+    # 字樣（styles.py:101 _LINEART_ARTIFACT_RE 只清 LLM 輸出、不清這裡，
+    # 這種不對稱是脆弱前提，改用語意等價的 thick outlines）。
+    # weight 1.2：CLIP 語彙的量級。**起始值非定案**，三檔位 A/B 見 P5-10。
+    style_extra: "flat color, cel shading, thick outlines, vibrant colors, anime coloring"
+    style_extra_weight: 1.2
+  AnimaStandardV8.json: &anima_aesthetic_turbo
+    # ── quality_prefix（P5-9，2026-08-26）──────────────────────────────────
+    # family(ANIMA) 的值是 "masterpiece, best quality, absurdres, ultra detailed, high contrast"
+    # （styles.py:373）。這裡逐字沿用**前三項**，拿掉後兩項：
+    #   · ultra detailed  → 推細節密度 ↔ 目標畫風要的是細節收斂
+    #   · high contrast   → 推高對比硬光 ↔ 目標畫風是平塗低對比色塊
+    # 兩者是 2026-07-22 為對抗 **base 版洗白**加的解藥；V8/V8turbo 已換
+    # Aesthetic/Turbo 底模，洗白根因可能已消失 → 解藥變毒藥。
+    # 實據（generation_history #610，2026-08-26）：同一句 prompt 裡同時出現
+    # "(flat cel shaded coloring:2.0)" 與 "ultra detailed, high contrast"，
+    # 出圖呈高對比硬光 + 角色外緣白色 halo —— prompt 自己打自己。
+    # ⚠️ 仍需固定 seed ＋ 沿用 prompt 的 A/B 確認（P5-9 驗收）。
+    # **回滾＝註解掉下面這行**（落回 family 原值，零程式改動）。
+    quality_prefix: "masterpiece, best quality, absurdres"
+    
+    negative: >-
+      worst quality, low quality, lowres, blurry,
+      jpeg artifacts, bad anatomy, watermark, artist name,
+      drop shadow, cast shadow, floor, ground, reflection
+
+    # ── style_extra（P5-8，2026-08-26）─────────────────────────────────────
+    # 規劃書 §4.3 Anima 版配方。與 Illustrious 版**刻意不同**，兩點理由：
+    #   1) 語彙白話化 —— Anima 走 Qwen3-0.6B 文字編碼器，非 CLIP + danbooru 詞表，
+    #      罕見 danbooru meta tag（anime coloring）的召回不可假設。
+    #   2) weight 2.0 而非 1.2 —— Anima 的權重量級實證為 :2，:0.6~1.2 量級近乎無感。
+    #      這正是本欄位必須做成 profile 級（而非全域 .env 單一值）的直接證據。
+    # 不含 score_*（Aesthetic/Turbo 官方明令，同上面 negative 的處理）。
+    # **起始值非定案**，1.0/2.0/3.0 三檔位 A/B 見 P5-10。
+    # 去重（2026-08-26）：原第四項 "anime style illustration" 與 prompt 既有的
+    # "anime style"（compile 端）＋ "character illustration"（_build_fullbody_suffix，
+    # character_design_service.py:438）三重同義。_dedup_tags 比對的是去權重後的完整
+    # tag 字串，"anime style illustration" ≠ "anime style" → 收斂不掉，等於用 2.0 的
+    # 權重重複強調一個 prompt 裡已經講兩次的概念，稀釋另外三項。
+    # **回滾＝改用下行註解的四項版本**：
+    #   style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors, anime style illustration"
+    style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors"
+    style_extra_weight: 2.0
+
+  # ── AnimaStandardV8turbo.json（2026-08-22，A3 P1-2 / D2）──────────────────────
+  # 底模：anima_turboV10.safetensors。Turbo 是 Anima-Aesthetic 的蒸餾版
+  # （checkpoint_styles.yml 兩者皆命中 catch-all "anima" family），採樣參數不同
+  # （見 A3 P1-1：CFG 1 / steps 12），但 **prompt 規則沿用同一份官方明令**：
+  #   「Anima-Aesthetic／其蒸餾版只用高品質圖微調，caption 的 quality tag 全被
+  #     剝除。正負向都不要用 score_* tags，會把它推進 slop 領域。」
+  # 在本檔登錄前，V8turbo 未登錄 profile → 落回 family(ANIMA) → negative 帶回
+  # score_1/score_2/score_3，違反上述官方規則（D2 實錘缺陷）。
+  #
+  # 08-22 那輪**只動一個變因**：negative 移除 score_1/score_2/score_3，其餘逐字沿用
+  # family（prompt_engine/styles.py PromptStyle.ANIMA）。quality_prefix 當時不登錄
+  # → 落回 family。**↪ 2026-08-26 P5-9 已登錄**（與 AnimaStandardV8.json 同一份值）。
+  #
+  # ⚠️ 兩份真相風險（與 AnimaStandardV8.json 同一組，已知非疏漏）：本機制沒有
+  #    「移除單項」語義，這裡是 family negative 的複本。日後改 family ANIMA 的
+  #    negative 時，**這裡與 AnimaStandardV8.json 都要同步改**。三者的唯一預期
+  #    差異就是 score_1/score_2/score_3。
+  AnimaStandardV8turbo.json:
+    # ── quality_prefix（P5-9，2026-08-26）──────────────────────────────────
+    # family(ANIMA) 的值是 "masterpiece, best quality, absurdres, ultra detailed, high contrast"
+    # （styles.py:373）。這裡逐字沿用**前三項**，拿掉後兩項：
+    #   · ultra detailed  → 推細節密度 ↔ 目標畫風要的是細節收斂
+    #   · high contrast   → 推高對比硬光 ↔ 目標畫風是平塗低對比色塊
+    # 兩者是 2026-07-22 為對抗 **base 版洗白**加的解藥；V8/V8turbo 已換
+    # Aesthetic/Turbo 底模，洗白根因可能已消失 → 解藥變毒藥。
+    # 實據（generation_history #610，2026-08-26）：同一句 prompt 裡同時出現
+    # "(flat cel shaded coloring:2.0)" 與 "ultra detailed, high contrast"，
+    # 出圖呈高對比硬光 + 角色外緣白色 halo —— prompt 自己打自己。
+    # ⚠️ 仍需固定 seed ＋ 沿用 prompt 的 A/B 確認（P5-9 驗收）。
+    # **回滾＝註解掉下面這行**（落回 family 原值，零程式改動）。
+    quality_prefix: "masterpiece, best quality, absurdres"
+    negative: >-
+      worst quality, low quality, lowres, blurry,
+      jpeg artifacts, bad anatomy, watermark, artist name,
+      drop shadow, cast shadow, floor, ground, reflection
+
+    # ── style_extra（P5-8，2026-08-26）─────────────────────────────────────
+    # 規劃書 §4.3 Anima 版配方。與 Illustrious 版**刻意不同**，兩點理由：
+    #   1) 語彙白話化 —— Anima 走 Qwen3-0.6B 文字編碼器，非 CLIP + danbooru 詞表，
+    #      罕見 danbooru meta tag（anime coloring）的召回不可假設。
+    #   2) weight 2.0 而非 1.2 —— Anima 的權重量級實證為 :2，:0.6~1.2 量級近乎無感。
+    #      這正是本欄位必須做成 profile 級（而非全域 .env 單一值）的直接證據。
+    # 不含 score_*（Aesthetic/Turbo 官方明令，同上面 negative 的處理）。
+    # **起始值非定案**，1.0/2.0/3.0 三檔位 A/B 見 P5-10。
+    # 去重（2026-08-26）：原第四項 "anime style illustration" 與 prompt 既有的
+    # "anime style"（compile 端）＋ "character illustration"（_build_fullbody_suffix，
+    # character_design_service.py:438）三重同義。_dedup_tags 比對的是去權重後的完整
+    # tag 字串，"anime style illustration" ≠ "anime style" → 收斂不掉，等於用 2.0 的
+    # 權重重複強調一個 prompt 裡已經講兩次的概念，稀釋另外三項。
+    # **回滾＝改用下行註解的四項版本**：
+    #   style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors, anime style illustration"
+    style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors"
+    style_extra_weight: 2.0
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # 現役 workflow 登錄（SYNC-001，2026-09-15）
+  # ══════════════════════════════════════════════════════════════════════════
+  # 上面四筆是歷史檔名（V37/V35 已移入 data/custom_workflows/history/，
+  # AnimaStandardV8.json / AnimaStandardV8turbo.json 已改名），留著是因為它們
+  # 承載了配方的**推導過程與回滾說明**，且現在是下面 merge key 的 anchor 來源。
+  # 下面六筆才是 data/custom_workflows/ 磁碟上的實際檔名。
+  #
+  # 每一筆都只寫 `<<: *anchor`，**不重抄任何字串** —— 要改配方就改上面的 anchor 來源，
+  # 引用者自動跟著改。這是本檔原先自承「本機制沒有『移除單項』語義 → 不得不抄一份
+  # family negative」那個兩份真相風險的正解。
+  #
+  # 為什麼 V38 直接沿用 V37 的配方：兩者同一顆 checkpoint
+  # （`fabricatedXL_v70.safetensors`，見 Standard_V38.json node 30 / Advanced_V38.json
+  # node 103），checkpoint_styles.yml 同判 illustrious family。配方跟著底模走，不跟版號走。
+  #
+  # 為什麼四個 Anima 檔共用同一份：Aesthetic v1.1 與 Turbo v1.1 是同一支模型的精修版
+  # 與其蒸餾版，**prompt 規則同源**（官方對兩者都明令正負向不得用 score_*）。差異在
+  # **採樣參數**（cfg/steps），那是 workflow JSON node 級的事，不歸本檔管（SYNC-001 §2.4 C 案）。
+  #
+  # ⚠️ `trubo` 是既有檔名的既有拼字（不是待修 typo）。改名＝再一次脫鉤，
+  #    要改必須連同本檔與任何引用一起改，本輪不改。
+
+  # ── Illustrious / fabricatedXL_v70 ────────────────────────────────────────
+  Standard_V38.json:
+    <<: *illustrious_fabricatedxl
+  Advanced_V38.json:
+    <<: *illustrious_fabricatedxl
+
+  # ── Standard_V38_NOVE.json（SYNC-005 軌 E，2026-09-19）─────────────────────
+  # 底模 novaAnimeXL_ilV190.safetensors（Illustrious 衍生，checkpoint_styles.yml 同判
+  # illustrious family）→ 沿用同一份 anchor，配方跟著底模走、不跟版號走。
+  #
+  # ⚠️ 補登錄的理由是實錘而非預防：本檔未登錄它之前，generation_history #647
+  #    （2026-09-19 12:50 UTC）的正向是
+  #      `(flat color:1.2), (cel shading:1.2), (anime coloring:1.2), masterpiece,
+  #       best quality, amazing quality, absurdres, ...`
+  #    逐項比對 —— `anime coloring` 來自 .env PERSONAL_STYLE_EXTRA_TAGS、
+  #    `amazing quality` 來自 styles.py 的 illustrious family 預設、weight 1.2 來自
+  #    .env PERSONAL_STYLE_WEIGHT。三者都不是本檔配方 ⇒ 它整組落回 family + .env，
+  #    與 Standard_V38 / Advanced_V38 的配方**不同**。
+  #    拿它跟那兩支比較 = 「底模」與「prompt 配方」雙變因，結論不可用。
+  #    這正是 SYNC-001 的原始災情，第二次以同樣形式復發。
+  Standard_V38_NOVE.json:
+    <<: *illustrious_fabricatedxl
+
+  # ── Anima / anima_aestheticV11 ＋ anima_turboV11 ───────────────────────────
+  AnimaStandardV8_Aesthetic.json:
+    <<: *anima_aesthetic_turbo
+  AnimaStandardV8_trubo11.json:
+    <<: *anima_aesthetic_turbo
+  AnimaAdvancedV8_Aesthetic.json:
+    <<: *anima_aesthetic_turbo
+  AnimaAdvancedV8_trubo11.json:
+    <<: *anima_aesthetic_turbo
+
+  # ── SYNC-004 A 軌對照組（2026-09-19）────────────────────────────────────────
+  # 使用者要求：不就地改，改為產生 `_0919` 新檔與原檔做 A/B，因此磁碟上同時存在
+  # 「舊參數版」與「新參數版」八支 Anima workflow。
+  #
+  # ⚠️ 新檔名 = 又一次的檔名脫鉤風險（SYNC-001 就是被這個咬的）。本機制的鍵是**檔名**，
+  #    `_0919` 四支若不登錄就會靜默落回 family + .env，A/B 會變成「參數 + prompt 配方」
+  #    雙變因，整組白測。故在此以 merge key 沿用**同一份** anchor —— 兩組唯一的差異
+  #    只有 workflow JSON 的採樣參數與 batch_size，prompt 配方逐字相同。
+  #    （`test_all_custom_workflows_are_registered` 也會擋，但擋下來時已經浪費一輪。）
+  #
+  # _0919 四支的實際改動（依**底模**而非依 Standard/Advanced 決定，這正是原錯配的根因）：
+  #   anima_turboV11    → steps 12 / cfg 1    （官方 model card：CFG 1 and 8-12 steps）
+  #   anima_aestheticV11→ steps 30 / cfg 3.5  （官方：30-50 steps, CFG 4-6；
+  #                                            並採「Aesthetic can tolerate lower CFGs such as 3,
+  #                                            and often looks better with them」取區間下緣）
+  #   四支一律 batch_size 3 → 1               （後端只取第 1 張，batch 3 等於丟掉 2/3 GPU 時間）
+  AnimaStandardV8_Aesthetic_0919.json:
+    <<: *anima_aesthetic_turbo
+  AnimaStandardV8_trubo11_0919.json:
+    <<: *anima_aesthetic_turbo
+  AnimaAdvancedV8_Aesthetic_0919.json:
+    <<: *anima_aesthetic_turbo
+  AnimaAdvancedV8_trubo11_0919.json:
+    <<: *anima_aesthetic_turbo
+
+  # ── Anima / anima_baseV10（SYNC-003 B1，2026-09-16：測試流程書 T2「LLLite 上限測試」用）──
+  # 檔案由使用者從 AnimaStandardV8_trubo11.json 複製、只改 node 1 unet_name。
+  # 先登錄、檔案後放：名單制，檔案不存在時本行零作用；檔案放進來時 SYNC-001 護欄
+  # （test_all_custom_workflows_are_registered）不會紅，prompt 配方也與 turbo 組一致（單變因）。
+  AnimaStandardV8_base10.json:
+    <<: *anima_aesthetic_turbo

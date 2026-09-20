@@ -18,6 +18,9 @@ checkpoints:
   DreamShaperXL:    sdxl
   JuggernautXL:     sdxl
   RealVisXL:        sdxl
+  # 2026-09-16 SYNC-003 A1：Animagine XL 4.0（SDXL）。**必須排在下方 catch-all "anima" 之前**——
+  # 比對是子字串，"animaginexl" 含 "anima"，漏登錄時會被誤判成 Anima（07-25 AC-1 起的回歸）。
+  animagineXL:      sdxl
 
   # ── Pony 系列 ──────────────────────────────────────────────
   ponyDiffusion:    pony
@@ -43,7 +46,12 @@ checkpoints:
   # ── Anima 系（非 SDXL：UNETLoader + Qwen 編碼器）──────────────
   # 2026-07-25 AC-1：新增 anima family（PromptStyle.ANIMA）。
   # 順序重要——"anima" 較短，須排在 "anima_base" 之後才不會先命中。
+  # 2026-08-17：補登錄 anima_aesthetic（Anima-Aesthetic v1.1，AnimaStandardV8 底模）。
+  # ⚠️ 明示登錄純為可追溯性——實測 "anima_aestheticV11" 本來就會命中下方 catch-all
+  #    "anima"，本行是零行為變更。留著是為了讓「哪些 Anima 版本在用」一眼可見，
+  #    並在日後需要把 aesthetic 拆成獨立 family（如採樣參數分家）時有現成掛點。
   anima_base:       anima
+  anima_aesthetic:  anima
   anima:            anima
 
 # ── Checkpoint → 架構家族對照（IPA/CN 能力閘控用）──────────────────────────
@@ -59,6 +67,7 @@ families:
   DreamShaperXL:    sdxl
   JuggernautXL:     sdxl
   RealVisXL:        sdxl
+  animagineXL:      sdxl           # 2026-09-16 SYNC-003 A1：同上區，須排在 "anima" 之前
 
   # ── Pony（SDXL 架構，沿用 SDXL 注入模型）──────────────────────────────────
   ponyDiffusion:    pony
@@ -82,5 +91,8 @@ families:
   fluxDev:          flux
 
   # ── Anima（非 SDXL：UNETLoader + Qwen 編碼器；無 IPA、CN 僅 LLLite → 能力閘控停用）
+  # 2026-08-17：aesthetic v1.1 與 base v1.0 同架構（同 Cosmos-Predict2-2B 衍生、同
+  # Qwen 編碼器/VAE），能力閘控完全一致 → 同 family，不另立。
   anima_base:       anima
+  anima_aesthetic:  anima
   anima:            anima

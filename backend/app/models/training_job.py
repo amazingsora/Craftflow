@@ -10,6 +10,8 @@ from app.core.database import Base
 
 
 class TrainingJob(Base):
+    """LoRA 訓練 job — 參數 + 進度（current_step/total_steps，供 SSE 回報）。執行端見 services/ai/lora_trainer/。"""
+
     __tablename__ = "training_jobs"
 
     id:              Mapped[int]           = mapped_column(Integer, primary_key=True, autoincrement=True)

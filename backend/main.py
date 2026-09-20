@@ -1,3 +1,9 @@
+"""FastAPI 進入點 — logging 設定、16 個 router 掛載、啟動健檢、全域例外處理。
+
+log 落檔在 repo-root 的 `data/logs/backend.log`（刻意在 backend/ 之外，避免 uvicorn --reload
+的 watchfiles 每寫一行就洗版）。啟動時 `_startup_healthcheck` 檢查預期 workflow 在位。
+路由清單見 doc/MODULE_MAP.md §2。
+"""
 import logging
 import logging.handlers
 from pathlib import Path

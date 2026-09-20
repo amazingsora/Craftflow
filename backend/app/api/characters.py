@@ -1,3 +1,15 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
+"""角色 CRUD + 圖片資產管理（本檔為 api/ 第二大，30 個端點）。
+
+端點分四組，主角色與變體（variant slot）各一套、結構對稱：
+  - 角色本體      : CRUD、summarize（AI 摘要）
+  - portrait      : 單張代表圖
+  - concept-images: 使用者上傳的概念圖（最多 3 張）
+  - ai-images     : AI 生成的人設圖（最多 8 張）+ generation-info 反查生成參數
+
+generation-info：存圖時回填 GenerationHistory.saved_filename，讓「已存的圖 → 當初的
+prompt/seed/參數」可反查（見 models/generation_history.py）。
+"""
 from __future__ import annotations
 
 import shutil
@@ -33,10 +45,7 @@ _PORTRAIT_DIR = UPLOAD_DIR / "portraits"
 _ALLOWED = {"image/jpeg", "image/png", "image/webp"}
 
 
-# ── 已存圖 ↔ 生成資訊關聯（2026-07-26）──────────────────────────────────────────
-# 生圖回應以 X-History-Id header 帶回 generation_history.id；前端按「儲存此圖」時把它
-# 一併送上來，這裡回填 saved_filename，讓「已存的圖 → 當初的 prompt/seed/參數/耗時」
-# 可反查。generation_history 已存齊所有欄位（含 params.timings），故不另存一份。
+# [CN-110] 以 X-History-Id 回填 saved_filename，讓「已存的圖 → 當初的 prompt/seed/參數/耗時」可反查
 def _bind_history_to_file(db: Session, history_id: Optional[int], filename: str) -> None:
     """把 history 記錄綁到成品檔名。永不 raise —— 綁定失敗不該讓存圖失敗。"""
     if not history_id:

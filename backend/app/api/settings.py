@@ -1,3 +1,4 @@
+# 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """
 Runtime settings endpoints (in-memory, reset on restart):
   GET  /api/v1/settings/checkpoints   — list available checkpoints from ComfyUI
@@ -23,6 +24,7 @@ from app.core.config import COMFYUI_BASE, OLLAMA_BASE, CUSTOM_WORKFLOWS_DIR, DEF
 from app.core import state
 from app.services.ai.wf_node_ops import _wf_has_controlnet
 from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
+from app.services.http_local import SESSION
 
 _CUSTOM_DIR = CUSTOM_WORKFLOWS_DIR
 _SYSTEM_DIR = Path("/app/tools/Craftflow/diffusion/workflows")
@@ -34,7 +36,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 def _fetch_checkpoints() -> list[str]:
     try:
-        r = requests.get(f"{COMFYUI_BASE}/object_info/CheckpointLoaderSimple", timeout=8)
+        r = SESSION.get(f"{COMFYUI_BASE}/object_info/CheckpointLoaderSimple", timeout=8)
         r.raise_for_status()
         data = r.json()
         return data["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0]
@@ -141,10 +143,7 @@ def get_capabilities():
     回傳目前生效的 checkpoint + workflow 能力組合。
     前端切換 checkpoint / workflow / 生成模式後應重抓此端點。
     """
-    # 2026-07-25 AC-2'：改讀「工作流實際生效的模型」而非全域 checkpoint。
-    # 舊寫法在 Anima 工作流下會拿到全域 SDXL checkpoint → family 誤判 sdxl →
-    # 回報 cn_supported/ipa_supported=True，但生成端 gen_profile 解析為 anima 並閘掉
-    # → UI 顯示可用、後端靜默丟棄（使用者回報「CN 沒有效果」的根因）。
+    # [CN-111] 改讀工作流實際生效的模型：舊寫法在 Anima 下誤判 sdxl → UI 顯示可用、後端靜默丟棄
     wf_name = state.get_workflow()
     ckpt = resolve_checkpoint_for_workflow(wf_name)
     wf_dict = _wf_load_dict(wf_name)
@@ -188,10 +187,7 @@ def set_workflow(req: SetWorkflowRequest):
     return {"workflow": state.get_workflow(), "ipa_supported": _wf_has_ipa(name)}
 
 
-# ── Ollama 模型能力分類 ───────────────────────────────
-# 用 /api/show 的 capabilities 欄位（如 ["completion","vision","tools","thinking"]）
-# 區隔「視覺模型」與「文字/提示詞模型」，避免把純文字模型誤設為視覺模型
-# （Ollama 對非視覺模型會靜默忽略圖片 → 模型純靠 prompt 腦補 → 幻覺）。
+# [CN-112] 用 /api/show 的 capabilities 區隔視覺/文字模型；純文字模型會靜默忽略圖片 → 幻覺
 _MODEL_CAPS_CACHE: dict[str, list[str]] = {}
 # 舊版 Ollama 無 capabilities 欄位時的名稱 fallback，至少不漏判常見 VL 模型
 _VISION_NAME_HINTS = ("vl", "vision", "llava", "moondream", "minicpm-v", "bakllava")
@@ -204,7 +200,7 @@ def _model_capabilities(name: str) -> list[str]:
         return _MODEL_CAPS_CACHE[name]
     caps: list[str] = []
     try:
-        r = requests.post(f"{OLLAMA_BASE}/api/show", json={"model": name}, timeout=8)
+        r = SESSION.post(f"{OLLAMA_BASE}/api/show", json={"model": name}, timeout=8)
         r.raise_for_status()
         caps = r.json().get("capabilities") or []
     except Exception:
@@ -223,7 +219,7 @@ def _is_vision_model(name: str) -> bool:
 @router.get("/vision-models", summary="列出 Ollama 已安裝的模型（含能力分類）")
 def list_vision_models():
     try:
-        r = requests.get(f"{OLLAMA_BASE}/api/tags", timeout=5)
+        r = SESSION.get(f"{OLLAMA_BASE}/api/tags", timeout=5)
         r.raise_for_status()
         names = [m["name"] for m in r.json().get("models", [])]
     except Exception as e:
@@ -282,7 +278,7 @@ def set_text_model(req: SetTextModelRequest):
 @router.get("/loras", summary="列出 ComfyUI 可用 LoRA 模型")
 def list_loras():
     try:
-        r = requests.get(f"{COMFYUI_BASE}/object_info/LoraLoader", timeout=8)
+        r = SESSION.get(f"{COMFYUI_BASE}/object_info/LoraLoader", timeout=8)
         r.raise_for_status()
         data = r.json()
         loras = data["LoraLoader"]["input"]["required"]["lora_name"][0]

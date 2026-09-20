@@ -125,4 +125,23 @@ CASES: list[GoldenCase] = [
                  "the eighty character limit that a real sd tag would ever have and must be dropped",
         note="超長 tag（LLM 推理洩漏）：驗證 _MAX_TAG_LEN 上限過濾",
     ),
+    # ── A3 P1-5（2026-08-22）：鎖住 P1-2 的 AnimaStandardV8turbo.json profile negative ──
+    # negative_override 逐字取自 backend/prompt_profiles.yml 的 AnimaStandardV8turbo.json
+    # 條目（workflow_builder.py:110 就是這樣把 profile negative 餵進 compile()）。
+    # D2 修復前，此 workflow 落回 family(ANIMA) → negative 含 score_1/score_2/score_3；
+    # 本案例鎖住修復後的正確值——若日後改壞 yml 或 profile 解析邏輯，這裡會紅。
+    GoldenCase(
+        name="anima_v8turbo_profile_negative",
+        style=PromptStyle.ANIMA,
+        text="白髮紅瞳的少女，戰術背心",
+        mock_raw="1girl, solo, white hair, red eyes, tactical vest, standing",
+        negative_override=(
+            "worst quality, low quality, lowres, blurry, "
+            "jpeg artifacts, bad anatomy, watermark, artist name, "
+            "drop shadow, cast shadow, floor, ground, reflection, "
+            "overexposed, washed out, faded, low contrast, blown out highlights, pale"
+        ),
+        note="D2：AnimaStandardV8turbo.json 登錄後 negative 不含 score_1/2/3"
+             "（family(ANIMA) 預設值才含），quality_prefix 仍落回 family 未被覆寫",
+    ),
 ]

@@ -21,9 +21,7 @@ from pathlib import Path
 
 _PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts"
 
-# ---------------------------------------------------------------------------
 # Hardcoded defaults — used when the corresponding .txt file is absent.
-# ---------------------------------------------------------------------------
 _DEFAULTS: dict[str, str] = {
 
     # ── Art ──────────────────────────────────────────────────────────────────

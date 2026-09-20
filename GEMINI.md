@@ -1,5 +1,7 @@
 # Craftflow — Gemini Instructions
 
+> **Multi-AI collaboration:** During planning, write ONLY the `§2.3 Gemini 規劃` block of root `AGENT_SYNC.md` (order: Claude → Codex → Gemini → Claude integrates → user approves → Claude executes). No code changes and no edits to other agents' blocks during planning. Full rules: `AGENT_SYNC.md` §0.
+
 ## Architecture Mandates
 - **Local-First:** AI runs on Ollama + ComfyUI. No cloud API unless explicitly told.
 - **Human-in-the-Loop:** Never overwrite original creative content. AI output goes to analysis reports / separate fields only.

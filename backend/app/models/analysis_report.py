@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 
 class AnalysisReport(Base):
+    """章節 AI 分析報告 — 一章可有多筆（report_type 區分：一致性／節奏…）。只增不改，不動原文。"""
+
     __tablename__ = "analysis_reports"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

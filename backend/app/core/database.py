@@ -1,3 +1,12 @@
+"""SQLAlchemy engine / session / Base + 啟動時的手刻 schema 遷移。
+
+init_db() 建表後，用 _add_column / _add_index 做 idempotent 的欄位補丁
+（SQLite ALTER TABLE 有限，只支援加欄位；已存在則靜默跳過）。
+
+⚠️ 未導入 Alembic（BACKLOG.md §C 的 A5）。新增欄位時：
+  1. 改 models/*.py 的 ORM 定義
+  2. **同時**在此處補一筆 _add_column，否則既有 DB 不會有該欄位
+"""
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session
 from app.core.config import DATABASE_URL

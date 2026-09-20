@@ -58,10 +58,19 @@ export function GenerationInfo({ historyId, fetchPath }) {
               <div>
                 {p.width}×{p.height}
                 {p.steps != null ? ` · steps ${p.steps}` : ''}
+                {p.cfg != null ? ` · cfg ${p.cfg}` : ''}
                 {p.cn_used ? ` · CN ${p.cn_weight}${p.cn_mode ? `(${p.cn_mode})` : ''}` : ' · CN off'}
                 {p.ipa_used ? ` · IPA ${p.ipa_weight}` : ' · IPA off'}
                 {p.coverage ? ` · coverage ${p.coverage}` : ''}
               </div>
+              {p.mechanism && p.mechanism !== 'none' && (
+                <div>
+                  <span style={label}>結構控制機制</span>{' '}
+                  {p.mechanism}
+                  {p.mechanism === 'lllite' && p.lllite_name ? ` · ${p.lllite_name} · strength ${p.lllite_strength}` : ''}
+                  {p.mechanism === 'img2img' && p.img2img_denoise != null ? ` · denoise ${p.img2img_denoise}` : ''}
+                </div>
+              )}
               {Object.keys(t).length > 0 && (
                 <div>
                   <span style={label}>耗時</span>{' '}

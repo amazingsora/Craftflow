@@ -1,3 +1,7 @@
+"""作品（Project）CRUD — 資料模型的最上層。
+
+階層：Project → Volume → Chapter；Character / Faction / Illustration 皆掛在 Project 下。
+"""
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status

@@ -75,3 +75,36 @@ def test_s6_zero_regression_plain_eyes_untouched():
     pos = _compile_with_mock("白髮少女", "1girl, solo, white hair, golden eyes")
     assert "white hair" in pos
     assert "golden eyes" in pos
+
+
+def test_s6_plural_directional_eyes_are_normalized():
+    """2026-08-12 漏網回歸鎖：原 regex 只寫單數 `eye`，實跑 LLM 吐的是**複數**
+    `red eyes (left)` → 整條清理形同虛設，`(left)` 進 CLIPTextEncode 被當 emphasis
+    群組（權重語法），綁定失效並讓方向詞污染構圖。
+
+    證據：使用者 2026-08-12 提供的 Anima 實跑 prompt 含
+    `red eyes (left), green eyes (right)`，且該次出圖姿勢異常。
+    """
+    from app.services.ai.prompt_engine.compiler import _normalize_directional_eye_tags as f
+
+    # 複數形（本次漏網的實際格式）
+    assert f(["red eyes (left)", "green eyes (right)", "brown hair"]) == \
+        ["red eyes", "green eyes", "brown hair"]
+    # 單數形（原本就有處理，零回歸）
+    assert f(["red eye (left)", "green eye (right)"]) == ["red eyes", "green eyes"]
+    # 已有正確複數 tag 時，方向版收斂後不得產生重複
+    assert f(["heterochromia", "red eyes", "green eyes",
+              "red eyes (left)", "green eyes (right)"]) == \
+        ["heterochromia", "red eyes", "green eyes"]
+    # 零回歸：不含方向括號的 tag 原封不動
+    assert f(["1girl", "solo", "blue eyes"]) == ["1girl", "solo", "blue eyes"]
+
+
+def test_s6_no_paren_direction_survives_compile():
+    """整條 compile 出口不得再出現 `eyes (left)` —— 括號是權重語法，不是方向標。"""
+    pos = _compile_with_mock(
+        "異色瞳少女，左眼紅色右眼綠色",
+        "1girl, solo, heterochromia, red eyes (left), green eyes (right), brown hair",
+    )
+    assert "(left)" not in pos and "(right)" not in pos, pos
+    assert "red eyes" in pos and "green eyes" in pos

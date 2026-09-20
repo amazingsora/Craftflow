@@ -113,3 +113,40 @@ def test_sanitize_lineart_regex_keeps_legit_tags():
     """常見合法 tag 不被線稿 regex 誤傷（no iris/colorless 才丟，art/color 本身不丟）。"""
     out = _sanitize_to_list("1girl, blue eyes, colorful dress, fine art background", banned_set=set())
     assert out == ["1girl", "blue eyes", "colorful dress", "fine art background"]
+
+
+# ── SYNC-002 B5'（2026-09-15）：眼色 tag 判定 ─────────────────────────────────
+# 原實作白名單比對 lexicon.COLOR_MAP.values()，不在顏色表裡的眼色描述全部漏過去。
+# 實際洩漏（generation_history id>=560）：pale eyes 15 / light colored eyes 9 /
+# light eyes 5 / pale purple eyes 2 = 31 次，全與權威雙色並存 → 異色瞳身分保真被稀釋。
+# 改成反向判定後，這組測試同時鎖「該清的有清」與「不該清的沒被誤殺」。
+import pytest
+
+from app.services.ai.prompt_engine.compiler import _is_eye_color_tag
+
+
+@pytest.mark.parametrize("tag", [
+    "pale eyes",            # 原正則完全不匹配 → 主要洩漏源（15 次）
+    "light colored eyes",   # 三個詞，Gemini 提議的 \w+\s+eyes 也漏（9 次）
+    "light eyes",
+    "pale purple eyes",
+    "red eyes", "green eyes", "golden eyes",   # 標準色：清掉後由 wanted 重新前置
+    "(red eyes)",           # 帶權重括號
+    "RED EYES",             # 大小寫
+    "milky eyes",           # 顏色表沒有的新怪色 → 反向判定自動涵蓋
+])
+def test_is_eye_color_tag_true(tag):
+    assert _is_eye_color_tag(tag) is True
+
+
+@pytest.mark.parametrize("tag", [
+    "big eyes", "thin eyes", "narrow eyes", "droopy eyes",  # 眼型，誤殺會失去角色特徵
+    "closed eyes", "half-closed eyes",                      # 表情
+    "glowing eyes", "sparkling eyes", "detailed eyes",      # 質感
+    "slender eye shape",   # 不以 eye(s) 結尾
+    "heterochromia",       # 不是眼色 tag
+    "eyes",                # 沒有修飾語
+    "brown hair",          # 完全無關
+])
+def test_is_eye_color_tag_false(tag):
+    assert _is_eye_color_tag(tag) is False

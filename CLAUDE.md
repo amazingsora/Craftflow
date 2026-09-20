@@ -1,65 +1,84 @@
 # Craftflow — Claude Instructions
 
-## Architecture Mandates
-- **Local-First:** AI on Ollama + ComfyUI；無雲端 API（除非明確指示）。
-- **Human-in-the-Loop:** 絕不覆蓋原始創作內容；AI 產出只進分析報告／獨立欄位。
-- **Docker → Host:** 容器內連主機服務用 `host.docker.internal`；本機直跑 Python 用 `localhost`。
+本地優先的小說創作 + AI 生圖工具。FastAPI + React + ComfyUI + Ollama，全部跑在本機。
+
+> **多 AI 協作**：規劃階段先寫根目錄 `AGENT_SYNC.md` 的 `§2.1 Claude 規劃`／`§2.4 整合分析`（順序 Claude → Codex → Gemini → Claude 整合），**經使用者在 `§2.5` 核可後才動碼**。規則見該檔 §0。
+
+## 先讀哪裡（省 token）
+
+| 需求 | 檔 |
+|---|---|
+| 該改哪個檔 / 生圖流程 | `doc/MODULE_MAP.md` |
+| 待辦（唯一真相） | `doc/BACKLOG.md` |
+| 顯存/共存/解析度 | `doc/VRAM分析報告.md` |
+| 某段程式碼為什麼這樣寫 | `doc/reference/CODE_NOTES.md`（程式碼中 `# [CN-xxx]` 的完整根因） |
+| 文件導航 | `doc/INDEX.md` |
+| 今天做到哪 | `python tools/session_status.py` |
+
+**不要** `ls doc/` 逐檔猜、**不要** Read 整份開發記錄（用 `grep -n` 定位段落再讀）。
+
+## 架構鐵則
+
+- **Local-First**：AI 只用 Ollama + ComfyUI，無雲端 API（除非明確指示）。
+- **Human-in-the-Loop**：絕不覆蓋原始創作內容；AI 產出只進分析報告／獨立欄位。
+- **最小程式架構組成通用廣泛工具** —— 所有改動以此為準繩。
+- **Docker → Host**：容器內用 `host.docker.internal`；本機直跑用 `localhost`。
 
 ## Stack
-| Layer | Tech |
+
+| 層 | 技術 |
 |---|---|
 | Backend | FastAPI · SQLAlchemy 2.0 · Pydantic v2 · SQLite · Python 3.11 |
 | Frontend | React 18 · Vite 5 · Vanilla CSS-in-JS |
-| LLM | 文字/翻譯 + 視覺模型皆由設定 UI 切換（清單來自 Ollama `/api/tags`，存 core/state→runtime_state.json）。下方為 **fallback 預設**（UI 未選且 `.env` 未覆蓋時才用）：文字 `dolphin-llama3`、視覺 `qwen2.5vl:7b` |
-| Image | ComfyUI @ `host.docker.internal:8188`（SDXL · CN Union ProMax · IPA） |
-| Ollama | `host.docker.internal:11434` |
+| LLM | 文字/視覺模型由設定 UI 切換（清單來自 Ollama `/api/tags`，存 `data/runtime_state.json`）。fallback 見 `core/config.py` |
+| Image | ComfyUI `:8188`（SDXL · CN Union ProMax · IPA · Anima LLLite） |
+| Ollama | `:11434` |
 | LoRA 訓練 | kohya_ss（subprocess） |
 
-## Architecture Map
-```
-backend/main.py   16 routers，前綴 /api/v1
-backend/app/
-  api/       路由層：projects volumes chapters characters factions illustrations
-             art_styles art_generate(3075行→A1拆解中) ai_art ai_text analysis
-             training export generation_history settings status
-  services/  export_service comfyui_client
-    ai/      art_service character_service consistency_service image_edit_service
-             generation_jobs(非同步生圖job) generation_recorder(seed/參數落DB)
-             vram_manager(條件式卸載) ollama_client prompt_engine/ lora_trainer/
-  models/ schemas/  ORM+Pydantic（chapter_revision=章節快照；generation_history=生成可重現）
-  core/      config(.env/PERSONAL_STYLE) database backup(定時VACUUM INTO)
-             state(執行期全域設定，A4後持久化 data/runtime_state.json，重啟保留)
-frontend/src/
-  App.jsx        側欄佈局殼層(196px) + 服務狀態燈 + 底部歷史 + settings modal
-  components/    ProcessTab GenerateTab ComposeTab NovelTab ArtStyleTab SettingsTab TrainingTab
-                 CharacterTab(A2已拆:113行shell)→ characterTabStyles/Parts/Shared/Views + CharacterDetailView(1380行)
-  index.css      雙主題 token：:root=淺色預設、[data-theme="dark"]；localStorage craftflow_theme
-data/custom_workflows/  ComfyUI workflow（須 API 格式；Standard_V35 / _EyeFix=眼睛強化A/B）
-tools/Craftflow/        legacy CLI（遷移目標 → services/ai/）
-doc/                    每日開發記錄 · 規劃文件
-```
+## 零程式碼的設定點（優先用這些，別改碼）
 
-## 機制速查
-- 畫風 = art_styles DB（LoRA+tags）；`.env` PERSONAL_STYLE_* 寫死個人畫風 tags（角色畫風 extra_tags 為空才套用）
-- checkpoint/workflow/LoRA/模型 全域切換存 core/state（A4後持久化 data/runtime_state.json，重啟保留；檔案缺失才回 .env 預設）
-- 生圖：同步 `/art/generate` + 非同步 `/art/generate-async`（job+polling）；參數記錄 generation_history
+| 要做的事 | 改哪裡 |
+|---|---|
+| 新 checkpoint 歸哪個 family | `backend/checkpoint_styles.yml`（`checkpoints:` 與 `families:` **兩區都要加**） |
+| 某 workflow 專屬 prompt 覆寫 | `backend/prompt_profiles.yml`（名單制，未登錄＝零介入） |
+| 生成旋鈕（VRAM 門檻、畫風權重、upsample 開關…） | 專案根 `.env`，定義見 `core/config.py` |
+| 家族生成策略（CN 上限、denoise 映射、能力開關） | `services/ai/gen_profile.py` 的 `GEN_PROFILE` |
 
 ## Coding Rules
-1. **Surgical updates** — 只改必要處，無關的不重構。
-2. **Progressive feedback** — 慢速 AI 任務需後端狀態 + 前端進度 UI。
-3. **Resilient errors** — Ollama/ComfyUI 失敗不可讓 app crash。
-4. 改前先讀；動手前先說明 *why*。
 
-## Workflow
-Research → Propose → Explain risk → Apply
+1. **Surgical updates** —— 只改必要處，無關的不重構，保留既有架構與風格。
+2. **Progressive feedback** —— 慢速 AI 任務需後端狀態 + 前端進度 UI。
+3. **Resilient errors** —— Ollama/ComfyUI 失敗不可讓 app crash。
+4. **改前先讀，動手前先說明 why**（根因不是症狀）。方向可能錯就直接反對，附證據。
+5. 避免幻覺類別/函式；顧及效能與安全。
 
-## 沙箱/環境注意（實戰教訓）
-- repo=LF、Windows 工作目錄=CRLF：沙箱 git status 會全檔假 modified；commit 前對要提交的檔先 `sed 's/\r$//'` 正規化，否則整檔換行符入版
-- 檔案工具寫掛載資料夾可能**檔尾截斷**：重要檔用 shell 寫入，寫完驗檔尾（已實證 06-10/06-12/07-12）。07-12 新增觀察：截斷不只發生在寫入當下，bash 端對同一檔案的後續讀取（cat/grep/python open）也可能長時間（>15 分鐘）持續讀到截斷/局部損壞版本，即便 Windows host 端（Read tool）內容已完整正確；`__pycache__` 清除、`sleep` 等待、`--import-mode=importlib` 皆無效。唯一穩定解法：用 bash 寫入正確內容覆蓋該檔（`python3 -c "open(f,'wb').write(...)"`，需手動保留原始 CRLF），寫完立即 `py_compile` 驗證。改動 `.py` 檔後、要在沙箱跑 pytest 前，先對受影響檔案跑一次 `python3 -m py_compile` 健檢，比事後除錯省時很多。⚠️ 07-12 新增觀察：`py_compile` 不保證抓到截斷——若截斷點恰好落在註解/docstring 結尾，殘缺檔仍可能語法合法、`py_compile` 誤判成功。更可靠的健檢是額外跑 `ast.parse` 後檢查預期的函式/類別名稱是否都還在（`{n.name for n in ast.walk(tree) if hasattr(n,'name')}`），才抓到 `lexicon.py` 這種漏網案例。
-- 沙箱不可直寫 SQLite（掛載層不支援鎖定）；DB 變更提供指令由使用者本機執行
-- `vite.config.js.timestamp-*.mjs` 為 Vite 暫存檔，已 gitignore，勿入版
+流程：Research → Propose → Explain risk → Apply
+
+## 編程檢查點
+
+1. 新增「會被執行的東西」時，**測試必須真的執行它**（曾因只驗欄位、沒跑 `.format()`，f-string 雙層大括號上線即 500）。
+2. 改生成流程前確認**參數是不是節點參照** —— 作者型 workflow 用單一參數節點分送 KSampler 與 metadata。用 `wf_node_ops._set_node_input` 寫上游，別寫字面值到消費端。
+3. 加 fallback／替代路徑時**確認前端不會把它擋死**（能力旗標要一路貫通到 UI，否則後端變死代碼）。
+4. 改共用函式時列出所有呼叫端，特別注意已定版的 `Standard_V37`。
+5. `backend/tests/test_anima_family.py` 有 **V37 零回歸鎖**。斷言失敗＝改動污染定版路徑 —— **回頭修，不可改斷言充當通過**。
+
+## 沙箱陷阱（實證，違反必踩）
+
+| 陷阱 | 對策 |
+|---|---|
+| 檔案工具寫掛載資料夾**檔尾截斷**，且 bash 後續讀取可能持續讀到殘檔 >15 分鐘 | 重要檔用 shell 寫入，寫完立刻驗檔尾 |
+| `py_compile` **抓不到截斷**（斷點落在註解/docstring 尾時仍語法合法） | 改用 `ast.parse` + 比對預期函式/類別名稱：`{n.name for n in ast.walk(t) if hasattr(n,'name')}` |
+| repo=LF、Windows 工作目錄=CRLF → git status 全檔假 modified | 寫檔沿用原檔換行符（`nl='\r\n' if '\r\n' in s else '\n'`） |
+| 沙箱**不可直寫 SQLite**（掛載層不支援鎖定） | DB 變更給指令由使用者本機執行 |
+| `git stash` / `git add` / `git commit` 在掛載層會留下刪不掉的 `.git/index.lock` | **沙箱不跑 git 寫入**。比對舊版用 `git show HEAD:path` 取到 /tmp |
+| 前端改完沒 `npm run build` → 舊 bundle 造成誤判 | 前端改動後必提醒使用者 build |
+| 沙箱缺套件（pytest/fastapi/sqlalchemy…） | 測試失敗先確認是否為缺套件而非改動所致 |
 
 ## Doc Rules
-- **每日開發記錄** `doc/YYYY-MM-DD_開發記錄.md`：當天所有工作/討論/決策/待辦只寫當天檔；跨日開新檔，開頭「承接 YYYY-MM-DD」，不改舊檔；會話開始先讀最新一筆確認狀態。
-- **規劃文件** `doc/YYYY-MM-DD_*規劃.md`：只更新進度 checkbox（🔲→✅）與狀態欄；當 spec/checklist 用，保持精簡。
-- **禁止**：在舊日期檔補寫新內容；把技術細節分散到多個檔案。
+
+- **每日開發記錄** `doc/YYYY-MM-DD_開發記錄.md`：當天工作/決策/待辦只寫當天檔；跨日開新檔，開頭「承接 YYYY-MM-DD」。**禁止在舊日期檔補寫新內容。**
+- **新待辦一律寫 `doc/BACKLOG.md`**，不要再開新規劃檔堆疊。
+- **根因／踩坑結論寫 `doc/reference/CODE_NOTES.md`**，程式碼只留一行 `# [CN-xxx] <結論>`。推翻舊結論時**不刪舊條目**，在該條末尾加「訂正（日期）」。
+- **規劃文件**：只更新 checkbox（🔲→✅）與狀態欄。
+- 新發現的 bug 或推翻先前結論的證據 → 寫進當天記錄的「新發現」章節，附檔名行號。
+- 月底把該月檔案移進 `doc/archive/YYYY-MM/` 並補 `YYYY-MM_摘要.md`。

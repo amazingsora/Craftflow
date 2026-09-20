@@ -60,6 +60,8 @@ function _initVariant(v = {}, charId = null, slot = null) {
     summarizing: false, uploadingConcept: false,
     deletingConceptIdx: null, deletingAiIdx: null,
     lastDebugPrompt: null, lastRawDesc: null, lastFlatDraft: null, lastTimings: null, lastAiPromptCompiled: null, lastIpaUsed: null, showDebugPrompt: false,
+    // A3 P0-1/P0-2/P0-5：變體版同主角色一樣需要 seed 欄位（可重現實驗台）。
+    seed: -1, lastSeed: null, reusePrompt: false,
   }
 }
 
@@ -72,8 +74,15 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   //                後端的 cn_fallback 分支永遠進不去（替代方案等於死代碼）。
   const cnFallback = capability.cn_fallback || null
   const cnUsable   = cnSupported || !!cnFallback
-  const cnLabel    = cnSupported ? 'ControlNet' : '構圖引導 (img2img)'
-  const cnHint     = cnSupported ? '' : 'Anima 不支援 ControlNet，已自動改用 img2img 低重繪貼合草圖構圖。'
+  // 2026-08-12：cn_fallback 由單值改為候選鏈的解析結果，多了 'lllite'。
+  // LLLite 是**真條件注入**（機制等價 SDXL ControlNet），標籤不該再說「不支援」。
+  const cnLabel    = cnSupported ? 'ControlNet'
+    : cnFallback === 'lllite' ? 'ControlNet (LLLite)'
+      : '構圖引導 (img2img)'
+  const cnHint     = cnSupported ? ''
+    : cnFallback === 'lllite'
+      ? 'Anima 走 ControlNet-LLLite（真條件注入，latent 不受草圖污染），強度滑桿即 LLLite strength。'
+      : 'Anima 不支援 ControlNet，已自動改用 img2img 低重繪貼合草圖構圖。'
   const ipaHint    = 'Anima 無對應 IP-Adapter；改用「視覺特徵」把參考圖轉成文字特徵帶入提示詞。'
 
   const capChip = (label, title) => (
@@ -153,6 +162,12 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [lastCoverage, setLastCoverage] = useState(null)
   const [lightboxSrc, setLightboxSrc] = useState(null)
   const [lastTimings, setLastTimings] = useState(null)
+  // A3 P0-1/P0-2/P0-5（2026-08-22）：可重現實驗台——seed=-1 維持隨機（零回歸）；
+  // lastSeed 記本次實際用的 seed，供「沿用上次 seed」按鈕與複製使用。
+  const [seed, setSeed] = useState(-1)
+  const [lastSeed, setLastSeed] = useState(null)
+  // A3 P0-3：前端貫通——只加後端參數不接 UI 會變死代碼（D4 兩層閘控教訓）。
+  const [reusePrompt, setReusePrompt] = useState(false)
 
   // ── Tab state ──────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState(0)
@@ -255,9 +270,13 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         ipa_weight: String(ipaWeight),
         use_controlnet: (cnUsable && cnEnabled) ? '1' : '0',
         cn_weight: String(cnWeight),
+        seed: String(seed),
+        reuse_prompt: reusePrompt ? '1' : '0',
       })
       const resp = await request(`/characters/${char.id}/generate-design?${params}`, { method: 'POST' })
-      
+      const seedHeader = resp.headers.get('X-Seed')  // 純數字字串，非 base64（後端未編碼）
+      if (seedHeader) setLastSeed(seedHeader)
+
       // Retrieve debug prompt from header
       let debugPrompt = null
       const b64Prompt = resp.headers.get('X-Prompt')
@@ -486,8 +505,11 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         ipa_weight: String(vState.ipaWeight ?? 0.6),
         use_controlnet: (cnUsable && (vState.cnEnabled ?? true)) ? '1' : '0',
         cn_weight: String(vState.cnWeight ?? 0.85),
+        seed: String(vState.seed ?? -1),
+        reuse_prompt: vState.reusePrompt ? '1' : '0',
       })
       const resp = await request(`/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
+      const seedHeader = resp.headers.get('X-Seed')  // 純數字字串，非 base64
       let debugPrompt = null
       const b64Prompt = resp.headers.get('X-Prompt')
       if (b64Prompt) { try { debugPrompt = decodeURIComponent(escape(atob(b64Prompt))) } catch (e) { /* silent */ } }
@@ -520,6 +542,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         lastIpaUsed: ipaUsed,
         lastPromptProfile: promptProfile,
         lastCoverage: coverage,
+        lastSeed: seedHeader ?? vState.lastSeed,
         pendingQueue: [{ blob, url, label: '全身人設圖', historyId: resp.headers.get('X-History-Id') || null }],
       })
       onAddHistory?.({
@@ -731,6 +754,30 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                 <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{cnWeight.toFixed(2)}</span>
               </div>
             )}
+            {/* A3 P0-2（2026-08-22）：可重現實驗台——seed 手動輸入 + 沿用上次 seed。
+                seed=-1 維持現行隨機（零回歸）；填 >=0 的值＋「沿用 prompt」（見 debug 區）
+                連按兩次生成應輸出一致，用來驗證調整是否真的有效，而非隨機波動的錯覺。 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Seed</span>
+              <input type="number" value={seed}
+                title="-1 = 每次隨機（預設）；填入非負整數則固定 seed，供比較調整效果"
+                style={{ width: 120, fontSize: 12, padding: '2px 6px', background: 'var(--surface-2)',
+                         border: '1px solid var(--border-strong)', borderRadius: 4, color: 'var(--fg)' }}
+                onChange={e => setSeed(e.target.value === '' ? -1 : Number(e.target.value))} />
+              {lastSeed != null && (
+                <button style={{ ...S.btnSm, fontSize: 11, padding: '2px 8px' }}
+                  title="把上次實際使用的 seed 填入輸入框，供下次生成沿用"
+                  onClick={() => setSeed(Number(lastSeed))}>
+                  沿用上次 seed（{lastSeed}）
+                </button>
+              )}
+              <label title="連同 seed 一起沿用上次生成的 prompt，不重新編譯（只固定 seed 不夠，LLM 每次翻譯結果仍可能不同）"
+                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: reusePrompt ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                <input type="checkbox" checked={reusePrompt} onChange={e => setReusePrompt(e.target.checked)}
+                  style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
+                沿用 prompt
+              </label>
+            </div>
 
             {/* 待確認佇列（一次顯示一張） */}
             {pendingQueue.length > 0 && (
@@ -1102,6 +1149,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                           {lastCoverage}
                         </div>
                       )}
+                      {/* A3 P0-5：seed 一鍵複製，供沿用/回報問題時貼給他人重現 */}
+                      {lastSeed != null && (
+                        <div title="點擊複製 seed" onClick={() => navigator.clipboard?.writeText(lastSeed)}
+                          style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace', cursor: 'pointer',
+                          background: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border-strong)' }}>
+                          seed: {lastSeed} 📋
+                        </div>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {lastRawDesc ?? '—'}
@@ -1244,6 +1299,28 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                 <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.cnWeight ?? 0.85).toFixed(2)}</span>
               </div>
             )}
+            {/* A3 P0-2：變體版 seed 欄位（同主角色，見上方註解） */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Seed</span>
+              <input type="number" value={vState.seed ?? -1}
+                title="-1 = 每次隨機（預設）；填入非負整數則固定 seed，供比較調整效果"
+                style={{ width: 120, fontSize: 12, padding: '2px 6px', background: 'var(--surface-2)',
+                         border: '1px solid var(--border-strong)', borderRadius: 4, color: 'var(--fg)' }}
+                onChange={e => setV(activeTab, { seed: e.target.value === '' ? -1 : Number(e.target.value) })} />
+              {vState.lastSeed != null && (
+                <button style={{ ...S.btnSm, fontSize: 11, padding: '2px 8px' }}
+                  title="把上次實際使用的 seed 填入輸入框，供下次生成沿用"
+                  onClick={() => setV(activeTab, { seed: Number(vState.lastSeed) })}>
+                  沿用上次 seed（{vState.lastSeed}）
+                </button>
+              )}
+              <label title="連同 seed 一起沿用上次生成的 prompt，不重新編譯（只固定 seed 不夠，LLM 每次翻譯結果仍可能不同）"
+                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: vState.reusePrompt ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                <input type="checkbox" checked={!!vState.reusePrompt} onChange={e => setV(activeTab, { reusePrompt: e.target.checked })}
+                  style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
+                沿用 prompt
+              </label>
+            </div>
             {vState.pendingQueue.length > 0 && (
               <div style={{ marginBottom: 10, border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -1464,6 +1541,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                           color: vState.lastCoverage.includes('→') ? 'var(--tint-amber-fg)' : 'var(--muted)',
                           border: `1px solid ${vState.lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--border-strong)'}` }}>
                           {vState.lastCoverage}
+                        </div>
+                      )}
+                      {/* A3 P0-5：seed 一鍵複製 */}
+                      {vState.lastSeed != null && (
+                        <div title="點擊複製 seed" onClick={() => navigator.clipboard?.writeText(vState.lastSeed)}
+                          style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace', cursor: 'pointer',
+                          background: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border-strong)' }}>
+                          seed: {vState.lastSeed} 📋
                         </div>
                       )}
                     </div>
