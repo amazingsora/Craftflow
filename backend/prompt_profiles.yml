@@ -161,11 +161,21 @@ profiles:
     # 出圖呈高對比硬光 + 角色外緣白色 halo —— prompt 自己打自己。
     # ⚠️ 仍需固定 seed ＋ 沿用 prompt 的 A/B 確認（P5-9 驗收）。
     # **回滾＝註解掉下面這行**（落回 family 原值，零程式改動）。
-    quality_prefix: "masterpiece, best quality, absurdres"
+    # 2026-09-22：補 `safe`。官方正向前綴原文 `masterpiece, best quality, score_7, safe, `，
+    # 官方明列 safe 為「避免非預期內容」的手段；_ANIMA_TEMPLATE 的 NO-SAFETY 規則本來就寫
+    # 「Handled elsewhere」——這裡就是 elsewhere。ComfyUI 定版已帶且出圖無異常。回滾＝刪 `, safe`。
+    quality_prefix: "masterpiece, best quality, absurdres, safe"
     
+    # 2026-09-22：與 ComfyUI 定版（Anima平塗A11_v5）逐字對齊。補兩組，**不是新發明**：
+    #   · chromatic aberration —— 官方 turbo-v1.1／aesthetic-v1.1 gallery 負向逐字都有，我們獨缺。
+    #   · child, toddler, chibi —— 2026-09-20 定案「人設圖只限定年輕女性」，先前只擋
+    #     male face/masculine features，幼態完全沒擋（08-19 那張正向還帶 child, petite）。
+    # 不對齊的代價：兩邊送出的 prompt 不同 ⇒ ComfyUI 手測結論無法轉移到產線。
+    # **回滾＝刪掉這兩組**（其餘逐字未動）。
     negative: >-
       worst quality, low quality, lowres, blurry,
-      jpeg artifacts, bad anatomy, watermark, artist name,
+      jpeg artifacts, chromatic aberration, bad anatomy, watermark, artist name,
+      child, toddler, chibi,
       drop shadow, cast shadow, floor, ground, reflection
 
     # ── style_extra（P5-8，2026-08-26）─────────────────────────────────────
@@ -183,7 +193,31 @@ profiles:
     # 權重重複強調一個 prompt 裡已經講兩次的概念，稀釋另外三項。
     # **回滾＝改用下行註解的四項版本**：
     #   style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors, anime style illustration"
-    style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors"
+    # ── 2026-09-21：三項全部清空（實證，ComfyUI 手動 A/B）────────────────────
+    # 使用者回報 Anima 出圖「過於油膩」。實證鏈：
+    #   1) civitai 官方參考圖（Anima turbo-v1.0 ＋ Anima Workflows V8.0）採樣參數與
+    #      本組 workflow 完全相同（CFG 1 / steps 12 / er_sde_simple / 1024×1536），
+    #      負向與本 anchor 一字不差，出圖乾淨平塗、不油。而它的正向 prompt 裡
+    #      **一個平塗算子都沒有**，是純 danbooru tag 清單。
+    #   2) 在 ComfyUI 上以同底模（anima_turboV11）手動移除這三項後出圖，油膩感消失、
+    #      平塗成立 —— 使用者確認「品質有上升」並要求定為標準。
+    # 根因：底模原生就會平塗；這三項同義算子疊加＠2.0 落在過驅動區，把畫面推向高對比
+    #       → 高光炸開＝油。**加算子反而破壞平塗**，直覺是反的。
+    # 這與 Illustrious 側 C4（SYNC-004 / T0-E2）是同一型錯誤，第二次復發。
+    #
+    # 空字串＝falsy ⇒ `_resolve_style_extra()`（character_design_service.py:465）不採用
+    # 本 profile 值，續往下落到 .env `PERSONAL_STYLE_EXTRA_TAGS`。該 fallback 目前
+    # **本來就不生效**（.env `PERSONAL_STYLE_ENABLED=false`，且 465-468 行是
+    # `ENABLED and EXTRA_TAGS` 的且條件）⇒ 本處清空即足夠。
+    # 同日仍一併清空 `.env PERSONAL_STYLE_EXTRA_TAGS`，純屬防禦：日後有人把 ENABLED
+    # 打開時，不會靜默踩回另一組算子（flat color, cel shading, anime coloring＠1.2）。
+    # character_design_service.py:772 的 `if style_extra:` 另有保護 ⇒ 空值不會組出
+    # `(:2.0)` 這種壞語法（已確認）。
+    # ⚠️ 本檔有**兩處**同值（本處 anchor ＋ AnimaStandardV8turbo.json 的複本），
+    #    兩處都已清空。日後回滾也必須兩處一起。
+    # **回滾＝改回下行註解的原值**（weight 行未動，回滾時無需一併改）：
+    #   style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors"
+    style_extra: ""
     style_extra_weight: 2.0
 
   # ── AnimaStandardV8turbo.json（2026-08-22，A3 P1-2 / D2）──────────────────────
@@ -216,10 +250,20 @@ profiles:
     # 出圖呈高對比硬光 + 角色外緣白色 halo —— prompt 自己打自己。
     # ⚠️ 仍需固定 seed ＋ 沿用 prompt 的 A/B 確認（P5-9 驗收）。
     # **回滾＝註解掉下面這行**（落回 family 原值，零程式改動）。
-    quality_prefix: "masterpiece, best quality, absurdres"
+    # 2026-09-22：補 `safe`。官方正向前綴原文 `masterpiece, best quality, score_7, safe, `，
+    # 官方明列 safe 為「避免非預期內容」的手段；_ANIMA_TEMPLATE 的 NO-SAFETY 規則本來就寫
+    # 「Handled elsewhere」——這裡就是 elsewhere。ComfyUI 定版已帶且出圖無異常。回滾＝刪 `, safe`。
+    quality_prefix: "masterpiece, best quality, absurdres, safe"
+    # 2026-09-22：與 ComfyUI 定版（Anima平塗A11_v5）逐字對齊。補兩組，**不是新發明**：
+    #   · chromatic aberration —— 官方 turbo-v1.1／aesthetic-v1.1 gallery 負向逐字都有，我們獨缺。
+    #   · child, toddler, chibi —— 2026-09-20 定案「人設圖只限定年輕女性」，先前只擋
+    #     male face/masculine features，幼態完全沒擋（08-19 那張正向還帶 child, petite）。
+    # 不對齊的代價：兩邊送出的 prompt 不同 ⇒ ComfyUI 手測結論無法轉移到產線。
+    # **回滾＝刪掉這兩組**（其餘逐字未動）。
     negative: >-
       worst quality, low quality, lowres, blurry,
-      jpeg artifacts, bad anatomy, watermark, artist name,
+      jpeg artifacts, chromatic aberration, bad anatomy, watermark, artist name,
+      child, toddler, chibi,
       drop shadow, cast shadow, floor, ground, reflection
 
     # ── style_extra（P5-8，2026-08-26）─────────────────────────────────────
@@ -237,7 +281,9 @@ profiles:
     # 權重重複強調一個 prompt 裡已經講兩次的概念，稀釋另外三項。
     # **回滾＝改用下行註解的四項版本**：
     #   style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors, anime style illustration"
-    style_extra: "flat cel shaded coloring, bold clean outlines, saturated colors"
+    # 2026-09-21：清空。這是上面 AnimaStandardV8.json anchor 的複本（本檔自承的
+    # 「兩份真相風險」），完整理由與回滾方式見該處註解。兩處必須同步。
+    style_extra: ""
     style_extra_weight: 2.0
 
   # ══════════════════════════════════════════════════════════════════════════
@@ -326,4 +372,24 @@ profiles:
   # 先登錄、檔案後放：名單制，檔案不存在時本行零作用；檔案放進來時 SYNC-001 護欄
   # （test_all_custom_workflows_are_registered）不會紅，prompt 配方也與 turbo 組一致（單變因）。
   AnimaStandardV8_base10.json:
+    <<: *anima_aesthetic_turbo
+
+  # ── AnimaStandardV9_turbo.json（2026-09-22）──────────────────────────────────
+  # 底模 anima_turboV11 → 與四支 *_trubo11 同組配方，沿用同一 anchor（單變因）。
+  # ⚠️ 補登錄理由是實錘：本行加入前，generation_history 2026-09-22 08:12／08:19 兩張的
+  #    正向帶 `ultra detailed, high contrast`、負向帶 `score_1/2/3` 與
+  #    `overexposed…low contrast…pale` —— 全部是 family(ANIMA) 預設，非本檔配方
+  #    ⇒ 該 workflow 整組靜默落回 family + .env。SYNC-001 同型災情第三次復發。
+  #    其中負向的 `low contrast` 與正向的 `high contrast` 同時存在，
+  #    而「平塗」＝低對比色塊 ⇒ prompt 自己打自己，正是使用者回報「平塗感輸 SDXL」的成因之一。
+  AnimaStandardV9_turbo.json:
+    <<: *anima_aesthetic_turbo
+
+  # ── AnimaStandardV9_aesthetic.json（2026-09-22，A/B 定案落地）────────────────
+  # 由 AnimaStandardV9_turbo.json 複製，**只改四個值**：unet → anima_aestheticV11、
+  # steps 12→30、cfg 1→4.0、scheduler simple→beta（node 26 顯示值同步）。
+  # 依據：09-22 ComfyUI A/B ——「A11 平塗最好且是唯一負向生效的路線」；
+  #       A11v4（beta）優於 v2（simple）。turbo 檔保留為對照組，不就地改（SYNC-004 慣例）。
+  # 配方沿用同一 anchor：aesthetic 與其蒸餾版 prompt 規則同源，配方跟著底模走、不跟版號走。
+  AnimaStandardV9_aesthetic.json:
     <<: *anima_aesthetic_turbo

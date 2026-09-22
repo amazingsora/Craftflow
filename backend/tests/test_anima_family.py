@@ -724,8 +724,13 @@ def test_fullbody_suffix_is_single_illustration():
     low = suffix.lower()
     for banned in ("design sheet", "reference sheet", "multiple views"):
         assert banned not in low, banned
-    assert "character illustration" in low
-    assert "full body portrait" in low
+    # [CN-097] SYNC-005 軌 S（2026-09-21）：D1 刻意拔掉這兩個泛詞，斷言反轉。
+    # 這**不是**「改斷言充當通過」—— 是使用者核可的行為變更（AGENT_SYNC §2.5），
+    # 原斷言 `assert "character illustration" in low` / `"full body portrait" in low`
+    # 已不成立。回滾 D1 時本處兩行也要一併改回。
+    assert "character illustration" not in low
+    assert "portrait" not in low, "CN-070：portrait 壓低臉部佔比，正向不得再出現"
+    assert "full body" in low
     assert "solo" in low
     assert "front view" in low
     assert low.endswith(", light red background")
@@ -1006,3 +1011,110 @@ def test_v37_capability_unaffected_by_lllite(monkeypatch):
     assert out["cn_supported"] is True
     assert out["cn_fallback"] is None and out["lllite_weight"] is None
     assert called["n"] == 0, "V37 不該觸發 LLLite 偵測（多打一次 ComfyUI API）"
+
+
+# ── SYNC-005 軌 S｜平塗算子攔截（2026-09-21）──────────────────────────────────
+
+def test_flat_style_operators_banned_for_anima_only():
+    """C2：算子清單只掛 ANIMA，不得污染 Illustrious 的軌 S 對照組。"""
+    from app.services.ai.prompt_engine.styles import (
+        STYLE_CONFIG, PromptStyle, _FLAT_STYLE_OPERATOR_TAGS,
+    )
+    assert _FLAT_STYLE_OPERATOR_TAGS <= STYLE_CONFIG[PromptStyle.ANIMA].banned_tags
+    for other in (PromptStyle.ILLUSTRIOUS, PromptStyle.SDXL, PromptStyle.NOOBAI):
+        leaked = _FLAT_STYLE_OPERATOR_TAGS & STYLE_CONFIG[other].banned_tags
+        assert not leaked, f"{other} 不該帶平塗算子（軌 S 對照組會被污染）: {leaked}"
+
+
+def test_flat_style_operators_actually_stripped_from_llm_output():
+    """C1：**真的跑** sanitizer，不是只驗清單有沒有那幾個字串。
+
+    對應 CLAUDE.md 編程檢查點 1（曾因只驗欄位、沒真的執行而上線即 500）。
+    """
+    from app.services.ai.prompt_engine.compiler import _sanitize_to_list
+    from app.services.ai.prompt_engine.styles import STYLE_CONFIG, PromptStyle
+    banned = STYLE_CONFIG[PromptStyle.ANIMA].banned_tags
+
+    # ⚠️ 存活標記刻意用 brown hair / short hair，**不可用 1girl / solo** ——
+    #    `_SUBJECT_COUNT_TAGS` 本身就含 1girl 與 solo（styles.py），它們一樣會被剝除。
+    out = _sanitize_to_list(
+        "brown hair, flat color, cel shading, saturated colors, short hair", banned)
+    assert out == ["brown hair", "short hair"]
+
+    # 權重寫法：compiler.py:561 的正規化已能處理，本測試固定住該前提
+    # （若哪天它退化，這裡會紅，而不是靜默放行算子）。
+    for variant in ("(flat color:1.2)", "flat color:1.2", "(flat color:1.2",
+                    "FLAT COLOR", "(flat color, cel shading:1.2)"):
+        assert _sanitize_to_list(f"brown hair, {variant}, short hair", banned) \
+            == ["brown hair", "short hair"], variant
+
+    # 複數／同義變體：由 _FLAT_STYLE_OPERATOR_TAGS 收尾（精確字串比對，故逐一列舉）
+    for variant in ("flat colors", "flat coloring", "cel shaded", "vibrant colors",
+                    "thick outlines", "bold clean outlines"):
+        assert _sanitize_to_list(f"brown hair, {variant}, short hair", banned) \
+            == ["brown hair", "short hair"], variant
+
+
+def test_nested_weight_syntax_is_known_leak():
+    """已知漏洞，**本輪不修**，先固定現況（AGENT_SYNC §2.4 5-2）。
+
+    `((flat color:0.5):1.2)` → `.strip("()")` 剝掉頭尾所有括號得
+    `flat color:0.5):1.2`，尾段正則只去掉 `:1.2` ⇒ 正規化成 `flat color:0.5)`，
+    不命中 banned_set。LLM 不會自發吐出這種寫法（那是 prompt_profiles.yml 繞
+    per-tag 權重用的），故風險低。**哪天要修這個洞，本測試會提醒同步更新。**
+    """
+    from app.services.ai.prompt_engine.compiler import _sanitize_to_list
+    from app.services.ai.prompt_engine.styles import STYLE_CONFIG, PromptStyle
+    out = _sanitize_to_list("brown hair, ((flat color:0.5):1.2), short hair",
+                            STYLE_CONFIG[PromptStyle.ANIMA].banned_tags)
+    assert out == ["brown hair", "((flat color:0.5):1.2)", "short hair"]
+# ── SYNC-005 軌 S｜範例洩漏與泛用風格詞（2026-09-21，項目 2/3）────────────────
+
+def test_anima_template_examples_are_traceable():
+    """項目2：EXAMPLES 的每個 Output tag 都要能對回 Input，且不得含專案角色特徵。
+
+    根因（generation_history #750 實錘）：角色的「外貌」欄位**零服裝描述**，
+    prompt 卻吐出 `grey combat suit, tactical vest` —— 逐字來自舊 EXAMPLES 第二例。
+    而 `_DANBOORU_COMMON_RULES` 明寫 `STRICT: Do NOT add clothing ... NOT mentioned
+    in the input`，三個舊範例卻全部在示範加料。**規則說一套、範例示範另一套，
+    LLM 學範例不學規則。**
+    """
+    from app.services.ai.prompt_engine.styles import _ANIMA_TEMPLATE
+    ex = _ANIMA_TEMPLATE.split("[EXAMPLES]")[1].split("[INPUT]")[0]
+    # 舊範例的加料字串，一個都不准回來
+    for leaked in ("tactical vest", "grey combat suit", "robe", "serious expression",
+                   "closed mouth", "looking at viewer"):
+        assert leaked not in ex, f"EXAMPLES 又在示範加料: {leaked}"
+    # 不得與專案角色特徵重合（LLM 會分不清自己是在翻譯還是在抄）
+    for overlap in ("heterochromia", "brown hair", "異色瞳", "戰鬥服"):
+        assert overlap not in ex, f"EXAMPLES 與專案角色重合: {overlap}"
+    assert "TRACEABILITY" in _ANIMA_TEMPLATE
+
+
+def test_anima_template_still_renders():
+    """**真的跑** .format() —— CLAUDE.md 檢查點 1。
+
+    歷史事故：f-string 雙層大括號沒展開，上線即 500。本測試確保模板改動後
+    `{prompt}` 仍是唯一的 format 佔位符，且不會丟 KeyError／IndexError。
+    """
+    from app.services.ai.prompt_engine.styles import _ANIMA_TEMPLATE
+    rendered = _ANIMA_TEMPLATE.format(prompt="測試輸入：金色短髮的少女")
+    assert "測試輸入：金色短髮的少女" in rendered
+    assert "{prompt}" not in rendered
+    assert "[EXAMPLES]" in rendered and "[RESULT]" in rendered
+
+
+def test_generic_style_tags_banned_for_anima_only():
+    """項目3：泛用風格詞只掛 ANIMA，且真的會被剝除。"""
+    from app.services.ai.prompt_engine.compiler import _sanitize_to_list
+    from app.services.ai.prompt_engine.styles import (
+        STYLE_CONFIG, PromptStyle, _GENERIC_STYLE_TAGS,
+    )
+    assert _GENERIC_STYLE_TAGS <= STYLE_CONFIG[PromptStyle.ANIMA].banned_tags
+    for other in (PromptStyle.ILLUSTRIOUS, PromptStyle.SDXL):
+        assert not (_GENERIC_STYLE_TAGS & STYLE_CONFIG[other].banned_tags), other
+
+    banned = STYLE_CONFIG[PromptStyle.ANIMA].banned_tags
+    for variant in ("anime style", "character illustration", "digital art", "illustration"):
+        assert _sanitize_to_list(f"brown hair, {variant}, short hair", banned) \
+            == ["brown hair", "short hair"], variant

@@ -558,7 +558,49 @@ INFO: the IPAdapter reference image is not a square, CLIPImageProcessor will res
 > **順序建議改為**：E10 補登錄（一行）→ 軌 V（不修完，後面每一輪 A/B 都要等 20 分鐘）→ 軌 S → 軌 I → 軌 N。
 > 原本把軌 S 排第一，是在不知道「每張圖要 9～21 分鐘」的前提下訂的。
 
-<!-- HANDOFF: Claude DONE @ 2026-09-19（含 E9~E13 追加） -->
+#### 十、軌 S 續（2026-09-21）：Anima 側已有結論，並提 C/D/E 三項後續
+
+> 本節補在 §2.1，因為本案標題就是「拆掉全域平塗算子」，Anima 側的算子同屬軌 S 範圍。
+> 軌 S 原訂的五組 A/B 是 **Illustrious/fabricatedXL 側的「太平塗」**；本節是 **Anima 側
+> 的「太油膩」**。兩者方向相反、根因同型（同義算子疊加），不可互相套用結論。
+
+##### S-1 證據鏈（已完成，非推論）
+
+| # | 證據 | 來源 |
+|---|---|---|
+| 1 | civitai 官方參考圖二張：`Anima turbo-v1.0` ＋ `Anima Workflows V8.0`，`CFG 1 / STEPS 12 / ER_SDE_SIMPLE / 1024×1536` —— **與本專案 `AnimaStandardV8_trubo11_0919.json` 的採樣參數完全相同**，負向與本檔 anima anchor **一字不差** | 使用者 2026-09-21 提供截圖 |
+| 2 | 該二圖出圖乾淨平塗、不油，而其**正向 prompt 裡一個平塗算子都沒有**（純 danbooru tag 清單） | 同上 |
+| 3 | 在 ComfyUI 手動以同底模 `anima_turboV11` 移除三項算子後出圖，油膩感消失、平塗成立 | 使用者實跑，2026-09-21 |
+| 4 | 使用者裁定「品質有上升，就用這個做為 Craftflow 的標準」 | 2026-09-21 對話 |
+
+**根因**：底模原生就會平塗。`flat cel shaded coloring, bold clean outlines, saturated colors`
+三項同義算子疊加 **@2.0** 落在過驅動區，把畫面推向高對比 → 高光炸開＝油。
+**加算子反而破壞平塗**，直覺是反的。與 Illustrious 側 C4（SYNC-004 / T0-E2）同型，**第二次復發**。
+
+##### S-2 已執行（零程式，設定點，見 §2.6「六、」）
+
+- **A**：`backend/prompt_profiles.yml` 兩處 `style_extra` → `""`（anchor ＋ V8turbo 複本）
+- **B**：`.env PERSONAL_STYLE_EXTRA_TAGS` → 清空（**防禦性**，非必要條件，理由見 §2.6）
+
+##### S-3 提案 C/D/E（**改碼，待 §2.5 追加裁決，未執行**）
+
+| 項 | 內容 | 檔案:行 → 怎麼改 | 風險 | 為什麼需要 |
+|---|---|---|---|---|
+| **C** | LLM 輸出禁平塗算子與權重括號 | `backend/app/services/ai/prompt_engine/compiler.py` 的 `banned_tags` 增補 `flat color` / `cel shading` / `anime coloring` / `flat cel shaded coloring` / `bold clean outlines` / `saturated colors` 等同義項；並比照既有 `_WEIGHT_GROUP_RE` 展開後比對 | 中 | A+B 只保證**後端不再主動加**；人設圖 prompt 由 LLM 動態生成，**擋不住 LLM 自己吐算子或權重括號**。不做 C，標準只落地一半 |
+| **D** | 拔 fullbody suffix 的泛詞 | `character_design_service.py:430 _build_fullbody_suffix()` 的 `character illustration` / `full body portrait` 與 compile 端 `anime style` 重疊 | 中 | 該處與 anima anchor 的原註解**自承三重同義**（prompt_profiles.yml P5-8 去重段）。算子清掉後這組泛詞成為新的稀釋來源 |
+| **E** | FaceDetailer 注入 | 藍本見本檔既有 FaceDetailer 段；**前提未驗** | 高 | Anima 用 `qwen_image_vae` ＋ Qwen3 編碼器（非 SDXL），FaceDetailer 內部會做 VAEEncode→KSampler→VAEDecode，**能不能跑至今未證實**。已交付驗證器：`F:\wk\ComfyUI_portable\AnimaTurboV11_LLLite_UI_v2_workflow.json`，跑通才談落地 |
+
+**建議順序**：先由使用者本機驗收 A+B（人設圖出圖 A/B）→ 再裁決 C → D → E。
+C 之前不要動 D，否則兩個稀釋來源一起拔，無法歸因哪一個有效。
+
+##### S-4 必須先講清楚的落差（驗收時別誤判）
+
+使用者那張滿意的圖是**手寫固定 prompt ＋ 純 txt2img ＋ LLLite** 出來的；
+Craftflow 人設圖走的是 **LLM 動態 prompt ＋ pre-ref 外擴 ＋ IPA/CN 整條鏈**。
+**A+B 落地後出圖不會與那張一模一樣**，只會少掉那三項算子。
+拿「不一樣」當作修失敗，是錯誤歸因。
+
+<!-- HANDOFF: Claude DONE @ 2026-09-19（含 E9~E13 追加）；2026-09-21 追加 §2.1 十（軌 S / Anima 側） -->
 
 ---
 
@@ -601,7 +643,21 @@ _weighted = ", ".join(f"({t.strip()}:{_style_weight})" for t in style_extra.spli
 #### 8. safetensors metadata 驗證無其他隱患
 使用 Python 實查 `models/loras/*.safetensors` 的 `__metadata__`，Claude 在 E8 抓出的 `ag31_style_ba_v1-000016` (實際上是 `sdxl_base_v1-0` LyCORIS) 與 `Blue_archive_style` (結尾帶零寬空格) 是清單中唯二的嚴重錯誤。其餘模型如 `Hoshimachi Suisei` 與 `Kozeki_Ui` 皆正確標示為 `sdxl_base_v1-0`。執行 X1/X2 的文件修正即可。
 
-<!-- HANDOFF: Gemini DONE @ 2026-09-19 20:56 -->
+#### 9. 針對 2026-09-21 軌 S 續（Anima 側 C/D/E）的實證與修正
+
+針對 Claude 在「十、軌 S 續」提出的後續方案 C、D、E，提供以下實證修正：
+
+**關於 C（LLM 輸出禁平塗算子）：方向正確，但實作位置與機制判斷有誤。**
+1. **位置錯誤**：`banned_tags` 並非定義於 `compiler.py`，而是在 `styles.py` 中。應直接在 `styles.py` 內定義 `_ANIMA_BANNED_STYLE_TAGS`（包含 `flat color`, `cel shading`, `anime coloring`, `flat cel shaded coloring`, `bold clean outlines`, `saturated colors`），並將其加入 `PromptStyle.ANIMA` 的 `banned_tags` 設定。
+2. **冗餘邏輯**：Claude 提議「比照 `_WEIGHT_GROUP_RE` 展開後比對」，但實查 `compiler.py` 的 `_sanitize_to_list()` 第 556 行已實作了 `re.sub(r':[\d.]+$', '', t_clean.lower().strip("()")).strip()`。這條過濾器能自動把 LLM 幻覺吐出的權重寫法（如 `(flat color:1.2)`）剝離成乾淨的 `flat color` 再進行集合比對。因此**既有機制已能完美攔截帶權重的算子，不需再新增任何展開邏輯**。
+
+**關於 D（拔 fullbody suffix 泛詞）：同意執行，不必等 C 落地。**
+`character_design_service.py:430` 的 `character illustration, full body portrait` 屬於泛用描述，對於以 danbooru 標籤為主語料的動漫模型是無效稀釋。拔除後保留 `full body, front view` 即可，與 C 的算子攔截互不衝突，建議可一併執行。
+
+**關於 E（FaceDetailer 注入）：風險評估正確，維持擋下。**
+FaceDetailer（Impact Pack）內部會在裁切後的局部區域執行 `VAEEncode` → `KSampler` → `VAEDecode`。若 Anima 底模（Cosmos-Predict2 體系）的 Latent 空間分佈或 VAE 編解碼特性與標準 SD 不同，極易在局部重繪時造成接縫處色塊破裂或直接 crash。在 UI 驗證器未於本機跑通前，嚴禁寫入主線。
+
+<!-- HANDOFF: Gemini DONE @ 2026-09-21 03:12 -->
 
 ---
 
@@ -648,7 +704,68 @@ detailer 有跑，而且跑得**太貴**。在單張要 9～21 分鐘的情況�
 
 見 §2.6。零程式 6 項、小面積程式 5 項、測試 +10、文件 2 項。
 
-<!-- HANDOFF: Claude DONE @ 2026-09-20 -->
+#### 五、2026-09-21 追加整合：軌 S 續（Anima 側 C/D/E）
+
+> Codex（§2.2）本輪仍未參與。以下為 Claude §2.1「十」原案 × Gemini §2.3「9」修正的整合，
+> 每一項都先實查再下結論。
+
+##### 5-1 三項爭點的裁決
+
+| 爭點 | Claude 原案（§2.1 十） | Gemini 修正（§2.3 9） | 實查結果 | 整合結論 |
+|---|---|---|---|---|
+| C 的**位置** | 改 `compiler.py` 的 `banned_tags` | 在 `styles.py` | **Gemini 對**。`styles.py:37` 是 `StyleConfig.banned_tags` 欄位定義、`:351` 是 `PromptStyle.ANIMA` 的實際 set；`compiler.py:393` 只是消費者（`banned = config.banned_tags`） | **採 Gemini**。改 `styles.py` |
+| C 的**展開邏輯** | 比照 `_WEIGHT_GROUP_RE` 展開後比對 | 冗餘，`compiler.py:556` 已處理，「**既有機制已能完美攔截**」 | **各對一半**（見 5-2 實測） | **採 Gemini 的「不新增展開邏輯」**，但「完美」不成立 → 改以**補變體字串**收尾 |
+| D 的**時序** | 等 C 落地後再做，避免雙變因 | 可一併執行，互不衝突 | **Gemini 對**。C 作用於 LLM 輸出的 sanitizer；D 作用於 service 層的固定 suffix，兩者管線不同段、無交集 | **採 Gemini**。C／D 可同輪 |
+| E | 前提未驗，擋下 | 同意擋下 | 一致 | **維持擋下** |
+
+##### 5-2 實測：sanitizer 的攔截邊界（方法見註）
+
+以 `flat color` 等六個算子為 `banned_set`，餵 13 種寫法進 `_sanitize_to_list()`：
+
+| 輸入寫法 | 結果 |
+|---|---|
+| `flat color` / `FLAT COLOR` / `flat color:1.2` | ✅ 攔下 |
+| `(flat color:1.2)` / `(flat color:1.2`（未閉合） | ✅ 攔下 |
+| `(flat color)` / `((flat color))` | ✅ 攔下 |
+| `(flat color, cel shading:1.2)`（權重群組） | ✅ 兩段都攔下 |
+| `(saturated colors:2.0), (bold clean outlines:2.0)` | ✅ 攔下 |
+| 混在句中：`1girl, solo, flat color, cel shading, brown hair` | ✅ 只留 `1girl, solo, brown hair` |
+| **`((flat color:0.5):1.2)`（巢狀權重）** | ❌ **漏**。`.strip("()")` 剝掉頭尾所有括號後得 `flat color:0.5):1.2`，`re.sub(r':[\d.]+$')` 只去尾段 ⇒ 正規化成 `flat color:0.5)`，不命中 set |
+| **`flat colors`（複數變體）** | ❌ **漏**。`banned_set` 是**精確字串比對**（`compiler.py:561` `normalized in banned_set`），任何變體都要逐一列舉 |
+
+**結論**：Gemini 說「不需再新增展開邏輯」**正確** —— 單層權重、權重群組、大小寫全攔得住，
+Claude 原案那條是冗餘。但「完美攔截」**不成立**，缺口有二：
+
+1. **巢狀權重** —— 實務風險低（那是我們自己在 `prompt_profiles.yml` 繞 per-tag 權重用的寫法，LLM 不會自發吐出），但**它正是 Illustrious 側現行 `style_extra` 的寫法**，日後若有人把該寫法複製進 LLM 模板或 art_style，就會靜默穿過。
+2. **同義／複數變體** —— **實務風險高**，LLM 吐 `flat colors` / `flat coloring` / `cel shaded` / `flat shading` 都很自然。這是真正要補的。
+
+##### 5-3 執行建議（待 §2.5 追加裁決）
+
+| 項 | 動作 | 檔案:行 → 怎麼改 | 備註 |
+|---|---|---|---|
+| **C1** | 定義算子清單 | `styles.py` 新增 `_FLAT_STYLE_OPERATOR_TAGS = {...}`，含六個本體 ＋ 變體：`flat colors`, `flat coloring`, `flat shading`, `cel shaded`, `cel-shading`, `celshading`, `anime colouring`, `bold outlines`, `clean outlines`, `saturated color` | 精確比對 ⇒ 變體必須逐一列舉 |
+| **C2** | 掛進 ANIMA | `styles.py:351` `banned_tags=_QUALITY_TAGS_GENERIC \| _QUALITY_TAGS_SCORE \| _SUBJECT_COUNT_TAGS \| _FLAT_STYLE_OPERATOR_TAGS` | **只掛 ANIMA**。Illustrious 側軌 S 的五組 A/B 還沒判讀，掛上去會污染對照 |
+| **D1** | 拔泛詞 | `character_design_service.py:432` `", character illustration, full body portrait, full body, front view"` → `", full body, front view"` | `solo, single character` **不得動**（CN-035：那是 2026-07-26 出雙人的防線） |
+| **E** | — | 不執行 | 等 `AnimaTurboV11_LLLite_UI_v2_workflow.json` 在本機跑通 |
+
+**補強 D1 的一項額外證據（Gemini 未提）**：`image_ops.py:27` 的 CN-070 已判定
+「移除 close-up/**portrait**：它們壓低臉部佔比，與『臉部像素不足』訴求相反」，
+但那次只改了**負向**；正向這裡的 `full body portrait` 仍帶著同一個 `portrait`。
+D1 順手把它拔掉，與 CN-070 的既有結論一致，不是新假設。
+
+##### 5-4 新發現（順手記，與本案無關但會製造垃圾 tag）
+
+`_sanitize_to_list("((flat color))")` 的存活輸出是 **`[')']`** —— 一個單獨的右括號 tag。
+成因：`_ALT_PAREN_RE`（`compiler.py:485`，`\s*\([^):]{7,}\)`）先吃掉 `(flat color)`，
+殘下的 `)` 不為空、長度未超限、不含 CJK ⇒ 一路通過所有守門進到最終 prompt。
+影響小（單一括號對出圖近乎無感）但確實是缺陷。**本輪不修**，建議寫進 `doc/BACKLOG.md`。
+
+> **註（方法）**：沙箱缺 fastapi／pydantic 等套件，無法直接 import `compiler`。
+> 改以 `ast` 從 `styles.py` / `compiler.py` 原始碼**抽出 module-level 正則常數與
+> `_sanitize_to_list` 函式本體後 exec**，零手抄、行為與線上一致。
+> 這不是整條 `compile()` 的端到端測試 —— C1/C2 落地後仍須補 `backend/tests/` 的單元測試。
+
+<!-- HANDOFF: Claude DONE @ 2026-09-20；2026-09-21 追加 §2.4 五（軌 S 續 C/D/E 整合） -->
 
 ---
 
@@ -668,6 +785,37 @@ detailer 有跑，而且跑得**太貴**。在單張要 9～21 分鐘的情況�
 | 軌 S（五組畫風 A/B） | **本輪不代跑**，交操作單 | 需 GPU 判讀，Claude 無法代替使用者判斷「皮膚有沒有階層」 |
 
 **簽核日期**：2026-09-20
+
+---
+
+#### 追加裁決（2026-09-21，軌 S 續 C/D/E）
+
+- [x] **核可 C1 / C2 / D1，開始執行**（使用者 2026-09-21：「我會根據你改後進行測試 一個一個微調提示詞 開始吧」，由 Claude 代為記錄）
+- [x] **E 維持擋下**（Claude §2.1 十、Gemini §2.3-9 一致，使用者未異議）
+
+| 項 | 決定 | 依據 |
+|---|---|---|
+| C 的實作位置 | **採 Gemini：改 `styles.py`**，非 `compiler.py` | §2.4 5-1 實查：`styles.py:37/351` 是定義，`compiler.py:393` 只是消費者 |
+| C 的展開邏輯 | **採 Gemini：不新增**；改以補變體字串收尾 | §2.4 5-2 實測：單層權重／權重群組／大小寫已被攔下，Claude 原案冗餘；但「完美攔截」不成立，變體會漏 |
+| C 的作用範圍 | **只掛 ANIMA** | Illustrious 側軌 S 五組 A/B 未判讀，掛上去污染對照 |
+| D 的時序 | **採 Gemini：與 C 同輪** | 兩者作用於不同管線段，無交集 |
+| 後續驗證方式 | 使用者本機**一次微調一項提示詞**逐步驗收 | 2026-09-21 使用者原話 |
+
+**簽核日期**：2026-09-21
+
+---
+
+#### 追加裁決（2026-09-21 第二輪，範例洩漏與泛用風格詞）
+
+- [x] **核可項目 2（換 `_ANIMA_TEMPLATE` EXAMPLES）與項目 3（泛用風格詞）**（使用者：「不動1 其餘都動」）
+- [x] **項目 1（角色年齡 12 → 16）使用者明示不動** —— `child` tag 為資料正確反映（`_age_body_tags(12)`），非程式缺陷，維持現狀
+
+| 項 | 決定 | 備註 |
+|---|---|---|
+| 角色年齡 | **不動**（維持 12） | 與 2026-09-20「人設圖只限定年輕女性、不走幼態」的既定需求相衝突，使用者知情並選擇維持 |
+| `_ILLUSTRIOUS_TEMPLATE` 的同源污染 | **本輪不動** | 該模板有**完全相同**的被污染範例（同一異色瞳角色、同一 `tactical vest`）。軌 S 的 Illustrious 五組 A/B 尚未判讀，改範例會變動該線 prompt、污染對照 → 待軌 S 判讀後再修 |
+
+**簽核日期**：2026-09-21（第二輪）
 
 ---
 
@@ -809,6 +957,161 @@ log 實證：`554 × 2.7706 = 1534`，且 `554/185 = 3.0 = crop_factor`。
 ⚠️ 改用 `Advanced_V38.json`；`Standard_V38.json` 的背景洗白（N10）未解，會多一個變因。
 
 <!-- HANDOFF: Claude DONE @ 2026-09-20 -->
+
+#### 六、2026-09-21 追加（軌 S｜Anima 側平塗算子）
+
+> 零程式，只動設定點（CLAUDE.md「零程式碼的設定點優先用這些，別改碼」）。
+> 全程沙箱，**未跑 git 寫入**。`_load_prompt_profiles()` 不快取 ⇒ **改完免重啟即生效**。
+
+| # | 動作 | 檔案 | 原值 → 新值 | 結果 |
+|---|---|---|---|---|
+| **S-A1** | anima anchor 清空平塗算子 | `backend/prompt_profiles.yml`（`AnimaStandardV8.json` anchor） | `"flat cel shaded coloring, bold clean outlines, saturated colors"` → `""` | ✅ |
+| **S-A2** | 同值複本一併清空 | 同檔 `AnimaStandardV8turbo.json` | 同上 → `""` | ✅ |
+| **S-B1** | 全域 fallback 清空（防禦性） | `.env` | `PERSONAL_STYLE_EXTRA_TAGS=flat color, cel shading, anime coloring` → 空 | ✅ |
+
+**驗證**
+- `yaml.safe_load` 通過，16 個 profile 全數解析。
+- 四支 Anima profile（`AnimaStandardV8` / `V8turbo` / `_trubo11_0919` / `_Aesthetic_0919`）
+  `style_extra` 皆為 `''`；**Illustrious 側（`Standard_V37` / `V38`）維持
+  `'(flat color:0.7), cel shading, thick outlines'` 不變** —— 軌 S 的 Illustrious A/B 未受污染。
+- 兩檔換行符維持 CRLF，stray-LF = 0（沿用原檔換行符，避免 git status 全檔假 modified）。
+
+**兩個刻意保留的東西**
+- `style_extra_weight: 2.0` 未動。`style_extra` 為空時該值不被使用
+  （`character_design_service.py:772` 的 `if style_extra:` 保護），留著讓回滾只需改一行。
+- `.env PERSONAL_STYLE_ENABLED=false` 未動。
+
+**一則自我訂正**：初稿註解寫「兩處必須同時清空，改單邊無效」是**錯的** ——
+`_resolve_style_extra()`（`character_design_service.py:467`）是
+`PERSONAL_STYLE_ENABLED and PERSONAL_STYLE_EXTRA_TAGS` 的且條件，而 `ENABLED=false`，
+該 fallback 本來就不生效。S-B1 因此是**防禦性**而非必要條件。註解已於同日修正。
+
+**待使用者本機**
+1. 跑一張人設圖，確認 `generation_history.params` 的正向**不再出現** `(flat cel shaded coloring:2.0)` 等三項
+2. 與修改前的圖目視 A/B（看油膩感是否下降）
+3. `cd backend && pytest tests/`
+4. `git add` / commit（沙箱不跑 git 寫入）
+
+---
+
+#### 七、2026-09-21 執行（軌 S 續 C1/C2/D1）
+
+> §2.5 追加裁決核可後執行。全程沙箱，**未跑 git 寫入**。E 未執行。
+
+| # | 動作 | 檔案 | 內容 | 結果 |
+|---|---|---|---|---|
+| **C1** | 新增平塗算子清單 | `styles.py`（`_SD_SYNTAX_TAGS` 之前） | `_FLAT_STYLE_OPERATOR_TAGS`，**26 項**：六個本體 ＋ 複數／同義／英式拼寫變體 | ✅ |
+| **C2** | 掛進 ANIMA | `styles.py` `PromptStyle.ANIMA` | `banned_tags=… \| _FLAT_STYLE_OPERATOR_TAGS` | ✅ |
+| **D1** | 拔 fullbody 泛詞 | `character_design_service.py` `_build_fullbody_suffix()` | `", character illustration, full body portrait, full body, front view"` → `", full body, front view"`；標 `[CN-097]` | ✅ |
+| **T1** | 更新既有斷言 | `tests/test_anima_family.py::test_fullbody_suffix_is_single_illustration` | `assert "character illustration" in low` → `not in`；新增 `assert "portrait" not in low` | ✅ |
+| **T2** | 新增測試 ×3 | 同檔 | `..._banned_for_anima_only` / `..._actually_stripped_from_llm_output` / `test_nested_weight_syntax_is_known_leak` | ✅ |
+
+**掛載範圍驗證**（AST 解析 `STYLE_CONFIG`，不執行程式）：
+
+```
+PromptStyle.ANIMA        [..., _FLAT_STYLE_OPERATOR_TAGS]   <== 只有這一個
+PromptStyle.ILLUSTRIOUS  [_QUALITY_TAGS_GENERIC, _QUALITY_TAGS_ILLUSTRIOUS, ...]
+PromptStyle.SDXL / PONY / FLUX / NOOBAI / ANYTHINGXL        未掛
+```
+
+**行為驗證**（`ast` 抽出 `_sanitize_to_list` ＋ 各 `*_TAGS` 常數後 exec，零手抄）：13 例全數符合預期 ——
+混合句、五種權重寫法、六種變體全攔；巢狀權重如預期漏（已寫成 `test_nested_weight_syntax_is_known_leak` 固定現況）。
+
+**一個差點上線的測試錯誤（自我揭露）**
+初版三支新測試用 `1girl, {variant}, solo` 當樣本、斷言存活 `["1girl", "solo"]`。
+實查發現 `_SUBJECT_COUNT_TAGS`（`styles.py`）**本身就含 `1girl` 與 `solo`**，兩者一樣會被剝除 ⇒
+該斷言必紅。已全數改用 `brown hair` / `short hair` 當存活標記，並在測試內留下警示註解。
+**這正是 CLAUDE.md 編程檢查點 1 的情境** —— 只看清單不跑函式就會漏掉。
+
+**`thick outlines` 的一個交叉確認**
+該 tag 同時出現在 Illustrious 側現行 `style_extra`。因 C2 **只掛 ANIMA**，且 `style_extra`
+走 service 層 `_resolve_style_extra()`、**不經 compile**，Illustrious 路徑不受影響（已 AST 驗證）。
+
+**待使用者本機**
+1. `cd backend && pytest tests/` —— 沙箱缺 fastapi／pydantic，**本輪測試未實跑**，只做了抽取式行為驗證
+2. 跑人設圖，確認 `generation_history.params` 正向不再出現平塗算子，且 suffix 不再有 `character illustration` / `full body portrait`
+3. 依使用者計畫「一次微調一項提示詞」逐步驗收
+4. `git add` / commit（沙箱不跑 git 寫入）
+
+**未執行**：E（FaceDetailer 注入）—— 等 `AnimaTurboV11_LLLite_UI_v2_workflow.json` 在本機跑通。
+
+---
+
+#### 八、2026-09-21 執行（軌 S 續 項目 2／3）
+
+> §2.5 第二輪裁決後執行。全程沙箱，**未跑 git 寫入**。
+
+##### 8-1 根因：規則說一套，範例示範另一套
+
+`_DANBOORU_COMMON_RULES` 明寫：
+
+```
+- STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
+```
+
+而 `_ANIMA_TEMPLATE` 的三個 EXAMPLES **全部違反它**：
+
+| 範例 | Input 未提及 | Output 卻有 |
+|---|---|---|
+| 例1 | 閉嘴、看鏡頭 | `closed mouth, looking at viewer` |
+| 例2 | 戰術背心 | `tactical vest` |
+| 例3 | 長袍、嚴肅表情 | `robe, serious expression` |
+
+**LLM 學範例不學規則** —— `tactical vest` 不是幻覺，是範例教出來的。
+
+**實錘**（`generation_history` #750 ＋ UI 截圖）：角色「外貌／個性特徵」欄位全文是
+「（左眼為紅色，右眼為綠色的異色瞳）、短褐色頭髮,白皙皮膚」——**零服裝描述**，
+而輸出含 `grey combat suit, tactical vest`，逐字等於舊例2 的 Output。
+上一輪只能判「強烈嫌疑」，本輪輸入端零服裝 ⇒ 確證。
+
+##### 8-2 變更紀錄
+
+| # | 動作 | 檔案 | 內容 | 結果 |
+|---|---|---|---|---|
+| **S-C3** | 重寫 EXAMPLES | `styles.py` `_ANIMA_TEMPLATE` | 三例全部改為「每個 Output tag 可逐項對回 Input」，並避開專案角色特徵（異色瞳／褐髮／戰鬥服） | ✅ |
+| **S-C4** | 補 TRACEABILITY 規則 | 同上 `[CRITICAL RULES]` | 肯定語氣（「每個 tag 必須對回 INPUT 的某個詞組」），**不列舉禁用詞**（列舉會誘發該 token） | ✅ |
+| **S-C5** | 新增 `_GENERIC_STYLE_TAGS`（10 項） | `styles.py` | `anime style` / `character illustration` / `digital art` / `illustration` … | ✅ |
+| **S-C6** | 掛進 ANIMA | `styles.py` | `… \| _FLAT_STYLE_OPERATOR_TAGS \| _GENERIC_STYLE_TAGS` | ✅ |
+| **T3** | 新增測試 ×3 | `tests/test_anima_family.py` | `..._examples_are_traceable` / `..._still_renders` / `..._generic_style_tags_banned_for_anima_only` | ✅ |
+
+新 EXAMPLES：
+
+```
+Input: 藍色長髮雙馬尾，藍色眼睛的少女，微笑
+Output: 1girl, solo, blue hair, long hair, twintails, blue eyes, smile
+
+Input: 金色短髮、琥珀色眼睛的女學生，穿著水手服
+Output: 1girl, solo, blonde hair, short hair, amber eyes, serafuku
+
+Input: 銀髮紫瞳的魔法師少年，戴著尖頂帽
+Output: 1boy, solo, silver hair, purple eyes, mage, wizard hat
+```
+
+##### 8-3 驗證
+
+- **f-string 健檢**（CLAUDE.md 檢查點 1，歷史事故：雙層大括號上線即 500）：模板內大括號僅
+  `{_SKIN_SCOPE_RULES}` / `{_DANBOORU_COMMON_RULES}`（f-string 插值）與 `{{prompt}}`（逃脫給
+  `.format()`）。**實際執行 `.format(prompt=...)` 成功**，渲染長度 2858、佔位符無殘留。
+- 既有相依未破壞：`HETEROCHROMIA` 規則、`STRICT` 規則、`_SKIN_SCOPE_RULES` 皆仍在模板內
+  （移除舊例2 後，異色瞳的處理改由 COMMON_RULES 的 HETEROCHROMIA 規則承擔，該規則本身附有例子）。
+- 掛載範圍：`_GENERIC_STYLE_TAGS` 只在 `PromptStyle.ANIMA`，Illustrious／SDXL 未掛。
+- 新測試三支的斷言已以 AST 抽取法預跑，預期失敗數 0。
+
+##### 8-4 本輪刻意未動（要記得）
+
+| 項 | 原因 |
+|---|---|
+| 角色年齡 12（`child` tag） | 使用者明示不動。**非程式缺陷** —— `_age_body_tags(12)` 就是回 `child`，`petite` 來自身高 152（`<160`） |
+| `_ILLUSTRIOUS_TEMPLATE` | 有**完全相同**的被污染範例（同一異色瞳角色、同一 `tactical vest`、同樣的 `robe, serious expression`）。軌 S 的 Illustrious 五組 A/B 未判讀，改動會污染對照組。**切回 Illustrious 線時這個洩漏仍在** |
+| E（FaceDetailer 注入） | 前提未驗 |
+
+##### 8-5 待使用者本機
+
+1. `cd backend && pytest tests/` —— 沙箱缺 fastapi／pydantic，**測試未實跑**
+2. 跑人設圖，確認正向**不再出現** `tactical vest` / `grey combat suit`（外貌欄位沒寫服裝就不該有）與 `anime style`
+3. `git add` / commit
+
+---
 
 ## 3. 歸檔
 

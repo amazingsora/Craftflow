@@ -91,6 +91,52 @@ _LINEART_ARTIFACT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── 平塗算子（SYNC-005 軌 S，2026-09-21）────────────────────────────────────
+# 為什麼要擋：底模原生就會平塗，這些同義算子疊上去落在過驅動區，把畫面推向高對比
+# → 高光炸開＝「油膩」。實證見 AGENT_SYNC §2.1「十」S-1（官方參考圖採樣參數與本專案
+# 完全相同、負向一字不差，而其正向一個平塗算子都沒有）。`prompt_profiles.yml` 的
+# anima anchor 已於同日清空 style_extra；本 set 負責擋 **LLM 自行吐出**的那一份。
+#
+# 為什麼要列變體：`compiler.py:561` 是 `normalized in banned_set` 的**精確字串比對**，
+# 不做詞幹還原 —— `flat colors`（複數）與 `flat color` 是兩個不同的鍵。實測（§2.4 5-2）
+# 13 種寫法中，單層權重 `(flat color:1.2)`、權重群組 `(a, b:1.2)`、未閉合括號、大小寫
+# 都已被 `:561` 的正規化攔下（**故不需再加任何權重展開邏輯**，Gemini §2.3-9 判斷正確），
+# 唯獨「巢狀權重 `((flat color:0.5):1.2)`」與「同義／複數變體」會漏 → 後者由本 set 收尾。
+# ⚠️ 巢狀權重仍會漏，**本輪不修**（LLM 不會自發吐出該寫法，它是 yml 繞 per-tag 權重用的）。
+#    已記入 doc/BACKLOG.md。
+# ⚠️ 只掛 PromptStyle.ANIMA，**不掛 Illustrious** —— 軌 S 的 Illustrious 五組 A/B 尚未
+#    判讀，掛上去會污染對照組。
+# ⚠️ 本 set 只作用於 **LLM 輸出**（compiler 的 sanitizer）。使用者在 art_style.extra_tags
+#    或 prompt_profiles.yml 手動指定的畫風 tag 走 service 層 `_resolve_style_extra()`，
+#    **不經 compile** ⇒ 不受本 set 影響，仍可手動把算子加回來。
+_FLAT_STYLE_OPERATOR_TAGS = {
+    # 上色方式
+    "flat color", "flat colors", "flat colour", "flat colours",
+    "flat coloring", "flat colouring", "flat cel shaded coloring",
+    "flat cel shaded colouring", "anime coloring", "anime colouring",
+    # 陰影形式
+    "cel shading", "cel-shading", "celshading", "cel shaded", "cel-shaded",
+    "flat shading",
+    # 線條強度
+    "bold clean outlines", "bold outlines", "clean outlines", "thick outlines",
+    # 飽和度
+    "saturated colors", "saturated colours", "saturated color", "saturated colour",
+    "vibrant colors", "vibrant colours",
+}
+
+# ── 泛用風格／載體詞（SYNC-005 軌 S，2026-09-21，項目 3）────────────────────
+# 為什麼要擋：對以 danbooru 標籤為語料的動漫模型，「這是動漫插畫」是無效資訊 ——
+# 底模本身就只會畫動漫，這些詞只佔 token、稀釋真正的描述性 tag。
+# 實證：generation_history #748~#750 三筆的 LLM 輸出都帶 `anime style`，
+# 而 prompt_profiles.yml 的 anima anchor 註解（P5-8）早已自承該詞與
+# `character illustration`（_build_fullbody_suffix，已於本輪 D1 拔除）三重同義。
+# ⚠️ 同樣只掛 ANIMA。
+_GENERIC_STYLE_TAGS = {
+    "anime style", "anime style illustration", "anime illustration", "anime art",
+    "character illustration", "character design", "character sheet illustration",
+    "digital art", "digital illustration", "illustration",
+}
+
 _SD_SYNTAX_TAGS = {
     "masterpiece", "best quality", "score_9", "ultra detailed",
     "1girl", "1boy", "source_anime", "source_furry",
@@ -272,18 +318,20 @@ Convert Chinese descriptions into anime danbooru tags for Anima (Cosmos-Predict2
 - VOCABULARY: Use standard danbooru anime tags. Anima is trained on danbooru-style captions.
 - ANTI-LEAK: Translate ONLY what the input states. NEVER copy vocabulary, props, or settings
   from the EXAMPLES below into your output unless the input itself mentions them.
+- TRACEABILITY: Every tag you output must trace back to a specific phrase in the [INPUT].
+  The EXAMPLES below follow this strictly — each output tag maps to one input phrase.
 {_SKIN_SCOPE_RULES}- NO-SAFETY: Do NOT add rating tags (safe, sensitive, questionable, explicit). Handled elsewhere.
 {_DANBOORU_COMMON_RULES}
 
 [EXAMPLES]
 Input: 藍色長髮雙馬尾，藍色眼睛的少女，微笑
-Output: 1girl, solo, blue hair, long hair, twintails, blue eyes, smile, closed mouth, looking at viewer
+Output: 1girl, solo, blue hair, long hair, twintails, blue eyes, smile
 
-Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮，灰色戰鬥服
-Output: 1girl, solo, heterochromia, red eyes, green eyes, brown hair, short hair, grey combat suit, tactical vest
+Input: 金色短髮、琥珀色眼睛的女學生，穿著水手服
+Output: 1girl, solo, blonde hair, short hair, amber eyes, serafuku
 
-Input: 銀髮紫瞳的魔法師少年
-Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
+Input: 銀髮紫瞳的魔法師少年，戴著尖頂帽
+Output: 1boy, solo, silver hair, purple eyes, mage, wizard hat
 
 [INPUT]
 {{prompt}}
@@ -348,7 +396,12 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
             "drop shadow, cast shadow, floor, ground, reflection, "
             "overexposed, washed out, faded, low contrast, blown out highlights, pale"
         ),
-        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
+        # SYNC-005 軌 S（2026-09-21）：補 _FLAT_STYLE_OPERATOR_TAGS。理由見該常數註解。
+        # 回滾＝刪掉下行的 `| _FLAT_STYLE_OPERATOR_TAGS`。
+        banned_tags=(
+            _QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS
+            | _FLAT_STYLE_OPERATOR_TAGS | _GENERIC_STYLE_TAGS
+        ),
         llm_template=_ANIMA_TEMPLATE,
     ),
     PromptStyle.ANYTHINGXL: StyleConfig(
