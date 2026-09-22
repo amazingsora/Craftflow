@@ -429,7 +429,14 @@ class _DesignInputs:
 def _build_fullbody_suffix(bg_tag: str) -> str:
     """組出全身人設圖的固定 suffix（單張全身插畫、單人、簡潔背景）。"""
     return (
-        ", character illustration, full body portrait, full body, front view"
+        # [CN-097] SYNC-005 軌 S（2026-09-21）：拔掉 "character illustration" 與
+        # "full body portrait" 兩個泛詞。① 對以 danbooru 標籤為語料的動漫模型，泛用
+        # 描述是無效稀釋（Gemini §2.3-9）；② `full body portrait` 裡的 "portrait"
+        # 與 CN-070「移除 close-up/portrait：壓低臉部佔比」是同一個顧慮 —— CN-070
+        # 當時只改了負向（image_ops.py:27），正向這裡一直殘留著。
+        # ⚠️ "solo, single character" 不得一併拔除：那是 CN-035 擋出雙人的防線。
+        # 回滾＝改回 `", character illustration, full body portrait, full body, front view"`。
+        ", full body, front view"
         f", {_FULLBODY_POS_TAGS}"
         ", solo, single character"
         # [CN-036] 拔正向 "no background detail/no scenery"：正向 no-xxx 是反效果，負向已含同義項
