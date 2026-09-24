@@ -76,7 +76,6 @@ _QUALITY_TAGS_ILLUSTRIOUS = {
 # [CN-025] Anima 蒼白 tag 待用清單：刻意不進 banned_tags，僅文件化保留
 
 _YEAR_TAGS = {"newest", "recent", "mid", "early", "old"}
-_RATING_TAGS_ANYTHINGXL = set()
 
 _QUALITY_TAGS_ANYTHINGXL = {
     "masterpiece", "best quality", "great quality", "good quality",
@@ -157,8 +156,10 @@ _COLOR_RULES = (
 
 _DANBOORU_COMMON_RULES = f"""- FORMAT: Output ONLY comma-separated tags. NO key-value pairs (e.g., no "name:", no "age:").
 - GENDER: Always start with a gender tag (1boy, 1girl, 2boys, etc.) based on the input.
+- NAMES: A character's personal name (e.g. the name at the start of the input) is NOT a tag. Omit it. NEVER romanize or transliterate a Chinese name into Latin letters.
 - NO-GO: No "Output:" prefix, No "Tags:" prefix, No explanations, No capital letters.
-- CONFLICT: "外貌與個性" (Priority Traits) and "服裝設定" (Outfit Setting) ALWAYS override "視覺參考特徵" (Visual Traits). (a) If Visual says "pink jacket" but Outfit Setting says "grey combat suit", output ONLY the Outfit Setting outfit — discard the Visual outfit entirely. (b) If Visual says "purple eyes" but Priority Traits says "brown hair" / "異色瞳", use Priority Traits only.
+- MERGE: "外貌與個性" (Priority Traits) and "服裝設定" (Outfit Setting) decide colours and identity. "視覺參考特徵" (Visual Traits) adds the structure they leave out: each garment piece, hairstyle shape, pose and expression. Output the settings' colours together with the Visual pieces. Only when a Visual phrase directly contradicts the settings (another colour, another hair length, another kind of garment) drop that Visual phrase and keep the settings.
+- GARMENTS: One tag per garment piece. When the Visual lists the pieces of an outfit, output those pieces instead of a single whole-outfit word.
 - MODIFIERS: Pay extreme attention to hair length and style modifiers. "短雙馬尾" = "short hair, short twin tails" or "short hair, short ponytail".
 - HETEROCHROMIA: If "異色瞳" is present, output "heterochromia" plus BOTH eye colors as PLURAL danbooru tags. Example: 左眼紅右眼綠 → heterochromia, red eyes, green eyes. NEVER write a side in parentheses (no "red eye (left)") — parentheses are weight syntax and corrupt the prompt.
 - PASSTHROUGH: English tags already present in the input MUST be copied to the output verbatim, unchanged.
@@ -298,8 +299,8 @@ Convert Chinese descriptions into anime semantic tags for Illustrious XL.
 Input: 白色長捲髮，金色眼睛，天使氣質的少女
 Output: 1girl, solo, white hair, long hair, curly hair, golden eyes, angel, angelic, gentle expression
 
-Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮，灰色戰鬥服
-Output: 1girl, solo, heterochromia, red eyes, green eyes, brown hair, short hair, grey combat suit, tactical vest
+Input: 黑色短髮的少女，服裝設定：深藍色水手服，視覺參考特徵（草圖結構）：短袖上衣，百褶裙，領巾，樂福鞋，雙手背在身後，閉眼微笑
+Output: 1girl, solo, black hair, short hair, navy blue serafuku, short sleeves, pleated skirt, neckerchief, loafers, arms behind back, closed eyes, smile
 
 Input: 銀髮紫瞳的魔法師少年
 Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
@@ -320,7 +321,6 @@ Convert Chinese descriptions into anime danbooru tags for Anima (Cosmos-Predict2
   from the EXAMPLES below into your output unless the input itself mentions them.
 - TRACEABILITY: Every tag you output must trace back to a specific phrase in the [INPUT].
   The EXAMPLES below follow this strictly — each output tag maps to one input phrase.
-{_SKIN_SCOPE_RULES}- NO-SAFETY: Do NOT add rating tags (safe, sensitive, questionable, explicit). Handled elsewhere.
 {_DANBOORU_COMMON_RULES}
 
 [EXAMPLES]
@@ -332,6 +332,12 @@ Output: 1girl, solo, blonde hair, short hair, amber eyes, serafuku
 
 Input: 銀髮紫瞳的魔法師少年，戴著尖頂帽
 Output: 1boy, solo, silver hair, purple eyes, mage, wizard hat
+
+Input: 莉莉絲，黑色長髮、紫色眼睛的少女，微笑
+Output: 1girl, solo, black hair, long hair, purple eyes, smile
+
+Input: 黑色短髮的少女，服裝設定：深藍色水手服，視覺參考特徵（草圖結構）：短袖上衣，百褶裙，領巾，樂福鞋，雙手背在身後，閉眼微笑
+Output: 1girl, solo, black hair, short hair, navy blue serafuku, short sleeves, pleated skirt, neckerchief, loafers, arms behind back, closed eyes, smile
 
 [INPUT]
 {{prompt}}
@@ -413,7 +419,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
             "blurry, artist name"
         ),
         banned_tags=(
-            _QUALITY_TAGS_ANYTHINGXL | _YEAR_TAGS | _RATING_TAGS_ANYTHINGXL
+            _QUALITY_TAGS_ANYTHINGXL | _YEAR_TAGS 
             | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS
         ),
         llm_template=_ANYTHINGXL_TEMPLATE,

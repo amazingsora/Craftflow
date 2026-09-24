@@ -56,25 +56,11 @@ TRAIT_RE = re.compile(rf"({_TRAIT_ALTS})")
 
 # ── Trait Sets for Cleaning & Conflict Removal ─────────────────────────────────
 
-HAIR_COLORS = {
-    "white hair", "black hair", "brown hair", "blonde hair", "golden hair",
-    "silver hair", "red hair", "blue hair", "purple hair", "pink hair",
-    "green hair", "orange hair", "grey hair", "gray hair", "amber hair",
-}
-
-HAIR_LENGTHS = {"short hair", "medium hair", "long hair", "very long hair"}
-
 HAIR_STYLE_MAP: dict[str, str] = {
     "長髮": "long hair",
     "短髮": "short hair",
     "捲髮": "wavy hair",
     "直髮": "straight hair",
-}
-
-EYE_COLORS = {
-    "white eyes", "black eyes", "brown eyes", "golden eyes", "silver eyes",
-    "red eyes", "blue eyes", "purple eyes", "pink eyes", "green eyes",
-    "orange eyes", "grey eyes", "gray eyes", "amber eyes",
 }
 
 # [CN-033] Personal Term Map：LLM 翻譯「前」的確定性替換，與已停用的 TRAIT_MAP 是不同機制
@@ -108,6 +94,29 @@ def personal_term_map_tags() -> list[str]:
     return tags
 
 
+# [CN-117] 詞條前緊貼的顏色／長短修飾語併入替換值；否則切剩的「黑色長」被 LLM 配成 black hair, long hair
+_LENGTH_MODIFIER_MAP: dict[str, str] = {"長": "long", "短": "short"}
+_SHADE_MODIFIER_MAP: dict[str, str] = {"深": "dark", "淺": "light"}   # 只在後接顏色時生效（深藍色）
+# 單獨的「長／短」（前面沒有顏色）只有在片語開頭才視為修飾語，避免吃掉「隊長」「團長」的尾字
+_MODIFIER_BOUNDARY = set(",，、;；:：。.!！?？()（）[]「」 \t\r\n")
+
+
+def _fold_modifiers(match: re.Match, value: str) -> str:
+    """把 match 到的深淺／顏色／長短修飾語翻成英文，前置到替換值的第一個 tag。"""
+    shade_zh, color_zh, length_zh = match.group("shade"), match.group("color"), match.group("length")
+    kept_zh = ""
+    if length_zh and not color_zh:
+        start = match.start("length")
+        if start > 0 and match.string[start - 1] not in _MODIFIER_BOUNDARY:
+            kept_zh, length_zh = length_zh, None   # 前一字的詞尾（隊長），原樣留在中文側
+    mods = [w for w in (_SHADE_MODIFIER_MAP.get(shade_zh or ""), COLOR_MAP.get(color_zh or ""),
+                        _LENGTH_MODIFIER_MAP.get(length_zh or "")) if w]
+    if mods:
+        head, sep, rest = value.partition(",")
+        value = f"{' '.join(mods)} {head.strip()}{sep}{rest}"
+    return f"{kept_zh}, {value}, "
+
+
 def apply_personal_term_map(text: str) -> str:
     """套用個人詞庫：中文原文子字串 → 英文 tag。由長到短匹配（比照 _TRAIT_ALTS 慣例），
     避免短詞（如「大小姐」）先吃掉長詞（如「大小姐衣裝」）的子字串，導致長詞規則失效。
@@ -116,24 +125,18 @@ def apply_personal_term_map(text: str) -> str:
     P3.1（2026-07-12）：替換值前後補逗號分隔（", tag, "），杜絕相鄰兩詞替換後英文黏字。
     根因：「黑色長窄裙長度蓋過小腿」兩次替換後成 "黑色長pencil skirtlong skirt"，
     skirtlong 黏字使 LLM 只認出前者、丟棄 long skirt（裙長變短）。補分隔符後兩個
-    英文 tag 各自獨立（", pencil skirt, , long skirt, "），交由 _sanitize_to_list 收整。"""
+    英文 tag 各自獨立（", pencil skirt, , long skirt, "），交由 _sanitize_to_list 收整。
+
+    [CN-117]（2026-09-24）：P3.1 的逗號把詞條前的修飾語切成孤兒片語
+    （"黑色長, pencil skirt"），Anima 範例「黑色長髮 → black hair, long hair」讓 LLM
+    把「黑色長」補成髮色。改為連同緊貼的顏色＋長短一起替換 → ", black long pencil skirt, "。"""
     terms = _load_personal_term_map()
     if not terms or not text:
         return text
     for zh in sorted(terms, key=len, reverse=True):
         if zh in text:
-            text = text.replace(zh, f", {terms[zh]}, ")
+            pattern = re.compile(
+                rf"(?:(?P<shade>[深淺])?(?P<color>{_COLOR_ALTS}))?(?P<length>[長短])?{re.escape(zh)}"
+            )
+            text = pattern.sub(lambda m, v=terms[zh]: _fold_modifiers(m, v), text)
     return text
-
-
-# ── Tag Ordering Categories ────────────────────────────────────────────────────
-
-TAG_CATEGORIES = {
-    "subject": {
-        "1girl", "1boy", "1woman", "1man", "2girls", "2boys", "solo", "multiple girls", "multiple boys",
-        "male focus", "female focus",
-    },
-    "meta": {
-        "source_anime", "source_furry", "source_cartoon", "monochrome", "greyscale", "comic", "sketch",
-    },
-}

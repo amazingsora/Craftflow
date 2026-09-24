@@ -40,8 +40,9 @@
 | 要做的事 | 改哪裡 |
 |---|---|
 | 新 checkpoint 歸哪個 family | `backend/checkpoint_styles.yml`（`checkpoints:` 與 `families:` **兩區都要加**） |
-| 某 workflow 專屬 prompt 覆寫 | `backend/prompt_profiles.yml`（名單制，未登錄＝零介入） |
+| 某底模家族的 prompt 配方 | `backend/prompt_profiles.yml` 的 `families:`（**以底模家族為鍵，新增／改名 workflow 免登錄**；只有新 checkpoint 需登錄 `checkpoint_styles.yml`）。個案實驗走 art_style（DB），不加 workflow 例外 |
 | 生成旋鈕（VRAM 門檻、畫風權重、upsample 開關…） | 專案根 `.env`，定義見 `core/config.py` |
+| 個人畫風標籤／個人負向（例：畫師、作品名） | 專案根 `.env` 的 `PERSONAL_STYLE_EXTRA_<家族>`／`PERSONAL_NEGATIVE_EXTRA_<家族>`（家族＝PromptStyle 大寫，如 `ANIMA`、`ILLUSTRIOUS`；疊加語義；`.env` 不進 git）。見 CN-115 |
 | 家族生成策略（CN 上限、denoise 映射、能力開關） | `services/ai/gen_profile.py` 的 `GEN_PROFILE` |
 
 ## Coding Rules
@@ -59,8 +60,8 @@
 1. 新增「會被執行的東西」時，**測試必須真的執行它**（曾因只驗欄位、沒跑 `.format()`，f-string 雙層大括號上線即 500）。
 2. 改生成流程前確認**參數是不是節點參照** —— 作者型 workflow 用單一參數節點分送 KSampler 與 metadata。用 `wf_node_ops._set_node_input` 寫上游，別寫字面值到消費端。
 3. 加 fallback／替代路徑時**確認前端不會把它擋死**（能力旗標要一路貫通到 UI，否則後端變死代碼）。
-4. 改共用函式時列出所有呼叫端，特別注意已定版的 `Standard_V37`。
-5. `backend/tests/test_anima_family.py` 有 **V37 零回歸鎖**。斷言失敗＝改動污染定版路徑 —— **回頭修，不可改斷言充當通過**。
+4. 改共用函式時列出所有呼叫端，特別注意 illustrious 家族路徑（現役 `Standard_V38`）。
+5. `backend/tests/test_anima_family.py` 有 **illustrious 家族路徑鎖**（SYNC-007 前為 V37 零回歸鎖；V37 已退役、改指 V38）。斷言失敗＝改動污染 SDXL/illustrious 路徑 —— **回頭修，不可改斷言充當通過**。
 
 ## 沙箱陷阱（實證，違反必踩）
 

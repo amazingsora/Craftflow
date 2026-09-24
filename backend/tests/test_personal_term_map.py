@@ -4,6 +4,7 @@ doc/2026-07-12_工作流提示詞優化規劃.md「七、提示詞精度條目�
 
 執行：cd backend && pytest tests/test_personal_term_map.py
 """
+import re
 from unittest.mock import patch
 
 from app.services.ai import ollama_client
@@ -152,3 +153,74 @@ def test_compile_flux_style_skips_tag_based_recall():
         positive, _ = compiler.compile("戰術背心的白髮少女", style=PromptStyle.FLUX)
 
     assert "tactical vest" not in positive
+
+
+# ── [CN-117]（2026-09-24）詞條前緊貼的修飾語併入替換值 ─────────────────────────
+# 實錘：聖真希「黑色長窄裙長度蓋過小腿」→ P3.1 切成 "黑色長, pencil skirt, , long skirt"，
+# 孤兒片語「黑色長」被 Anima 範例（黑色長髮 → black hair, long hair）配成 black hair，
+# 最終 prompt 白髮角色同時帶 black hair，出圖變黑白雙色髮。
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def test_apply_term_map_folds_color_and_length_no_orphan():
+    out = lexicon.apply_personal_term_map("黑色長窄裙長度蓋過小腿")
+    assert "black long pencil skirt" in out
+    assert "long skirt" in out
+    # 負向不變量：修飾語不可被切成孤兒中文片語殘留在 LLM 輸入
+    assert not _CJK_RE.search(out), out
+
+
+def test_apply_term_map_real_outfit_field_has_no_orphan_modifier():
+    """聖真希實際服裝欄整段：替換後不可殘留「黑色長」。"""
+    out = lexicon.apply_personal_term_map("黑褲襪,大小姐衣裝,白襯衫,黑色長窄裙長度蓋過小腿,馬靴")
+    assert "黑色長" not in out
+    assert "black long pencil skirt" in out and "riding boots" in out
+
+
+def test_apply_term_map_folds_shade_prefix():
+    out = lexicon.apply_personal_term_map("深藍色窄裙")
+    assert "dark blue pencil skirt" in out and not _CJK_RE.search(out)
+
+
+def test_apply_term_map_length_not_folded_mid_word():
+    """「隊長」的長是前一詞的詞尾，不可被當成 long 修飾語吃掉。"""
+    out = lexicon.apply_personal_term_map("隊長大小姐")
+    assert "隊長" in out
+    assert "long ojou-sama" not in out and "ojou-sama" in out
+
+
+def test_apply_term_map_length_folded_at_phrase_start():
+    out = lexicon.apply_personal_term_map("白襯衫,短窄裙")
+    assert "short pencil skirt" in out and "短" not in out
+
+
+def test_recall_treats_modified_tag_as_present():
+    """修飾語併入後 LLM 吐 black pencil skirt，召回不可再補一個重複的 pencil skirt。"""
+    out = compiler._recall_dropped_outfit_terms(
+        ["1girl", "black pencil skirt", "long skirt"], ", black long pencil skirt, , long skirt, "
+    )
+    assert "pencil skirt" not in out
+
+
+def test_recall_still_reinserts_when_truly_missing():
+    out = compiler._recall_dropped_outfit_terms(["1girl"], ", black long pencil skirt, ")
+    assert "pencil skirt" in out
+
+
+def test_compile_llm_input_has_no_orphan_modifier():
+    """端到端：compile() 實際送進 LLM 的 prompt 不含孤兒片語「黑色長」。"""
+    captured = {}
+
+    def _fake_generate(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return "1girl, solo, black pencil skirt, long skirt"
+
+    with patch.object(ollama_client, "generate", side_effect=_fake_generate):
+        positive, _ = compiler.compile("服裝設定：白襯衫,黑色長窄裙長度蓋過小腿", style=PromptStyle.ANIMA)
+
+    # 模板 EXAMPLES 本身含「黑色長髮」，只檢查 [INPUT] 段
+    llm_input = captured["prompt"].split("[INPUT]")[-1]
+    assert "黑色長" not in llm_input
+    assert "black long pencil skirt" in llm_input
+    assert "black hair" not in positive

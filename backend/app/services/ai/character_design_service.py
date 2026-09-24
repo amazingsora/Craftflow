@@ -29,6 +29,7 @@ from app.core.config import (
     PERSONAL_STYLE_ENABLED, PERSONAL_STYLE_EXTRA_TAGS,
     PERSONAL_NEGATIVE_ENABLED, PERSONAL_NEGATIVE, PERSONAL_STYLE_WEIGHT,
     IPA_FLAT_DRAFT_SCALE,
+    PERSONAL_KIND_STYLE, PERSONAL_KIND_NEGATIVE,
 )
 from app.core import state
 from app.core.database import get_db
@@ -36,8 +37,10 @@ from app.models.art_style import ArtStyle
 from app.models.character import Character
 from app.models.generation_history import GenerationHistory  # A3 P0-3：reuse_prompt 查詢用
 from app.services import comfyui_client
+from app.services.ai.prompt_engine.content_guard import apply_content_guard
 from app.services.ai.prompt_engine import compile as compile_prompt
 from app.services.ai.prompt_engine import prompt_cache_hit
+from app.services.ai.prompt_engine.lexicon import apply_personal_term_map
 from app.services.ai.vram_manager import guardian
 from app.services.ai.generation_recorder import record_generation
 from app.services.ai.workflow_builder import (
@@ -53,6 +56,8 @@ from app.services.ai.workflow_builder import (
     _run_comfyui,
     _is_custom_workflow,
     _workflow_style_extra,
+    _workflow_tag_order,
+    _personal_extra,
 )
 from app.services.ai.image_ops import (
     _BODY_FILL_RATIO,
@@ -61,7 +66,9 @@ from app.services.ai.image_ops import (
     _FULLBODY_POS_TAGS,
     _border_color,
     _dedup_tags,
+    _drop_negative_overlap,
     _fullbody_canvas,
+    _reorder_subject_first,
     _strip_sheet_tags,
     _is_flat_color_draft,
     _normalize_i2i_ref,
@@ -90,6 +97,7 @@ from app.services.ai.wf_node_ops import (
     _wf_has_ipa,
 )
 from app.services.ai.vision_extract import (
+    _HAIRSTYLE_KW,
     _age_body_tags,
     _age_gender_tag,
     _filter_visual_for_llm,
@@ -165,6 +173,15 @@ def _effective_ksampler_cfg(wf: dict) -> Optional[float]:
 
 
 # coverage→CN 上限/end_percent 已移至 gen_profile.GEN_PROFILE（R3 2026-06-20，per-family 單一真相）。
+
+
+def _llm_input_header(raw_desc: str, reused: bool) -> str:
+    """[CN-117] 個人詞庫替換後、實際送進 LLM 的文字（base64）。與 raw_desc 相同、或沿用舊 prompt
+    （沒有編譯）時回空字串，前端據此不顯示。"""
+    if reused or not raw_desc:
+        return ""
+    mapped = apply_personal_term_map(raw_desc)
+    return base64.b64encode(mapped.encode()).decode() if mapped != raw_desc else ""
 
 
 def _coverage_badge(coverage: str, user_w: float, eff_w: float, cn_on: bool,
@@ -466,6 +483,7 @@ def _wf_checkpoint(wf: dict) -> str:
 
 
 # [CN-037] 畫風 tag／權重優先序：art_style DB > yml style_extra > .env > 無；未登錄 workflow 零回歸
+# [CN-115] 其後再疊加 .env 分家族個人標籤（PERSONAL_STYLE_EXTRA_<家族>），不論前段來源；權重／位置沿用前段規則
 def _resolve_style_extra(art_style: Optional[ArtStyle], workflow: str) -> tuple[str, float]:
     profile_extra, profile_weight = _workflow_style_extra(workflow)
     style_extra = _extra_tags(art_style)
@@ -473,8 +491,19 @@ def _resolve_style_extra(art_style: Optional[ArtStyle], workflow: str) -> tuple[
         style_extra = profile_extra
     if not style_extra and PERSONAL_STYLE_ENABLED and PERSONAL_STYLE_EXTRA_TAGS:
         style_extra = PERSONAL_STYLE_EXTRA_TAGS
+    personal = _personal_extra(PERSONAL_KIND_STYLE, workflow)
+    if personal:
+        style_extra = f"{style_extra}, {personal}" if style_extra else personal
     weight = profile_weight if profile_weight is not None else PERSONAL_STYLE_WEIGHT
     return style_extra, weight
+
+
+# [CN-115] .env 分家族個人負向（疊加；任何 base_neg 來源都生效，與只取代的 PERSONAL_NEGATIVE 不同）
+def _with_personal_negative(negative: str, workflow: str) -> str:
+    personal = _personal_extra(PERSONAL_KIND_NEGATIVE, workflow)
+    if not personal:
+        return negative
+    return f"{negative}, {personal}" if negative else personal
 
 
 async def _generate_design_core(
@@ -626,17 +655,26 @@ async def _generate_design_core(
                 has_hair_in_traits = bool(inp.core_traits and
                     any(kw in inp.core_traits for kw in ("髮", "頭髮", "hair")))
                 # [CN-045] vision 描述剝除服裝/髮型/膚色洩漏詞，避免蓋掉角色設定
+                # [CN-116] SYNC-008 改為「顏色歸設定欄位、結構歸視覺」：欄位有值時只拿掉視覺的
+                # 顏色詞，保留衣物件數／髮型形狀／姿勢／表情；線稿（all_flat）的顏色一律不採信。
+                # 髮型只在外觀欄寫了具體髮型（_HAIRSTYLE_KW）時才整句剝，只寫髮色不算。
+                has_hairstyle_in_traits = bool(inp.core_traits and
+                    any(kw in inp.core_traits for kw in _HAIRSTYLE_KW))
                 visual_for_llm = _filter_visual_for_llm(
                     visual,
-                    strip_clothing=has_outfit,
-                    strip_hairstyle=has_hair_in_traits,
+                    strip_clothing=False,
+                    strip_hairstyle=has_hairstyle_in_traits,
                     strip_skin=True,
+                    strip_expression=is_expression,
+                    decolor_all=all_flat,
+                    decolor_clothing=has_outfit,
+                    decolor_hair=has_hair_in_traits,
                 )
                 if visual_for_llm:
                     if len(valid_images) > 1:
-                        label = "視覺參考特徵（多圖共同，服裝髮型以設定欄位為準）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（多圖共同特徵）"
+                        label = "視覺參考特徵（多圖共同結構，顏色以設定欄位為準）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（多圖共同特徵）"
                     else:
-                        label = "視覺外觀提示（膚色體型風格參考）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（僅供風格參考）"
+                        label = "視覺參考特徵（草圖結構：衣物件數、髮型形狀、姿勢、表情；顏色以設定欄位為準）" if (has_outfit or has_hair_in_traits) else "視覺參考特徵（僅供風格參考）"
                     parts.append(f"{label}：{visual_for_llm}")
 
     if use_outfit and inp.outfit:
@@ -790,6 +828,12 @@ async def _generate_design_core(
         final_positive = _dedup_tags(final_positive)  # 去框架/眼睛等重複,收稀釋
         # E-2（2026-07-26）：剝除 LLM 自行吐出的多視圖/設定稿 tag（只作用於正向）。
         final_positive = _strip_sheet_tags(final_positive)
+        # [CN-116] SYNC-008：家族 tag_order=subject_first（Anima 官方順序）→ quality/safety、主體、
+        # 畫風段、其餘。ComfyUI A4/A5（2026-09-24）驗證；illustrious 未設定＝零行為變更。
+        if _workflow_tag_order(active_wf) == "subject_first":
+            final_positive = _reorder_subject_first(
+                final_positive, _overrides.get("quality_prefix_override", ""), style_extra,
+            )
 
         extra_neg = ("detailed background, complex background, scenery, landscape, buildings, environment"
                      # 2026-06-21：抑制無端能量/火焰/光暈假影（不放 plain "glowing" 以免壓掉異色瞳/眼神光）
@@ -811,7 +855,14 @@ async def _generate_design_core(
             if _neg_extra:
                 base_neg = f"{base_neg}, {_neg_extra}"
         final_negative = f"{base_neg}, {extra_neg}{gender_neg_extra}" if base_neg else f"{extra_neg}{gender_neg_extra}"
+        final_negative = _with_personal_negative(final_negative, active_wf)
         final_negative = _dedup_tags(final_negative)
+        # [CN-116] 年齡／身高／性別是確定性斷言，家族負向不得抵消（例：Anima 負向 child vs 12 歲 child）
+        final_negative = _drop_negative_overlap(final_negative, gender_prefix + body_prefix)
+
+    # [CN-118] NSFW／未成年護欄（重用 prompt 與新編譯兩條分支都要過；外擴、history 記錄皆用護欄後版本）
+    final_positive, final_negative = apply_content_guard(
+        final_positive, final_negative, age=inp.age, layer="design", adult_negative=True)
 
     # A3 P0-1：seed<0（含預設 -1）＝維持現行隨機行為；>=0 則沿用呼叫端指定值，
     # 供「同 seed 連按兩次應輸出一致」的可重現實驗台驗收使用。
@@ -891,6 +942,7 @@ async def _generate_design_core(
                 "X-Flat-Draft": "1" if all_flat else "0",
                 "X-IPA-Used": "0", "X-CN-Used": "0", "X-CN-Mode": "canvas_expand",
                 "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
+                "X-LLM-Input": _llm_input_header(raw_desc, _reused_positive is not None),
                 "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
                 "X-Prompt-Profile": base64.b64encode(_profile_source.encode()).decode(),
                 "X-Coverage": base64.b64encode(
@@ -981,7 +1033,7 @@ async def _generate_design_core(
         final_positive = ", ".join(_lora_triggers) + ", " + final_positive
         logger.info("[%s] LoRA 觸發詞已補入正向：%s", log_label,
                     " | ".join(w.encode("unicode_escape").decode() for w in _lora_triggers))
-    _inject_prompts(wf, final_positive, final_negative)
+    _inject_prompts(wf, final_positive, final_negative, age=inp.age)
     # flat_draft（線稿/平塗概念圖）當 IPA 參考易把成像拉平 → 自動降 IPA 權重（下限 0.1）。
     _ipa_weight_eff = ipa_weight
     if ipa_used and all_flat and IPA_FLAT_DRAFT_SCALE < 1.0:
@@ -1184,6 +1236,7 @@ async def _generate_design_core(
             "X-CN-Used": "1" if cn_used else "0",
             "X-CN-Mode": cn_mode_out,
             "X-Raw-Desc": base64.b64encode(raw_desc.encode()).decode(),
+            "X-LLM-Input": _llm_input_header(raw_desc, _reused_positive is not None),
             "X-Prompt": base64.b64encode(final_positive.encode()).decode(),
             "X-Prompt-Profile": base64.b64encode(_profile_source.encode()).decode(),
             # [CN-068] cn_on badge 看三個訊號（cn_used / lllite / img2img），任一為真就顯示 coverage
@@ -1294,3 +1347,87 @@ async def generate_variant_design(
         log_label="variant-gen", record_endpoint="variant_design",
         seed=seed, reuse_prompt=reuse_prompt,
     )
+
+
+# ── 「以此角色生圖」：角色識別段英文 prompt（2026-09-24）─────────────────────────
+# 每次依角色「目前」欄位重新編譯（compile 有快取，同設定第二次不打 Ollama），不從 generation_history
+# 取上一回：歷史 prompt 會隨角色設定修改而過期，且夾帶人設圖專用的構圖段（全身/正面/純色背景）。
+# 組裝規則與 _generate_design_core 相同（性別/年齡/身高前綴 → ai_prompt → 主描述 → 畫風段 → 家族 tag_order），
+# 差別只在：不送名字（CN-038）、不送視覺抽取與構圖 suffix、負向不含人設圖專用的背景抑制詞。
+async def build_identity_prompt(character_id: int, db: Session) -> dict:
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="角色不存在")
+
+    active_wf = state.get_workflow()
+    art_style = db.get(ArtStyle, character.art_style_id) if character.art_style_id else None
+    style = _resolve_style(art_style, active_wf)
+    overrides = _resolve_prompt_overrides(art_style, active_wf)
+
+    parts = []
+    if character.outfit:
+        parts.append(f"服裝設定：{character.outfit}")
+    if character.core_traits:
+        parts.append(f"外貌與個性（優先採用）：{character.core_traits}")
+    raw_desc = "，".join(parts)
+    # Ollama 失敗時的退路：不含名字的中文，前端放回中文描述欄讓使用者自行按 AI 編譯
+    fallback_zh = raw_desc
+
+    gender_tag = _age_gender_tag(character.gender, character.age)
+    gender_prefix = gender_tag + ", " if gender_tag else ""
+    body_parts = [t for t in (_age_body_tags(character.age), _height_body_tags(character.height)) if t]
+    body_prefix = ", ".join(body_parts) + ", " if body_parts else ""
+
+    model = state.get_text_model()
+    positive, negative = "", ""
+    extra_prefix = ""
+    try:
+        if raw_desc:
+            kw = dict(style=style, model=model, anchor_text=character.core_traits or "", **overrides)
+            if not prompt_cache_hit(raw_desc, **kw):
+                await guardian.request_focus("ollama")
+            positive, negative = compile_prompt(raw_desc, **kw)
+        if character.ai_prompt and character.ai_prompt.strip():
+            ai_kw = dict(style=style, model=model,
+                         **{**overrides, "quality_prefix_override": "", "quality_suffix_override": ""})
+            if not prompt_cache_hit(character.ai_prompt.strip(), **ai_kw):
+                await guardian.request_focus("ollama")
+            extra, _ = compile_prompt(character.ai_prompt.strip(), **ai_kw)
+            extra_prefix = extra + ", " if extra else ""
+    except RuntimeError as e:
+        logger.warning("[identity-prompt] char_id=%s 編譯失敗，退回中文：%s", character.id, e)
+        return {"source": "fallback", "positive": "", "negative": "", "zh": fallback_zh,
+                "character_id": character.id, "age": character.age}
+
+    style_extra, style_weight = _resolve_style_extra(art_style, active_wf)
+    style_front = style_extra_str = ""
+    if style_extra:
+        if style_weight != 1.0:
+            weighted = ", ".join(f"({t.strip()}:{style_weight})" for t in style_extra.split(",") if t.strip())
+            style_front = f"{weighted}, " if weighted else ""
+        else:
+            style_extra_str = f", {style_extra}"
+
+    is_male = gender_tag.startswith(("1boy", "1man"))
+    is_female = gender_tag.startswith(("1girl", "1woman"))
+    gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
+    gender_neg_extra = (
+        ", bare chest, shirtless, topless, naked upper body, no shirt" if is_male else
+        ", male face, masculine features" if is_female else ""
+    )
+
+    final_positive = (gender_prefix + body_prefix + style_front + extra_prefix + positive
+                      + gender_pos_extra + style_extra_str).strip(", ")
+    final_positive = _strip_sheet_tags(_dedup_tags(final_positive))
+    if _workflow_tag_order(active_wf) == "subject_first":
+        final_positive = _reorder_subject_first(
+            final_positive, overrides.get("quality_prefix_override", ""), style_extra,
+        )
+    final_negative = _with_personal_negative(f"{negative}{gender_neg_extra}".strip(", "), active_wf)
+    final_negative = _drop_negative_overlap(_dedup_tags(final_negative), gender_prefix + body_prefix)
+    # [CN-118] 此 prompt 會回填到生圖頁，先過護欄（未成年依角色年齡強制）
+    final_positive, final_negative = apply_content_guard(
+        final_positive, final_negative, age=character.age, layer="identity")
+
+    return {"source": "compiled", "positive": final_positive, "negative": final_negative,
+            "zh": "", "character_id": character.id, "age": character.age}

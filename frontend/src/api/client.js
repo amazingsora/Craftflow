@@ -49,7 +49,4 @@ export const apiPostJson = (path, body) => request(path, {
 
 export const apiPostForm = (path, body) => request(path, { method: 'POST', body })
 
-export const apiPostBlob = (path, opts = {}) => request(path, { method: 'POST', ...opts })
-  .then((response) => response.blob())
-
 export const apiDelete = (path) => request(path, { method: 'DELETE' })

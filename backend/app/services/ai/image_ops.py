@@ -81,6 +81,52 @@ def _dedup_tags(prompt: str) -> str:
         seen.add(norm)
         out.append(tag)
     return ", ".join(out)
+
+
+# [CN-116] SYNC-008：Anima 官方 tag 順序與「確定性身體 tag 不被家族負向抵消」
+_SUBJECT_TAGS = frozenset({
+    "1girl", "1boy", "1woman", "1man", "androgynous", "solo",
+    "mature female", "mature male",
+})
+
+
+def _norm_tag(tag: str) -> str:
+    """比對用正規化：小寫、去括號、去權重（與 _dedup_tags 同規則）。"""
+    norm = tag.strip().lower().strip("() ")
+    if ":" in norm:
+        norm = norm.rsplit(":", 1)[0].strip()
+    return norm
+
+
+def _reorder_subject_first(prompt: str, quality: str, style: str) -> str:
+    """重排成 quality/safety → 主體（1girl, solo…）→ 畫風段（作品/@畫師）→ 其餘原序。
+
+    只移動 tag、不增刪；quality/style 以字串形式傳入，只有實際出現在 prompt 的才會被搬。
+    """
+    tags = [t.strip() for t in prompt.split(",") if t.strip()]
+    q_set = {_norm_tag(t) for t in quality.split(",") if t.strip()}
+    s_set = {_norm_tag(t) for t in style.split(",") if t.strip()}
+    buckets: list[list[str]] = [[], [], [], []]
+    for t in tags:
+        n = _norm_tag(t)
+        idx = 0 if n in q_set else 1 if n in _SUBJECT_TAGS else 2 if n in s_set else 3
+        buckets[idx].append(t)
+    return ", ".join(t for b in buckets for t in b)
+
+
+def _drop_negative_overlap(negative: str, asserted: str) -> str:
+    """負向移除「正向已確定性斷言」的 tag（例：年齡 12 → 正向 child，Anima 家族負向也有 child）。
+
+    只傳入確定性來源（性別／年齡／身高 tag），不傳整段正向：LLM 吐出的 tag 不應推翻
+    使用者刻意放在負向的抑制項（例：個人負向 halo）。
+    """
+    a_set = {_norm_tag(t) for t in asserted.split(",") if t.strip()}
+    if not a_set:
+        return negative
+    kept = [t.strip() for t in negative.split(",") if t.strip() and _norm_tag(t) not in a_set]
+    return ", ".join(kept)
+
+
 def _clamp_dim(v: int) -> int:
     """Round to nearest multiple of 64, clamped to [512, 2048] for SDXL."""
     v = max(512, min(2048, v))

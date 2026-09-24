@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import COMFYUI_BASE, OLLAMA_BASE, CUSTOM_WORKFLOWS_DIR, DEFAULT_VISION_MODEL, DEFAULT_TEXT_MODEL
 from app.core import state
-from app.services.ai.wf_node_ops import _wf_has_controlnet
+from app.services.ai.wf_node_ops import _wf_has_controlnet, _wf_has_ipa as _wf_dict_has_ipa
 from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
 from app.services.http_local import SESSION
 
@@ -34,14 +33,21 @@ if not _SYSTEM_DIR.exists():
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-def _fetch_checkpoints() -> list[str]:
+_COMFY_OBJECT_INFO_TIMEOUT = 8
+
+
+def _fetch_comfy_choices(node_class: str, input_name: str, what: str) -> list[str]:
+    """讀 ComfyUI /object_info/<node_class> 某個下拉輸入的選項；失敗 → 503。"""
     try:
-        r = SESSION.get(f"{COMFYUI_BASE}/object_info/CheckpointLoaderSimple", timeout=8)
+        r = SESSION.get(f"{COMFYUI_BASE}/object_info/{node_class}", timeout=_COMFY_OBJECT_INFO_TIMEOUT)
         r.raise_for_status()
-        data = r.json()
-        return data["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0]
+        return r.json()[node_class]["input"]["required"][input_name][0]
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"無法從 ComfyUI 取得模型清單：{e}")
+        raise HTTPException(status_code=503, detail=f"無法從 ComfyUI 取得{what}：{e}")
+
+
+def _fetch_checkpoints() -> list[str]:
+    return _fetch_comfy_choices("CheckpointLoaderSimple", "ckpt_name", "模型清單")
 
 
 @router.get("/checkpoints", summary="列出 ComfyUI 可用 checkpoint")
@@ -67,24 +73,10 @@ def set_checkpoint(req: SetCheckpointRequest):
     return {"checkpoint": state.get_checkpoint()}
 
 
-_IPA_NODE_TYPES = {"IPAdapterAdvanced", "IPAdapter"}
-
-
 def _wf_has_ipa(name: str) -> bool:
     """Return True if the workflow JSON contains any IP-Adapter node."""
-    for base in (_CUSTOM_DIR, _SYSTEM_DIR):
-        path = base / name
-        if path.exists():
-            try:
-                with open(path, encoding="utf-8") as f:
-                    wf = json.load(f)
-                return any(
-                    isinstance(n, dict) and n.get("class_type") in _IPA_NODE_TYPES
-                    for n in wf.values()
-                )
-            except Exception:
-                return False
-    return False
+    wf = _wf_load_dict(name)
+    return isinstance(wf, dict) and _wf_dict_has_ipa(wf)
 
 
 # UI 格式（ComfyUI「Save」匯出，非「Save (API format)」）含頂層 "nodes" 陣列，
@@ -97,16 +89,8 @@ _UI_FORMAT_HINT = (
 
 def _wf_is_ui_format(name: str) -> bool:
     """Return True if the workflow JSON is a ComfyUI UI-format export (invalid for /prompt)."""
-    for base in (_CUSTOM_DIR, _SYSTEM_DIR):
-        path = base / name
-        if path.exists():
-            try:
-                with open(path, encoding="utf-8") as f:
-                    wf = json.load(f)
-                return isinstance(wf.get("nodes"), list)
-            except Exception:
-                return False
-    return False
+    wf = _wf_load_dict(name)
+    return isinstance(wf, dict) and isinstance(wf.get("nodes"), list)
 
 
 def _wf_load_dict(name: str) -> dict:
@@ -277,14 +261,8 @@ def set_text_model(req: SetTextModelRequest):
 
 @router.get("/loras", summary="列出 ComfyUI 可用 LoRA 模型")
 def list_loras():
-    try:
-        r = SESSION.get(f"{COMFYUI_BASE}/object_info/LoraLoader", timeout=8)
-        r.raise_for_status()
-        data = r.json()
-        loras = data["LoraLoader"]["input"]["required"]["lora_name"][0]
-        return {"loras": loras, "active": state.get_lora()}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"無法從 ComfyUI 取得 LoRA 清單：{e}")
+    loras = _fetch_comfy_choices("LoraLoader", "lora_name", " LoRA 清單")
+    return {"loras": loras, "active": state.get_lora()}
 
 
 @router.get("/lora", summary="取得目前全局 LoRA 設定")

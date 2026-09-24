@@ -1,23 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
 import CapabilityNotice from './CapabilityNotice'
+import { UI } from './sharedStyles'
 
 const S = {
   root: { display: 'flex', gap: 24, alignItems: 'flex-start' },
   left: { flex: '0 0 340px', display: 'flex', flexDirection: 'column', gap: 12 },
   right: { flex: 1, display: 'flex', flexDirection: 'column', gap: 16 },
-  dropzone: {
-    border: '2px dashed var(--border)',
-    borderRadius: 12,
-    minHeight: 220,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    overflow: 'hidden',
-    background: 'var(--surface)',
-    transition: 'border-color .2s',
-  },
-  dropzoneActive: { borderColor: 'var(--accent)' },
+  dropzone: { ...UI.dropzone, minHeight: 220 },
+  dropzoneActive: UI.dropzoneActive,
   previewImg: { width: '100%', objectFit: 'contain', maxHeight: 260 },
   hint: { color: 'var(--muted)', textAlign: 'center', padding: 20, lineHeight: 2, fontSize: 13 },
   label: { fontSize: 12, color: 'var(--muted)', marginBottom: 3, display: 'block' },
@@ -34,17 +24,8 @@ const S = {
     outline: 'none',
     minHeight: 90,
   },
-  btn: {
-    padding: '11px 0',
-    borderRadius: 8,
-    border: 'none',
-    background: 'var(--accent)',
-    color: 'var(--accent-contrast)',
-    fontSize: 15,
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  btnDisabled: { opacity: 0.45, cursor: 'not-allowed' },
+  btn: UI.btnPrimary,
+  btnDisabled: UI.btnDisabled,
   btnSecondary: {
     padding: '7px 12px',
     borderRadius: 8,
@@ -112,13 +93,7 @@ const S = {
     alignItems: 'center', gap: 12,
     padding: 48, color: 'var(--muted)', fontSize: 13,
   },
-  spinner: {
-    width: 40, height: 40,
-    border: '3px solid var(--border)',
-    borderTop: '3px solid var(--accent)',
-    borderRadius: '50%',
-    animation: 'spin 0.9s linear infinite',
-  },
+  spinner: UI.spinner,
   imgRow: { display: 'flex', gap: 12 },
   imgHalf: { flex: 1 },
 }
@@ -156,17 +131,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
   useEffect(() => {
     if (!ipaSupported) setIpaEnabled(false)
   }, [ipaSupported])
-  const [ipaFile, setIpaFile] = useState(null)
-  const [ipaPreview, setIpaPreview] = useState(null)
   const [ipaWeight, setIpaWeight] = useState(0.6)
-  const [ipaDragging, setIpaDragging] = useState(false)
-  const ipaInputRef = useRef()
-
-  const handleIpaFile = (f) => {
-    if (!f || !f.type.startsWith('image/')) return
-    setIpaFile(f)
-    setIpaPreview(URL.createObjectURL(f))
-  }
 
   const handleFile = (f) => {
     if (!f || !f.type.startsWith('image/')) return
@@ -296,7 +261,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
                 background: ipaEnabled ? 'var(--accent)' : 'transparent',
                 color: ipaEnabled ? 'var(--accent-contrast)' : 'var(--muted)',
               }}
-              onClick={() => { setIpaEnabled(v => !v); setIpaFile(null); setIpaPreview(null) }}
+              onClick={() => setIpaEnabled(v => !v)}
             >
               {ipaEnabled ? '已啟用' : '未啟用'}
             </button>

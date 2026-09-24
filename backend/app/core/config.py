@@ -89,6 +89,21 @@ PERSONAL_NEGATIVE: str = os.getenv("PERSONAL_NEGATIVE", "")
 # [CN-009] 畫風 tags 加權係數：!=1.0 時包成 (tag:w) 並前置到 identity；1.0=末端 append
 PERSONAL_STYLE_WEIGHT: float = float(os.getenv("PERSONAL_STYLE_WEIGHT", "1.0"))
 
+# [CN-115] 個人標籤分家族（SYNC-007 軌 P）：PERSONAL_STYLE_EXTRA_<家族>／PERSONAL_NEGATIVE_EXTRA_<家族>
+# 家族＝PromptStyle 值大寫（ANIMA / ILLUSTRIOUS / SDXL …）。疊加語義、留空＝關閉、不受上方 ENABLED 節制。
+# 刻意「呼叫時才讀」而非模組常數：家族是動態值，且讓測試能以 monkeypatch.setenv 隔離使用者 .env。
+PERSONAL_KIND_STYLE = "STYLE"
+PERSONAL_KIND_NEGATIVE = "NEGATIVE"
+# 測試隔離用（tests/conftest.py 依此清掉使用者 .env 的家族個人標籤）
+PERSONAL_FAMILY_KEY_PREFIXES = tuple(f"PERSONAL_{k}_EXTRA_" for k in (PERSONAL_KIND_STYLE, PERSONAL_KIND_NEGATIVE))
+
+
+def personal_family_extra(kind: str, family: str) -> str:
+    """讀 `.env` 的 PERSONAL_<kind>_EXTRA_<FAMILY>；未設或家族為空 → ""。"""
+    if not family:
+        return ""
+    return (os.getenv(f"PERSONAL_{kind}_EXTRA_{family.upper()}") or "").strip()
+
 # [CN-010] prompt 擴寫 stage2，預設關閉（需先手動 A/B 驗證），FLUX 不套用
 PROMPT_UPSAMPLE_ENABLED: bool = os.getenv("PROMPT_UPSAMPLE_ENABLED", "false").lower() == "true"
 PROMPT_UPSAMPLE_MODEL: str = os.getenv("PROMPT_UPSAMPLE_MODEL", "")  # 空 = 沿用 compile() 的 text model
@@ -98,6 +113,11 @@ PROMPT_MAX_BODY_TAGS: int = int(os.getenv("PROMPT_MAX_BODY_TAGS", "0"))
 
 # [CN-011] 編譯快取：命中則完全不呼叫 Ollama，省掉整段 11GB 卸載/重載。預設 0=停用
 PROMPT_CACHE_TTL_SEC: int = int(os.getenv("PROMPT_CACHE_TTL_SEC", "0"))
+
+# ── 內容安全（NSFW 護欄，見 services/ai/prompt_engine/content_guard.py）────────────
+# true（預設）＝一般情境剝除露骨 tag、負向補 nsfw；false＝成人內容不過濾（debug 用）。
+# 未成年情境（角色 <18 或正向含 child 等標記）不受此旋鈕影響，永遠強制過濾。
+NSFW_GUARD_ENABLED: bool = os.getenv("NSFW_GUARD_ENABLED", "true").lower() == "true"
 
 # ── 生圖微調旋鈕 ──────────────────────────────────────────────
 # flat_draft(線稿/平塗概念圖)當 IPA 參考會把成像拉平 → 自動把 IPA 權重乘此係數(下限0.1)。1.0=不降。

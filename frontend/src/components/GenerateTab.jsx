@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { apiPostForm, apiPostJson, request, apiUrl } from '../api/client'
 import { EP } from '../api/endpoints'
 import { useAsync } from '../api/useAsync'
+import { UI } from './sharedStyles'
 
 const DEFAULT_NEGATIVE =
   'low quality, blurry, watermark, text, signature, bad anatomy, extra limbs, deformed, ugly, duplicate, worst quality'
@@ -48,43 +49,12 @@ const S = {
   sliderRow: { display: 'flex', alignItems: 'center', gap: 10 },
   slider: { flex: 1, accentColor: 'var(--accent)' },
   sliderVal: { width: 32, textAlign: 'right', color: 'var(--muted)', fontSize: 13 },
-  btn: {
-    padding: '11px 0',
-    borderRadius: 8,
-    border: 'none',
-    background: 'var(--accent)',
-    color: 'var(--accent-contrast)',
-    fontSize: 15,
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  btnDisabled: { opacity: 0.45, cursor: 'not-allowed' },
-  btnSecondary: {
-    padding: '8px 0',
-    borderRadius: 8,
-    border: '1px solid var(--border)',
-    background: 'transparent',
-    color: 'var(--text)',
-    fontSize: 14,
-    cursor: 'pointer',
-  },
-  spinner: {
-    width: 40, height: 40,
-    border: '3px solid var(--border)',
-    borderTop: '3px solid var(--accent)',
-    borderRadius: '50%',
-    animation: 'spin 0.9s linear infinite',
-  },
-  loading: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 60, color: 'var(--muted)' },
-  empty: {
-    minHeight: 280,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    border: '2px dashed var(--border)',
-    borderRadius: 12,
-    color: 'var(--muted)',
-  },
+  btn: UI.btnPrimary,
+  btnDisabled: UI.btnDisabled,
+  btnSecondary: UI.btnSecondary,
+  spinner: UI.spinner,
+  loading: UI.loading,
+  empty: UI.empty,
   error: { color: 'var(--danger)', fontSize: 13 },
   seedRow: { display: 'flex', gap: 8, alignItems: 'center' },
   refSection: {
@@ -127,12 +97,25 @@ const S = {
   },
 }
 
+function dedupeTags(s) {
+  const seen = new Set()
+  return s.split(',').map(t => t.trim()).filter(t => {
+    if (!t) return false
+    const k = t.toLowerCase().replace(/^\(+|\)+$/g, '').replace(/:[\d.]+$/, '').trim()
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  }).join(', ')
+}
+
 export default function GenerateTab({ onAddHistory, artStyleId = '', pendingPrompt = '', onPromptConsumed }) {
   const [promptZh, setPromptZh] = useState(() => sessionStorage.getItem('gen_promptZh') ?? '')
   const [promptEn, setPromptEn] = useState(() => sessionStorage.getItem('gen_promptEn') ?? '')
   const [optimizedEn, setOptimizedEn] = useState(() => sessionStorage.getItem('gen_optimizedEn') ?? '')
   const [detectedStyle, setDetectedStyle] = useState(null)
   const [negPrompt, setNegPrompt] = useState(() => sessionStorage.getItem('gen_negPrompt') ?? DEFAULT_NEGATIVE)
+  // 「以此角色生圖」帶入的角色 id：送出時一併帶給後端，未成年護欄依角色年齡判定
+  const [sourceCharId, setSourceCharId] = useState(() => Number(sessionStorage.getItem('gen_charId')) || null)
   const [steps, setSteps] = useState(20)
   const [seed, setSeed] = useState(-1)
   const [size, setSize] = useState('1024x1024')
@@ -156,7 +139,17 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
 
   useEffect(() => {
     if (!pendingPrompt) return
-    setPromptZhP(pendingPrompt)
+    if (typeof pendingPrompt === 'string') {
+      // 其他 Tab（ComposeTab 等）仍傳中文字串
+      setPromptZhP(pendingPrompt)
+      setSourceCharP(null)
+    } else {
+      // 角色管理「以此角色生圖」：英文識別段放手動英文欄（AI 編譯不會覆蓋），中文欄留給場景描述
+      setPromptEnP(pendingPrompt.en || '')
+      setPromptZhP(pendingPrompt.zh || '')
+      if (pendingPrompt.negative) setNegPromptP(pendingPrompt.negative)
+      setSourceCharP(pendingPrompt.characterId ?? null)
+    }
     setOptimizedEnP('')
     onPromptConsumed?.()
   }, [pendingPrompt])
@@ -172,10 +165,14 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
   const refInputRef = useRef()
 
   // 實際發送給 SDXL 的 Prompt：[英文輸入, AI 優化結果]
-  const finalPrompt = [promptEn, optimizedEn].filter(Boolean).join(', ')
+  // 去重：角色識別段已含 quality/主體，場景再按 AI 編譯時會再出一份；保留首次出現＝識別段的順序
+  const finalPrompt = dedupeTags([promptEn, optimizedEn].filter(Boolean).join(', '))
+  // 手動英文欄不經翻譯、原樣送出；含中日文字元時提示改寫到上方中文描述
+  const promptEnHasCjk = /[\u3040-\u30ff\u3400-\u9fff]/.test(promptEn)
 
   const setPromptZhP = (v) => { setPromptZh(v); sessionStorage.setItem('gen_promptZh', v) }
   const setPromptEnP = (v) => { setPromptEn(v); sessionStorage.setItem('gen_promptEn', v) }
+  const setSourceCharP = (v) => { setSourceCharId(v); if (v) sessionStorage.setItem('gen_charId', String(v)); else sessionStorage.removeItem('gen_charId') }
   const setOptimizedEnP = (v) => { setOptimizedEn(v); sessionStorage.setItem('gen_optimizedEn', v) }
   const setNegPromptP = (v) => { setNegPrompt(v); sessionStorage.setItem('gen_negPrompt', v) }
 
@@ -300,6 +297,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
               steps,
               seed: actualSeed,
               art_style_id: artStyleId ? Number(artStyleId) : null,
+              character_id: sourceCharId,
               batch_size: 1,
             }),
           })
@@ -391,6 +389,16 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
             value={promptEn}
             onChange={(e) => setPromptEnP(e.target.value)}
           />
+          {sourceCharId && (
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+              已連結角色 #{sourceCharId}（生成時依角色年齡套用內容護欄；從其他 Tab 帶入新描述時才會換掉）
+            </div>
+          )}
+          {promptEnHasCjk && (
+            <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>
+              ⚠ 此欄不會翻譯，中文會原樣送進模型。請改寫在上方「中文描述」再按 AI 編譯，或改用英文 tag（例：一位女孩 → 1girl, solo）。
+            </div>
+          )}
         </div>
 
         <div>

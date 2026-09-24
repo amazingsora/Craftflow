@@ -126,8 +126,11 @@ def test_filter_visual_strip_skin_off_by_default():
 def test_visual_extract_prompt_single_vs_multi():
     single = ve._visual_extract_prompt(1)
     multi = ve._visual_extract_prompt(3)
-    assert "70字" in single
-    assert "90字" in multi and "3 張" in multi
+    # [CN-116] SYNC-008：70/90 → 120/140，題目改逐件服裝＋姿勢＋表情
+    assert f"{ve._FEATURE_CHARS_SINGLE}字" in single
+    assert f"{ve._FEATURE_CHARS_MULTI}字" in multi and "3 張" in multi
+    for q in (single, multi):
+        assert "逐件" in q and "姿勢" in q and "表情" in q
 
 
 # ── 快取 key ──────────────────────────────────────────────────────────────────

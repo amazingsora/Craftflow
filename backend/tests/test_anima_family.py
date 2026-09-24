@@ -7,8 +7,8 @@
   D'-2   cn_fallback="img2img" 與 _inject_img2img 注入鏈
   B-3'   _set_node_input 上游參數覆寫（採樣/解析度雙真相）
 
-⚠️ 本檔同時是 **Standard_V37 定版零回歸鎖**：V37 相關斷言若失敗，代表 Anima 適配
-   污染了已定版的 V37 路徑，必須回頭修，不可改斷言就當過關。
+⚠️ 本檔同時是 **illustrious 家族路徑鎖**（SYNC-007 前為 Standard_V37 定版鎖，V37 退役後改指 V38）：
+   相關斷言若失敗，代表 Anima 適配污染了 SDXL/illustrious 路徑，必須回頭修，不可改斷言就當過關。
 
 執行：cd backend && pytest tests/test_anima_family.py -v
 """
@@ -49,9 +49,6 @@ def test_anima_style_config_golden():
     assert c.quality_prefix == (
         "masterpiece, best quality, absurdres, ultra detailed, high contrast"
     )
-    # 決策①：family 不做 safety 分級
-    for tag in ("safe", "sensitive", "explicit"):
-        assert tag not in c.quality_prefix
     # 決策②：光影組不寫死在 family
     for tag in ("bokeh", "depth of field", "backlighting", "light particles"):
         assert tag not in c.quality_prefix
@@ -228,10 +225,10 @@ def test_anima_workflow_capability_all_false():
     assert c["models"] is None
 
 
-# ── Standard_V37 定版零回歸鎖 ────────────────────────────────────────────────
+# ── illustrious 家族路徑鎖（SYNC-007：原「Standard_V37 定版鎖」，V37 已不在磁碟、改指 V38）──
 
-def test_v37_capability_unchanged():
-    wf = _load("Standard_V37.json")
+def test_illustrious_path_capability_unchanged():
+    wf = _load("Standard_V38.json")
     c = cap.resolve_capability(wf, cap.extract_checkpoint_from_wf(wf))
     assert c["family"] == "illustrious"
     assert c["ipa_supported"] is True
@@ -240,58 +237,33 @@ def test_v37_capability_unchanged():
     assert c["models"] is not None
 
 
-def test_v37_illustrious_style_config_unchanged():
-    """V37 的 prompt 由 prompt_profiles.yml 決定，但 family 仍是 fallback 底線。"""
+def test_illustrious_style_config_unchanged():
+    """illustrious 的 prompt 由 prompt_profiles.yml families 決定，STYLE_CONFIG 是 fallback 底線。"""
     c = STYLE_CONFIG[PromptStyle.ILLUSTRIOUS]
     assert c.quality_prefix == "masterpiece, best quality, amazing quality, absurdres"
     assert c.negative.startswith("worst quality, low quality, lowres, bad anatomy")
 
 
-def test_v37_profile_registered_and_anima_not():
-    """AC-3：AnimaStandardV7 刻意不登錄 workflow profile（避免與 family 兩份真相）。"""
+# ── anima 家族 prompt 鎖（SYNC-007：原 AnimaStandardV8 檔名鎖改為家族鎖）──────────
+# 官方 model card：Aesthetic／Turbo 版正負向都不要用 score_* tags。
+# （原 test_v8_negative_drops_score_tags_only 另鎖「與 STYLE_CONFIG 差異僅 score_*」，
+#  09-21 後兩者已刻意分岔、基線即失敗，SYNC-007 以官方約束取代該過時關係。）
+
+def test_anima_family_configured_and_live_workflow_is_aesthetic():
     from app.services.ai.workflow_builder import _load_prompt_profiles
-    profiles = _load_prompt_profiles()
-    assert "Standard_V37.json" in profiles
-    assert "AnimaStandardV7.json" not in profiles
-
-
-# ── AnimaStandardV8（Aesthetic v1.1）prompt 鎖 ───────────────────────────────
-# 2026-08-17：V8 底模改用 anima_aestheticV11。官方 model card 對 Aesthetic 版明文
-# 「正負向都不要用 score_* tags」，而 family(ANIMA) 的 negative 是為 base 版而設、
-# 含 score_1/2/3 → 必須在 workflow profile 這層拿掉。
-# 本組斷言鎖的是「唯一差異就是 score_*」——防的是日後改 family negative 時忘了同步
-# 這份副本（prompt_profiles.yml 只有整段取代語義，沒有「移除單項」，副本無可避免）。
-
-def test_v8_profile_registered_and_matches_checkpoint():
-    from app.services.ai.workflow_builder import _load_prompt_profiles
-    profiles = _load_prompt_profiles()
-    assert "AnimaStandardV8.json" in profiles
-    wf = _load("AnimaStandardV8.json")
+    assert "anima" in _load_prompt_profiles()
+    wf = _load("AnimaStandardV9_aesthetic.json")
     ckpt = cap.extract_checkpoint_from_wf(wf)
-    assert "aesthetic" in ckpt.lower(), f"V8 底模已非 aesthetic（{ckpt}），本組斷言的前提失效"
+    assert "aesthetic" in ckpt.lower(), f"底模已非 aesthetic（{ckpt}），本組斷言的前提失效"
     assert cap.resolve_family(ckpt) == "anima"
 
 
-def test_v8_negative_drops_score_tags_only():
-    """官方明令：Aesthetic 版正負向皆不得含 score_*。且與 family 的差異僅止於此。"""
+def test_anima_family_has_no_score_tags():
     from app.services.ai.workflow_builder import _load_prompt_profiles
-    v8 = _load_prompt_profiles()["AnimaStandardV8.json"]["negative"]
-    fam = STYLE_CONFIG[PromptStyle.ANIMA].negative
-
-    def toks(x):
-        return [t.strip() for t in x.split(",") if t.strip()]
-
-    assert not [t for t in toks(v8) if t.startswith("score_")]
-    assert [t for t in toks(fam) if t not in toks(v8)] == ["score_1", "score_2", "score_3"]
-    assert [t for t in toks(v8) if t not in toks(fam)] == []
-
-
-def test_v8_quality_prefix_falls_back_to_family():
-    """quality_prefix 刻意不登錄（family 現值已不含 score_*，符合官方）。
-    若哪天有人在 V8 profile 補了 quality_prefix，這條會提醒他順便檢查 score_*。"""
-    from app.services.ai.workflow_builder import _load_prompt_profiles
-    prefix = _load_prompt_profiles()["AnimaStandardV8.json"].get("quality_prefix")
-    assert prefix is None or "score_" not in prefix
+    fam = _load_prompt_profiles()["anima"]
+    for field in ("quality_prefix", "negative"):
+        toks = [t.strip() for t in fam[field].split(",") if t.strip()]
+        assert not [t for t in toks if t.startswith("score_")], field
     assert "score_" not in STYLE_CONFIG[PromptStyle.ANIMA].quality_prefix
 
 
@@ -692,10 +664,10 @@ def test_set_node_input_missing_node():
     assert ops._set_node_input({}, "nope", "steps", 1) is False
 
 
-def test_v37_resolution_override_reaches_metadata():
+def test_illustrious_path_resolution_override_reaches_metadata():
     """V37 的 width/height 同樣是 easy int 參照，且同時餵 EmptyLatentImage 與 Image Saver。
     改動後兩者同源 —— 出圖尺寸不變，metadata 由『恆記工作流內建值』修正為實際值。"""
-    wf = _load("Standard_V37.json")
+    wf = _load("Standard_V38.json")
     el = next(k for k, v in wf.items()
               if isinstance(v, dict) and v.get("class_type") == "EmptyLatentImage")
     w_ref = wf[el]["inputs"]["width"]
@@ -786,39 +758,7 @@ def test_strip_sheet_tags_preserves_legit_character_tags():
     assert _strip_sheet_tags(p) == p
 
 
-# ── G-1 / G-2：V37 profile 品質段（2026-07-26）────────────────────────────────
-
-def test_v37_profile_quality_prefix_and_suffix_golden():
-    """G-5 golden：profile 層（非 family 層）的品質段定版鎖。
-    2026-08-12 R4-C/D/E 改版 —— 回滾 G-1 美學加權段、停用 G-2 尾綴、negative 去 sketch。"""
-    from app.services.ai.workflow_builder import _load_prompt_profiles
-    p = _load_prompt_profiles()["Standard_V37.json"]
-    # R4-C：樸素三段，不含美學/年份 tag
-    assert p["quality_prefix"] == "masterpiece, best quality, absurdres"
-    for tag in ("newest", "very aesthetic", "highres"):
-        assert tag not in p["quality_prefix"]
-    # R4-D：尾綴美學段停用 → 該欄位不得登錄（登錄空字串也算停用，見 _workflow_profile_overrides）
-    assert not p.get("quality_suffix")
-    # R4-E：sketch 與 clean lineart 訴求對衝 → 移除。tag 級比對避免子字串誤判
-    neg_tags = {t.strip() for t in p["negative"].split(",")}
-    assert "sketch" not in neg_tags
-    # P1-1：環境/投影抑制（R3）；裸 shadow 刻意不加，避免壓掉角色 shading
-    for tag in ("drop shadow", "cast shadow", "floor", "ground", "reflection"):
-        assert tag in neg_tags
-    assert "shadow" not in neg_tags
-    # 人設圖 profile 仍禁用場景細節
-    assert "detailed background" in p["negative"]
-
-
-def test_v37_profile_overrides_reach_compiler_kwargs():
-    """profile → compile_prompt kwargs 的欄位對映（只驗登錄欄位有轉成 *_override）。"""
-    from app.services.ai.workflow_builder import _workflow_profile_overrides
-    ov = _workflow_profile_overrides("Standard_V37.json")
-    assert ov["quality_prefix_override"] == "masterpiece, best quality, absurdres"
-    assert ov["negative_override"].startswith("worst quality, low quality, lowres")
-    # R4-D：未登錄欄位不佔位，讓 compile() 的 family fallback 維持有效
-    assert "quality_suffix_override" not in ov
-
+# ── 權重群組展開機制（原 G-1／G-2 V37 配方鎖已隨 SYNC-007 移除，機制測試保留）──────
 
 def test_weight_group_expansion_still_works():
     """權重群組語法要能展開進 banned_tags，否則 LLM 重複吐 highres/absurdres/
@@ -838,7 +778,7 @@ def test_weight_group_expansion_still_works():
 
 # ── H-3：Image Saver metadata prompt 與實跑同源（2026-07-26）──────────────────
 
-@pytest.mark.parametrize("wf_name", ["Standard_V37.json", "AnimaStandardV7.json"])
+@pytest.mark.parametrize("wf_name", ["Standard_V38.json", "AnimaStandardV7.json"])
 def test_saver_metadata_prompt_matches_injected(wf_name):
     """注入後 saver 的 positive/negative 必須是實際送出值，不再是內建 wildcard 鏈參照。"""
     wf = _load(wf_name)
@@ -863,7 +803,7 @@ def test_saver_metadata_sync_is_noop_without_saver():
 
 def test_inject_prompts_still_writes_clip_text_encode():
     """H-3 零回歸：saver 同步不得取代原本的 CLIPTextEncode 注入。"""
-    wf = _load("Standard_V37.json")
+    wf = _load("Standard_V38.json")
     ops._inject_prompts(wf, "POS_ACTUAL", "NEG_ACTUAL")
     texts = {n["inputs"].get("text") for n in wf.values()
              if isinstance(n, dict) and n.get("class_type") == "CLIPTextEncode"}
@@ -996,7 +936,7 @@ def test_capability_falls_back_to_img2img_when_lllite_unavailable(monkeypatch):
     assert out2["lllite_weight"] == "anima-lllite-any-test-like-v2.safetensors"
 
 
-def test_v37_capability_unaffected_by_lllite(monkeypatch):
+def test_illustrious_path_capability_unaffected_by_lllite(monkeypatch):
     """零回歸鎖：SDXL/V37 路徑 cn_supported=True，根本不該走進候選鏈解析。"""
     from app.services.ai import capability as cap
     called = {"n": 0}
@@ -1006,7 +946,7 @@ def test_v37_capability_unaffected_by_lllite(monkeypatch):
         return "should-not-be-used.safetensors"
     monkeypatch.setattr(cap, "_resolve_lllite_weight", _spy)
 
-    wf = _load("Standard_V37.json")
+    wf = _load("Standard_V38.json")
     out = cap.resolve_capability(wf, cap.extract_checkpoint_from_wf(wf))
     assert out["cn_supported"] is True
     assert out["cn_fallback"] is None and out["lllite_weight"] is None

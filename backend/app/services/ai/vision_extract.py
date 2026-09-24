@@ -25,37 +25,19 @@ logger = logging.getLogger(__name__)
 _VISION_CACHE_FILE = Path(__file__).resolve().parents[3] / "data" / "vision_cache.json"
 
 
-def _detect_body_coverage(image_bytes: bytes) -> str:
-    """
-    Use the configured vision model to classify how much of the body is shown.
-    Returns: "full" | "partial" | "bust"
-    - full:    legs and feet visible
-    - partial: torso visible but legs cut off (upper body / three-quarter)
-    - bust:    face / shoulders only
-    Falls back to "partial" on any error.
-    """
-    prompt = (
-        "Look at this character illustration. How much of the body is shown?\n"
-        "Reply with exactly one word:\n"
-        "- 'full' if ankles AND feet are clearly visible (complete full body)\n"
-        "- 'partial' if knees or ankles are cut off (thighs visible but no feet = partial)\n"
-        "- 'bust' if only waist-up or less is shown\n"
-        "One word only."
-    )
-    try:
-        result = _oc.analyze_image_bytes(image_bytes, prompt, model=state.get_vision_model())
-        result = result.strip().lower().split()[0] if result.strip() else ""
-        if result in ("full", "partial", "bust"):
-            return result
-        # fuzzy match
-        if any(k in result for k in ("full", "whole", "entire", "feet", "leg")):
-            return "full"
-        if any(k in result for k in ("bust", "face", "head", "shoulder")):
-            return "bust"
-        return "partial"
-    except Exception as e:
-        logger.warning("[body-coverage] detection failed: %s — defaulting to partial", e)
-        return "partial"
+# [CN-116] 視覺特徵題目（combined 與 plain 兩條路共用）。字數上限隨題目變多而放寬。
+_FEATURE_CHARS_SINGLE = 120
+_FEATURE_CHARS_MULTI = 140
+_FEATURE_ITEMS = (
+    "① 髮色與髮型（長度與形狀） ② 眼睛顏色 ③ 膚色 "
+    "④ 服裝逐件列出（上身、下身、腿部、鞋子、配件，每件一個短語） "
+    "⑤ 姿勢（站姿與雙手位置） ⑥ 表情 ⑦ 明顯特殊特徵"
+)
+_FEATURE_ITEMS_MULTI = (
+    "① 髮色與髮型（長度與形狀） ② 眼睛顏色 ③ 膚色 "
+    "④ 服裝逐件列出（上身、下身、腿部、鞋子、配件，每件一個短語） "
+    "⑤ 各圖均出現的姿勢與表情 ⑥ 各圖均出現的特殊特徵"
+)
 
 
 def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str, str]:
@@ -68,20 +50,22 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
         "【線稿警告】這可能是未上色的鉛筆稿／線稿，且常帶單色（如粉紅色）背景。"
         "規則一：完全忽略背景顏色——粉紅色或任何單色背景，絕不可當成髮色或服裝顏色。"
         "規則二：若畫面只有線條、沒有實際填色，請直接省略顏色、不要寫出任何顏色詞，也不要寫「線稿未上色」這類字樣，"
-        "只描述髮型長度與形狀、服裝款式與材質、明顯特徵。嚴禁臆測顏色。只觀察「角色線條內」的特徵。"
+        "只描述髮型長度與形狀、逐件服裝的款式、姿勢、表情與明顯特徵。嚴禁臆測顏色。只觀察「角色線條內」的特徵。"
     )
     n = len(images_bytes)
     # 2026-06-23：不再抽「體型輪廓」——體型由年齡/身高欄位確定性決定
     # （_age_body_tags/_height_body_tags），vision 版本只會衝突（如 petite vs tall slender）。
+    # [CN-116] SYNC-008：服裝改逐件、加姿勢與表情（草圖結構是視覺模型唯一能補的資訊）；
+    # 顏色仍照問（上色概念圖有用），線稿由規則二與 _filter_visual_for_llm(decolor_all) 雙重擋。
     if n == 1:
         feature_q = (
-            "B. 視覺特徵（逗號分隔的中文短語，控制在70字以內）：\n"
-            "① 髮色與髮型 ② 眼睛顏色 ③ 膚色 ④ 服裝主要顏色與風格 ⑤ 明顯特殊特徵"
+            f"B. 視覺特徵（逗號分隔的中文短語，控制在{_FEATURE_CHARS_SINGLE}字以內）：\n"
+            f"{_FEATURE_ITEMS}"
         )
     else:
         feature_q = (
-            f"B. {n}張圖共同視覺特徵（逗號分隔的中文短語，控制在90字以內）：\n"
-            "① 髮色與髮型 ② 眼睛顏色 ③ 膚色 ④ 服裝主要顏色與風格 ⑤ 各圖均出現的特殊特徵"
+            f"B. {n}張圖共同視覺特徵（逗號分隔的中文短語，控制在{_FEATURE_CHARS_MULTI}字以內）：\n"
+            f"{_FEATURE_ITEMS_MULTI}"
         )
     prompt = (
         f"{ignore_bg}\n\n"
@@ -224,39 +208,80 @@ _CLOTHING_KW = {
     "外套", "大衣", "風衣", "夾克", "上衣", "衫", "褲", "短褲", "長褲",
     "裙", "短裙", "長裙", "服裝", "衣服", "制服", "連帽", "背心",
     "毛衣", "套裝", "腰帶", "圍巾", "手套", "鞋", "靴",
+    "襪", "護膝", "綁帶",
 }
 _HAIRSTYLE_KW = {
     "馬尾", "雙馬尾", "辮子", "捲髮", "直髮", "髮型", "長髮",
 }
 # [CN-103] 線稿膚色洩漏詞族一律剝除，真膚色由年齡/預設確定性決定
+# [CN-116] 拔掉「線條」：子字串比對誤殺「腿部有幾何線條裝飾」這類服裝細節（backend.log 09-23 實證）；
+#          真正的膚色洩漏句都另含「膚」「未填色」「線稿」，不靠「線條」也擋得到。
 _SKINTONE_LEAK_KW = {
-    "膚色", "膚", "未上色", "未填色", "無色", "線條", "線稿",
+    "膚色", "膚", "未上色", "未填色", "無色", "線稿",
     "tan skin", "skin tone", "uncolored", "colorless", "unpainted",
+}
+# [CN-116] 表情詞：表情變體（expression 模式）由 _EXPRESSION_MAP 決定，不可被草圖表情蓋掉
+_EXPRESSION_KW = {
+    "表情", "微笑", "笑", "哭", "怒", "生氣", "驚訝", "害羞", "臉紅", "嘟嘴", "閉眼",
+}
+_HAIR_PHRASE_KW = ("髮", "馬尾", "辮")
+# [CN-116] 顏色詞：「(深淺)＋1～2 個色字＋色」與「深淺＋色字」兩型；刻意要求「色」或深淺前綴，
+#          避免誤傷「金屬」「白皙」這類非顏色用法。
+_COLOR_NAMES = "粉紅|咖啡|白|黑|灰|紅|藍|綠|黃|紫|粉|棕|褐|金|銀|橙|橘|青|米"
+_COLOR_WORD_RE = re.compile(
+    rf"(?:深|淺|淡|亮|暗|鮮)?(?:{_COLOR_NAMES}){{1,2}}色"
+    rf"|(?:深|淺|淡|亮|暗|鮮)色"
+    rf"|(?:深|淺|淡)(?:{_COLOR_NAMES})"
+)
+_LEADING_JOINER_RE = re.compile(r"^[的之與和及、\s]+")
+# 去掉顏色後只剩部位名詞＝沒有資訊，整句丟棄（例：「淡色眼眸」→「眼眸」）
+_EMPTY_AFTER_DECOLOR = {
+    "眼眸", "眼睛", "雙眼", "眼瞳", "瞳", "瞳孔", "眼",
+    "頭髮", "髮", "髮色", "皮膚", "肌膚", "服裝", "衣服", "",
 }
 
 
+def _decolor_phrase(p: str) -> str:
+    """移除片語中的顏色詞；只剩部位名詞時回傳空字串。"""
+    out = _LEADING_JOINER_RE.sub("", _COLOR_WORD_RE.sub("", p)).strip()
+    return "" if out in _EMPTY_AFTER_DECOLOR else out
+
+
 def _filter_visual_for_llm(
-    visual: str, *, strip_clothing: bool, strip_hairstyle: bool, strip_skin: bool = False
+    visual: str, *, strip_clothing: bool, strip_hairstyle: bool, strip_skin: bool = False,
+    strip_expression: bool = False, decolor_all: bool = False,
+    decolor_clothing: bool = False, decolor_hair: bool = False,
 ) -> str:
     """
     Remove clothing / hairstyle / skin-tone-leak phrases from a comma-separated vision
     description before sending it to the LLM, so it cannot hallucinate outfits, hairstyles,
     or lineart skin-tone artifacts that conflict with explicitly defined character settings.
+
+    [CN-116] SYNC-008：「顏色歸設定欄位、結構歸視覺」。decolor_* 只拿掉顏色詞、保留
+    款式／件數／形狀，取代過去「欄位有值就整句剝除」的做法（該做法把草圖可見的雙馬尾、
+    外套＋短褲全丟光，raw_desc 只剩「淡色眼眸」）。strip_* 維持整句剝除語義。
     """
-    if not (strip_clothing or strip_hairstyle or strip_skin):
+    if not (strip_clothing or strip_hairstyle or strip_skin or strip_expression
+            or decolor_all or decolor_clothing or decolor_hair):
         return visual
     phrases = [p.strip() for p in visual.replace(",", "，").split("，") if p.strip()]
     result = []
     for p in phrases:
-        drop = False
-        if strip_clothing and any(kw in p for kw in _CLOTHING_KW):
-            drop = True
-        if not drop and strip_hairstyle and any(kw in p for kw in _HAIRSTYLE_KW):
-            drop = True
-        if not drop and strip_skin and any(kw in p for kw in _SKINTONE_LEAK_KW):
-            drop = True
-        if not drop:
-            result.append(p)
+        is_clothing = any(kw in p for kw in _CLOTHING_KW)
+        is_hair = any(kw in p for kw in _HAIR_PHRASE_KW)
+        if strip_clothing and is_clothing:
+            continue
+        if strip_hairstyle and any(kw in p for kw in _HAIRSTYLE_KW):
+            continue
+        if strip_skin and any(kw in p for kw in _SKINTONE_LEAK_KW):
+            continue
+        if strip_expression and any(kw in p for kw in _EXPRESSION_KW):
+            continue
+        if decolor_all or (decolor_clothing and is_clothing) or (decolor_hair and is_hair):
+            p = _decolor_phrase(p)
+            if not p:
+                continue
+        result.append(p)
     return "，".join(result)
 
 
@@ -266,37 +291,30 @@ def _visual_extract_prompt(n: int) -> str:
         "【線稿警告】這可能是未上色的鉛筆稿／線稿，且常帶單色（如粉紅色）背景。"
         "規則一：完全忽略背景顏色——粉紅色或任何單色背景，絕不可當成髮色或服裝顏色。"
         "規則二：若畫面只有線條、沒有實際填色，請直接省略顏色、不要寫出任何顏色詞，也不要寫「線稿未上色」這類字樣，"
-        "只描述髮型長度與形狀、服裝款式與材質、明顯特徵。嚴禁臆測顏色。只觀察「角色線條內」的特徵。"
+        "只描述髮型長度與形狀、逐件服裝的款式、姿勢、表情與明顯特徵。嚴禁臆測顏色。只觀察「角色線條內」的特徵。"
     )
     if n == 1:
         return (
             f"{ignore_bg}\n"
-            "請仔細觀察這張角色參考圖，描述以下視覺特徵：\n"
-            "① 髮色與髮型（顏色、長度、形狀，請根據角色本身的髮色判斷）"
-            "② 眼睛顏色"
-            "③ 膚色"
-            "④ 服裝主要顏色與風格（僅描述角色穿著的部分，無視背景）"
-            "⑤ 明顯特殊特徵（獸耳、印記、武器等）\n"
-            "格式：逗號分隔的中文短語，不加標號，不寫句子，控制在70字以內。"
+            "請仔細觀察這張角色參考圖，描述以下視覺特徵（僅描述角色本身，無視背景）：\n"
+            f"{_FEATURE_ITEMS}\n"
+            f"格式：逗號分隔的中文短語，不加標號，不寫句子，控制在{_FEATURE_CHARS_SINGLE}字以內。"
         )
     return (
         f"{ignore_bg}\n"
         f"你收到了 {n} 張同一角色的不同參考圖。"
         "請綜合比較所有圖片，找出在多張圖中一致出現的視覺特徵：\n"
-        "① 髮色與髮型"
-        "② 眼睛顏色"
-        "③ 膚色"
-        "④ 服裝主要顏色與風格"
-        "⑤ 各圖均出現的特殊特徵\n"
+        f"{_FEATURE_ITEMS_MULTI}\n"
         "以共同特徵為主，忽略只在單張圖出現的細節。"
-        "格式：逗號分隔的中文短語，不加標號，不寫句子，控制在90字以內。"
+        f"格式：逗號分隔的中文短語，不加標號，不寫句子，控制在{_FEATURE_CHARS_MULTI}字以內。"
     )
 
 # [CN-104] vision 快取以 image hash+模式+模型為 key，持久化至 data/vision_cache.json；錯誤結果不快取
 _VISION_CACHE_MAX = 32
 
 # [CN-105] 凡動到 coverage 判定或 vision prompt 就 bump 版本號，否則舊誤判結果被鎖死命中
-_VISION_FLOW_VERSION = "v4-2026-07-14"  # T1A：加入像素反向升級（fullness-check），改動 coverage 決策鏈 → 清舊快取重判
+_VISION_FLOW_VERSION = "v5-2026-09-24"  # [CN-116] SYNC-008：特徵題改逐件服裝＋姿勢＋表情 → 清舊快取重抽
+# 前一版："v4-2026-07-14"（T1A：加入像素反向升級 fullness-check）
 
 
 def _load_vision_cache() -> dict[str, tuple[str, str]]:
@@ -364,7 +382,7 @@ async def _vision_extract_cached(
             _oc.analyze_multi_images_bytes,
             valid_images, _visual_extract_prompt(len(valid_images)),
             model=state.get_vision_model(),
-            options={"num_predict": 160, "temperature": 0.1},
+            options={"num_predict": 320, "temperature": 0.1},  # [CN-116] 字數上限放寬，160 會截斷
             # 2026-07-07 P0：同上，呼叫完即退 VRAM
             keep_alive=0,
         )

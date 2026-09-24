@@ -43,6 +43,7 @@ doc/                    daily dev logs · planning docs
 
 ## Quick Mechanics
 - Art style = art_styles DB (LoRA+tags); `.env` PERSONAL_STYLE_* hardcodes personal style tags (applied only when the character style has empty extra_tags)
+- Per-family personal tags (SYNC-007 track P, CN-115): `.env` `PERSONAL_STYLE_EXTRA_<FAMILY>` / `PERSONAL_NEGATIVE_EXTRA_<FAMILY>` (FAMILY = PromptStyle upper, e.g. ANIMA / ILLUSTRIOUS) are APPENDED after the resolved style segment / negative; `.env` is not in git
 - Global checkpoint/workflow/LoRA/model switches live in core/state (runtime only, restart → .env)
 - Generation: sync `/art/generate` + async `/art/generate-async` (job+polling); params recorded in generation_history
 
