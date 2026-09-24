@@ -1,7 +1,4 @@
-"""插圖 CRUD + 檔案存取。
-
-插圖可用 linked_chapter_id 綁定章節，匯出時附於該章節末（見 services/export_service.py）。
-"""
+"""插圖 CRUD + 檔案存取 [FD-020]"""
 import shutil
 import uuid
 from pathlib import Path

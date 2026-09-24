@@ -1,5 +1,4 @@
-// Craftflow 角色詳情 View（2026-06-13 A2 增量3b：自 CharacterTab.jsx 抽出，零行為變更）
-// 含 DEFAULT_TAB_NAMES + gen-prefs helper + _initVariant + CharacterDetailView
+// 角色詳情 View：DEFAULT_TAB_NAMES、gen-prefs helper、_initVariant、CharacterDetailView
 
 import { useState, useEffect, useRef } from 'react'
 import { request, apiDelete, apiUrl } from '../api/client'
@@ -60,7 +59,7 @@ function _initVariant(v = {}, charId = null, slot = null) {
     summarizing: false, uploadingConcept: false,
     deletingConceptIdx: null, deletingAiIdx: null,
     lastDebugPrompt: null, lastRawDesc: null, lastLlmInput: null, lastFlatDraft: null, lastTimings: null, lastAiPromptCompiled: null, lastIpaUsed: null, showDebugPrompt: false,
-    // A3 P0-1/P0-2/P0-5：變體版同主角色一樣需要 seed 欄位（可重現實驗台）。
+    // 變體同主角色，需要 seed 欄位
     seed: -1, lastSeed: null, reusePrompt: false,
   }
 }
@@ -68,14 +67,11 @@ function _initVariant(v = {}, charId = null, slot = null) {
 export function CharacterDetailView({ character: initChar, project, allFactions, onBack, onDeleted, onAddHistory, onSendToGenerate, capability = { ipa_supported: true, cn_supported: true } }) {
   const ipaSupported = capability.ipa_supported
   const cnSupported  = capability.cn_supported
-  // D'（2026-07-25）能力閘控可視化：
-  //   cnFallback = 家族不支援 CN 但有替代路徑（Anima → 'img2img'）。
-  //   cnUsable   = 控制項是否可操作 —— 有替代路徑時仍要能勾選，否則送出 use_controlnet=0，
-  //                後端的 cn_fallback 分支永遠進不去（替代方案等於死代碼）。
+  // cnFallback：家族不支援 CN 時的替代路徑（lllite／img2img）。
+  // cnUsable：有替代路徑時控制項仍須可勾選，否則後端 cn_fallback 永遠收不到 use_controlnet
   const cnFallback = capability.cn_fallback || null
   const cnUsable   = cnSupported || !!cnFallback
-  // 2026-08-12：cn_fallback 由單值改為候選鏈的解析結果，多了 'lllite'。
-  // LLLite 是**真條件注入**（機制等價 SDXL ControlNet），標籤不該再說「不支援」。
+  // LLLite 是真條件注入（等價 ControlNet），標籤不顯示「不支援」
   const cnLabel    = cnSupported ? 'ControlNet'
     : cnFallback === 'lllite' ? 'ControlNet (LLLite)'
       : '構圖引導 (img2img)'
@@ -164,11 +160,9 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [lastCoverage, setLastCoverage] = useState(null)
   const [lightboxSrc, setLightboxSrc] = useState(null)
   const [lastTimings, setLastTimings] = useState(null)
-  // A3 P0-1/P0-2/P0-5（2026-08-22）：可重現實驗台——seed=-1 維持隨機（零回歸）；
-  // lastSeed 記本次實際用的 seed，供「沿用上次 seed」按鈕與複製使用。
+  // seed=-1＝隨機；lastSeed＝本次實際 seed，供「沿用上次 seed」與複製
   const [seed, setSeed] = useState(-1)
   const [lastSeed, setLastSeed] = useState(null)
-  // A3 P0-3：前端貫通——只加後端參數不接 UI 會變死代碼（D4 兩層閘控教訓）。
   const [reusePrompt, setReusePrompt] = useState(false)
 
   // ── Tab state ──────────────────────────────────────────────────────────
@@ -330,8 +324,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
       const blob = await resp.blob()
       const url = URL.createObjectURL(blob)
-      // 2026-07-26：X-History-Id 一路帶到「儲存此圖」，後端才能把 generation_history
-      // 綁到成品檔名，之後點已存的圖就能查回當初的 prompt/參數/耗時。
+      // X-History-Id 帶到「儲存此圖」，後端據此把生成資訊綁到成品檔名
       const historyId = resp.headers.get('X-History-Id') || null
       setPendingQueue([{ blob, url, label: '全身人設圖', historyId }])
       onAddHistory?.({
@@ -612,8 +605,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
             style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: sendingToGen ? 'wait' : 'pointer', fontWeight: 600, opacity: sendingToGen ? 0.6 : 1 }}
             disabled={sendingToGen}
             onClick={async () => {
-              // 2026-09-24：改帶後端即時編譯的英文識別段（不含名字、不取歷史）；
-              // Ollama 失敗時後端回 fallback＝不含名字的中文，放回中文描述欄。
+              // 後端即時編譯英文識別段；Ollama 失敗時回中文 fallback，放回中文描述欄
               setSendingToGen(true); setError(null)
               try {
                 const d = await (await request(`/characters/${char.id}/identity-prompt`)).json()
@@ -770,9 +762,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                 <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{cnWeight.toFixed(2)}</span>
               </div>
             )}
-            {/* A3 P0-2（2026-08-22）：可重現實驗台——seed 手動輸入 + 沿用上次 seed。
-                seed=-1 維持現行隨機（零回歸）；填 >=0 的值＋「沿用 prompt」（見 debug 區）
-                連按兩次生成應輸出一致，用來驗證調整是否真的有效，而非隨機波動的錯覺。 */}
+            {/* seed：-1＝隨機；固定 seed＋「沿用 prompt」可重現同一張圖 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Seed</span>
               <input type="number" value={seed}
@@ -1165,7 +1155,6 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                           {lastCoverage}
                         </div>
                       )}
-                      {/* A3 P0-5：seed 一鍵複製，供沿用/回報問題時貼給他人重現 */}
                       {lastSeed != null && (
                         <div title="點擊複製 seed" onClick={() => navigator.clipboard?.writeText(lastSeed)}
                           style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace', cursor: 'pointer',
@@ -1323,7 +1312,6 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                 <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.cnWeight ?? 0.85).toFixed(2)}</span>
               </div>
             )}
-            {/* A3 P0-2：變體版 seed 欄位（同主角色，見上方註解） */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Seed</span>
               <input type="number" value={vState.seed ?? -1}
@@ -1567,7 +1555,6 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                           {vState.lastCoverage}
                         </div>
                       )}
-                      {/* A3 P0-5：seed 一鍵複製 */}
                       {vState.lastSeed != null && (
                         <div title="點擊複製 seed" onClick={() => navigator.clipboard?.writeText(vState.lastSeed)}
                           style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace', cursor: 'pointer',

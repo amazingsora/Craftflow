@@ -1,8 +1,4 @@
-"""LLM 回應中的 JSON 抽取（容忍 ```json 圍欄與前後雜訊）。
-
-2026-09-24 重複碼整合：character_service._parse_json_object 與 consistency_service._parse_json
-逐字相同（97%），只差期望型別 dict / list。
-"""
+"""LLM 回應中的 JSON 抽取（容忍 ```json 圍欄與前後雜訊）。"""
 from __future__ import annotations
 
 import json

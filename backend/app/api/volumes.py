@@ -1,7 +1,4 @@
-"""卷（Volume）CRUD + 排序。
-
-卷排序與卷內章節排序都在這裡（PATCH .../reorder）；章節本身的 CRUD 在 api/chapters.py。
-"""
+"""卷（Volume）CRUD + 排序 [FD-026]"""
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status

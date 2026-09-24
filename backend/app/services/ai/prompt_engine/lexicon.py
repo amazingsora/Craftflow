@@ -31,10 +31,7 @@ _COLOR_ALTS = "|".join(re.escape(k) for k in sorted(COLOR_MAP, key=len, reverse=
 
 # ── Extraction Patterns ────────────────────────────────────────────────────────
 
-# 髮 covers: 頭髮 長髮 短髮 捲髮 直髮 金髮 銀髮 etc.
-# Group 1: leading modifier (長/短)
-# Group 2: color
-# Group 3: hair keyword (頭髮/髮/...) which might also contain長/短
+# Groups: 1＝前置長短修飾、2＝顏色、3＝髮字關鍵詞（頭髮／髮…）
 HAIR_RE = re.compile(rf"([長短])?({_COLOR_ALTS})?(長髮|短髮|頭髮|髮|毛髮|捲髮|直髮)")
 EYE_RE  = re.compile(rf"({_COLOR_ALTS})(眼睛|瞳孔|眼|瞳)")
 
@@ -84,9 +81,7 @@ def _load_personal_term_map() -> dict[str, str]:
 
 
 def personal_term_map_tags() -> list[str]:
-    """A3 P3-1（2026-08-22）：回傳個人詞庫所有英文 tag 值（逗號展開、去空白），
-    供 compiler._recall_dropped_outfit_terms() 判斷「有塞進 LLM 輸入、輸出卻漏掉」時
-    要召回哪些 tag。與 apply_personal_term_map() 共用同一份詞庫，不重複維護。"""
+    """個人詞庫所有英文 tag 值（逗號展開），供 compiler 召回 LLM 漏掉的詞。"""
     terms = _load_personal_term_map()
     tags: list[str] = []
     for v in terms.values():
@@ -118,18 +113,8 @@ def _fold_modifiers(match: re.Match, value: str) -> str:
 
 
 def apply_personal_term_map(text: str) -> str:
-    """套用個人詞庫：中文原文子字串 → 英文 tag。由長到短匹配（比照 _TRAIT_ALTS 慣例），
-    避免短詞（如「大小姐」）先吃掉長詞（如「大小姐衣裝」）的子字串，導致長詞規則失效。
-    未登錄詞彙或空詞庫時原樣回傳（零回歸）。
-
-    P3.1（2026-07-12）：替換值前後補逗號分隔（", tag, "），杜絕相鄰兩詞替換後英文黏字。
-    根因：「黑色長窄裙長度蓋過小腿」兩次替換後成 "黑色長pencil skirtlong skirt"，
-    skirtlong 黏字使 LLM 只認出前者、丟棄 long skirt（裙長變短）。補分隔符後兩個
-    英文 tag 各自獨立（", pencil skirt, , long skirt, "），交由 _sanitize_to_list 收整。
-
-    [CN-117]（2026-09-24）：P3.1 的逗號把詞條前的修飾語切成孤兒片語
-    （"黑色長, pencil skirt"），Anima 範例「黑色長髮 → black hair, long hair」讓 LLM
-    把「黑色長」補成髮色。改為連同緊貼的顏色＋長短一起替換 → ", black long pencil skirt, "。"""
+    """套用個人詞庫：中文子字串 → 英文 tag，由長到短匹配（避免短詞吃掉長詞）。
+    替換值前後補逗號防黏字；[CN-117] 緊貼的顏色＋長短修飾一併併入同一 tag。"""
     terms = _load_personal_term_map()
     if not terms or not text:
         return text

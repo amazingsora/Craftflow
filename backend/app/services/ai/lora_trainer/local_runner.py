@@ -1,7 +1,4 @@
-"""
-LocalSubprocessRunner — calls kohya_ss train_network.py via subprocess.
-Used when the backend runs directly on the Windows host.
-"""
+"""LocalSubprocessRunner — calls kohya_ss train_network.py via subprocess [FD-069]"""
 from __future__ import annotations
 
 import asyncio

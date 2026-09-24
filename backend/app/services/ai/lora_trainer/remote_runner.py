@@ -1,12 +1,4 @@
-"""
-RemoteAgentRunner — delegates training to a small HTTP agent on the Windows host.
-Used when the backend runs inside Docker (host.docker.internal).
-
-The agent endpoint (host_agent.py, not yet implemented) must:
-  POST /train  { config_path, output_dir, job_id }
-  GET  /progress/{job_id}  → SSE stream of TrainingProgress JSON
-  POST /stop/{job_id}
-"""
+"""RemoteAgentRunner — delegates training to a small HTTP agent on the Windows host [FD-070]"""
 from __future__ import annotations
 
 import json

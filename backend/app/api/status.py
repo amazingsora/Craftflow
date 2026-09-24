@@ -1,9 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""
-GET /api/v1/status  — overall system health check
-GET /api/v1/status/ollama   — Ollama availability + installed models
-GET /api/v1/status/comfyui  — ComfyUI availability
-"""
+"""GET /api/v1/status  — overall system health check [FD-024]"""
 from __future__ import annotations
 
 import threading

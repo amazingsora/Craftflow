@@ -1,10 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""角色人設圖 / 變體人設圖生成主流程。
-
-自 api/art_generate.py 下沉(2026-06-13 A1 Step 3,逐字搬移零邏輯變更)。
-兩主流程相似度 ~65% 但 IPA/CN 權重規則有分歧——本步只搬不去重(P7 另開)。
-_get_variants/_slot_index 於 2026-06-13(項2)抽至 services/ai/variant_helpers，本模組與 api/characters 共同 import。
-"""
+"""角色人設圖 / 變體人設圖生成主流程。"""
 from __future__ import annotations
 
 import base64
@@ -35,7 +30,7 @@ from app.core import state
 from app.core.database import get_db
 from app.models.art_style import ArtStyle
 from app.models.character import Character
-from app.models.generation_history import GenerationHistory  # A3 P0-3：reuse_prompt 查詢用
+from app.models.generation_history import GenerationHistory
 from app.services import comfyui_client
 from app.services.ai.prompt_engine.content_guard import apply_content_guard
 from app.services.ai.prompt_engine import compile as compile_prompt
@@ -140,9 +135,7 @@ def _hex_to_sd_color(hex_color: str) -> str:
 
 
 def _effective_ksampler_steps(wf: dict, steps: Optional[int]) -> Optional[int]:
-    """R3（2026-07-12）：steps 為 None（家族 profile 選擇不覆寫 KSampler）時，回讀 wf
-    內 KSampler 節點的實際 steps（workflow JSON 內建值），供 generation_history 記錄
-    真實生效值，避免可重現性記錄失真。steps 有值時原樣回傳，不受影響（零回歸）。"""
+    """steps 為 None 時回讀 workflow 內 KSampler 的實際 steps，讓歷史記錄＝實跑值。"""
     if steps is not None:
         return steps
     # [CN-034] steps 在作者型 workflow 是節點參照，須往上游解析，否則 DB 記成 list、可重現性失真
@@ -157,11 +150,8 @@ def _effective_ksampler_steps(wf: dict, steps: Optional[int]) -> Optional[int]:
 
 
 def _effective_ksampler_cfg(wf: dict) -> Optional[float]:
-    """A3 P0-4：cfg 一律由 workflow JSON 節點決定（gen_profile.py 明文「cfg/sampler/
-    scheduler 寫在 workflow JSON、後端不覆寫」），故無 steps 那種「入參覆寫優先」語義，
-    直接回讀實際生效值。用法與 `_effective_ksampler_steps` 相同的節點參照解析規則
-    （見 D1：node 24 分送 KSampler 與 metadata 的作者型 workflow，須經 `_get_node_input`
-    解參照，不可直讀字面值）。"""
+    """回讀 workflow 實際生效的 cfg（cfg 由 workflow 決定、後端不覆寫）。
+    須經 `_get_node_input` 解節點參照，作者型 workflow 的 cfg 常來自上游參數節點。"""
     ks_id = next(
         (nid for nid, n in wf.items()
          if isinstance(n, dict) and n.get("class_type") == "KSampler"),
@@ -172,7 +162,6 @@ def _effective_ksampler_cfg(wf: dict) -> Optional[float]:
     return _get_node_input(wf, ks_id, "cfg")
 
 
-# coverage→CN 上限/end_percent 已移至 gen_profile.GEN_PROFILE（R3 2026-06-20，per-family 單一真相）。
 
 
 def _llm_input_header(raw_desc: str, reused: bool) -> str:
@@ -186,13 +175,8 @@ def _llm_input_header(raw_desc: str, reused: bool) -> str:
 
 def _coverage_badge(coverage: str, user_w: float, eff_w: float, cn_on: bool,
                     original: str | None = None, pre_ref: bool = False) -> str:
-    """S10（2026-07-13）：debug 用 coverage/CN 標註。半身圖故障連三輪歸因靠猜，
-    把「coverage 判定 + CN 使用者值→實際夾制值」可視化，一眼看出是否誤判/夾制生效。
-    例：`coverage: bust (CN 0.85→0.50)`、`coverage: full (CN 0.85)`、`coverage: full (CN off)`。
-
-    T0-1（2026-07-14）：`coverage` 是「最終」值（pre_ref 外擴或 fullness 升級後可能已成 full），
-    附掛 `original`（改寫前原判）＋ `pre_ref`（是否走過外擴）以區分：
-    `full (CN 0.85) [原判 bust, pre_ref 外擴]`（已外擴）vs `full (CN 0.85)`（原判即 full、未動）。"""
+    """debug 標註：coverage 最終值＋CN 使用者值→實際夾制值，並附原判與是否外擴。
+    例：`bust (CN 0.85→0.50)`、`full (CN 0.85) [原判 bust, pre_ref 外擴]`。"""
     if not cn_on:
         base = f"coverage: {coverage} (CN off)"
     elif abs(user_w - eff_w) > 1e-3:
@@ -226,11 +210,7 @@ def _create_inpaint_canvas_and_mask(
     target_h: int,
     coverage: str,
 ) -> tuple[bytes, bytes, int]:
-    """
-    Place sketch in upper portion of a full-body canvas and generate inpaint mask.
-    Returns (canvas_png, mask_png, expand_px) — mask white=inpaint lower body, black=preserve
-    sketch；expand_px=下半實際擴圖像素高(coverage=full→fill=1.0 時為 0，供呼叫端 0px 防呆)。
-    """
+    """Place sketch in upper portion of a full-body canvas and generate inpaint mask [FD-040]"""
     fill = _BODY_FILL_RATIO.get(coverage, 0.72)
     top_offset_ratio = _BODY_TOP_OFFSET.get(coverage, 0.02)
 
@@ -272,7 +252,6 @@ def _create_inpaint_canvas_and_mask(
     return canvas_out.getvalue(), mask_out.getvalue(), expand_px
 
 
-# _inject_inpaint_nodes / _inject_img2img_node 已移除（死代碼，無呼叫端；2026-06-20 R1）。
 
 
 _CANVAS_EXPAND_WF = "canvas_expand_flux.json"
@@ -283,14 +262,11 @@ _MIN_EXPAND_PX = 16
 # 方案3（pre-ref 外擴）為 v36 變體半身→全身正式路線（06-19 定版），預設啟用。
 # 設 CRAFTFLOW_PRE_REF_EXPAND=0 可關閉、退回方案1（CN 夾上限單段 SDXL，較快但貼合較鬆）。
 _PRE_REF_ENABLED = os.getenv("CRAFTFLOW_PRE_REF_EXPAND", "1").strip() == "1"
-# T1A（2026-07-14）：像素反向升級防呆（LLM 誤判 partial/bust 但草圖實為完整全身 → 升級 full、
-# 跳過外擴，避免幽靈下半身）。設 CRAFTFLOW_FULLNESS_CHECK=0 可關閉、退回純 LLM 判定。
+# 草圖幾何實為完整全身時升級 full、跳過外擴（防幽靈下半身）；=0 關閉。
 _FULLNESS_CHECK_ENABLED = os.getenv("CRAFTFLOW_FULLNESS_CHECK", "1").strip() == "1"
-# T3A（2026-07-15）：外擴輸出斷裂防線（幽靈下半身最後攔截）。外擴成功後掃描輸出，偵測到
-# 主體內純背景空帶 → 丟棄外擴、回退方案1（縮圖+夾CN）。設 CRAFTFLOW_EXPAND_BREAK_GUARD=0 可關。
+# 外擴輸出出現主體內背景空帶 → 丟棄外擴、回退縮圖＋夾 CN；=0 關閉。
 _EXPAND_BREAK_GUARD_ENABLED = os.getenv("CRAFTFLOW_EXPAND_BREAK_GUARD", "1").strip() == "1"
-# T0-3（2026-07-14）：CRAFTFLOW_EXPAND_DEBUG=1 時把外擴 canvas/mask/輸出三圖落地 data/debug/，
-# 檔名含 coverage 與 seed，供全身外擴誤判的失敗案例直接檢視 mask 幾何。
+# =1 時把外擴 canvas/mask/輸出落地 data/debug/（檔名含 coverage 與 seed）。
 _EXPAND_DEBUG_DIR = CUSTOM_WORKFLOWS_DIR.parent / "debug"
 
 
@@ -317,12 +293,7 @@ async def _run_canvas_expand_flux(
     height: int,
     seed: int,
 ) -> bytes:
-    """
-    Canvas expand using Flux 2 Dev inpainting:
-    - Sketch placed in the upper portion of the canvas
-    - Lower body area (mask=white) inpainted by Flux 2
-    - Returns full-body image bytes
-    """
+    """Canvas expand using Flux 2 Dev inpainting [FD-041]"""
     canvas_bytes, mask_bytes, expand_px = _create_inpaint_canvas_and_mask(
         sketch_bytes, width, height, coverage
     )
@@ -368,12 +339,7 @@ async def _run_canvas_expand_sdxl(
     seed: int,
     ckpt_name: str | None,
 ) -> bytes:
-    """方案3：用 SDXL inpaint 外擴（取代 Flux,免載大模型）。
-
-    概念圖置於畫布上半、下半留白為 mask → VAEEncodeForInpaint + denoise=1 補下半身。
-    checkpoint 設為主生成同一顆 → 不換模型。用主 seed（非固定）→ 重生可換姿勢、不鎖死。
-    外擴 prompt 強制 solo/full body/simple background 並抑制 reference-sheet，避免破圖/inset。
-    """
+    """方案3：用 SDXL inpaint 外擴（取代 Flux,免載大模型） [FD-042]"""
     # 外擴專用 prompt：聚焦單人全身、簡單背景；抑制 reference sheet/多視圖/inset（破圖主因）
     expand_pos = (
         "solo, full body, standing, straight legs, normal body proportions, "
@@ -442,17 +408,11 @@ class _DesignInputs:
     height: Optional[int]
 
 
-# [CN-035] 全身 suffix 拿掉 design/reference sheet：那是 2026-07-26 出雙人的根因，補 solo 擋不住
+# [CN-035] 全身 suffix 不含 design/reference sheet（會出雙人）
 def _build_fullbody_suffix(bg_tag: str) -> str:
     """組出全身人設圖的固定 suffix（單張全身插畫、單人、簡潔背景）。"""
     return (
-        # [CN-097] SYNC-005 軌 S（2026-09-21）：拔掉 "character illustration" 與
-        # "full body portrait" 兩個泛詞。① 對以 danbooru 標籤為語料的動漫模型，泛用
-        # 描述是無效稀釋（Gemini §2.3-9）；② `full body portrait` 裡的 "portrait"
-        # 與 CN-070「移除 close-up/portrait：壓低臉部佔比」是同一個顧慮 —— CN-070
-        # 當時只改了負向（image_ops.py:27），正向這裡一直殘留著。
-        # ⚠️ "solo, single character" 不得一併拔除：那是 CN-035 擋出雙人的防線。
-        # 回滾＝改回 `", character illustration, full body portrait, full body, front view"`。
+        # [CN-097] 不放泛用描述詞與 portrait；solo, single character 是 CN-035 防雙人，不可拔
         ", full body, front view"
         f", {_FULLBODY_POS_TAGS}"
         ", solo, single character"
@@ -462,28 +422,13 @@ def _build_fullbody_suffix(bg_tag: str) -> str:
 
 
 def _wf_checkpoint(wf: dict) -> str:
-    """實際生效的 checkpoint：**工作流內嵌值優先**，讀不到才退回全域設定。
-
-    SYNC-001（2026-09-15，Codex §2.2 B 案）：custom workflow 的模型內嵌於 JSON
-    （`_load_workflow` 只對 system workflow 套全域覆寫），所以內嵌值才是實跑值。
-    本檔原本兩處直接把 `state.get_checkpoint()` 餵給 `resolve_capability()`，
-    當全域 checkpoint 與工作流內嵌模型不同家族時（例：全域 fabricatedXL＋跑 Anima
-    工作流，或反向），family 會判錯 → 注入錯家族的 IPA/CN 模型，或漏掉
-    Anima 的 LLLite/img2img fallback（`cn_fallback` 整段跳過）。
-
-    這正是 `capability.py:50-55` 已寫明的同一個坑（AC-2' 把 checkpoint 解析集中化），
-    `api/settings.py:149` 與 `api/art_generate.py:87` 早已改用內嵌優先，角色生成端漏改。
-    與 `gen_profile.resolve_profile_for_workflow()` 的解析來源一致後，同一張圖的
-    family 判定不再有兩個出處。
-
-    註：此處收 wf dict（記憶體中實際要送出的那份，已套用 system workflow 的全域覆寫），
-    而非工作流檔名——與 params["checkpoint"] 的記錄來源同源，確保「判定值＝記錄值＝實跑值」。
-    """
+    """實際生效的 checkpoint：workflow 內嵌值優先，讀不到才退回全域設定。
+    收實際要送出的 wf dict，確保家族判定值＝記錄值＝實跑值。"""
     return extract_checkpoint_from_wf(wf) or state.get_checkpoint()
 
 
-# [CN-037] 畫風 tag／權重優先序：art_style DB > yml style_extra > .env > 無；未登錄 workflow 零回歸
-# [CN-115] 其後再疊加 .env 分家族個人標籤（PERSONAL_STYLE_EXTRA_<家族>），不論前段來源；權重／位置沿用前段規則
+# [CN-037] 畫風 tag／權重優先序：art_style DB > yml style_extra > .env
+# [CN-115] 其後再疊加 .env 分家族個人標籤，權重／位置沿用前段規則
 def _resolve_style_extra(art_style: Optional[ArtStyle], workflow: str) -> tuple[str, float]:
     profile_extra, profile_weight = _workflow_style_extra(workflow)
     style_extra = _extra_tags(art_style)
@@ -525,10 +470,10 @@ async def _generate_design_core(
     use_pixel_override: bool,     # 角色版 True：coverage=full 時像素二次確認
     log_label: str,
     record_endpoint: str,
-    seed: int = -1,                # A3 P0-1：-1=維持現行隨機（零回歸），>=0 沿用指定 seed（可重現實驗台）
-    reuse_prompt: bool = False,    # A3 P0-3：True=沿用上次 generation_history 的 prompt，略過重新編譯
+    seed: int = -1,                # -1＝隨機；>=0 固定 seed（可重現）
+    reuse_prompt: bool = False,    # True＝沿用上次 generation_history 的 prompt，不重新編譯
 ):
-    """角色人設圖 / 變體人設圖共用核心（2026-06-13 項3 去重；分歧以策略參數保留，零行為變更）。"""
+    """角色人設圖 / 變體人設圖共用核心；兩者差異以參數表達。"""
     if expression and expression not in _EXPRESSION_MAP:
         raise HTTPException(status_code=400, detail=f"Unknown expression. Valid: {list(_EXPRESSION_MAP)}")
 
@@ -558,16 +503,16 @@ async def _generate_design_core(
     all_flat = True  # no images → treat as flat, use core_traits for anchors
     _ipa_ref_bytes: bytes | None = None
     _cn_ref_bytes: bytes | None = None
-    _i2i_ref_bytes: bytes | None = None   # D'-2：CN 替代（img2img）參考圖
+    _i2i_ref_bytes: bytes | None = None   # CN 替代路徑（img2img）的參考圖
     # [CN-039] 外擴輸入一律用 _orig_ref_bytes：_ipa_ref_bytes 的語義是 IPA 參考圖，不是「有無概念圖」
     _orig_ref_bytes: bytes | None = None
     _cn_coverage: str = "full"
-    _coverage_original: str = "full"   # T0-1：pre_ref/fullness 改寫前的原始判定（badge 觀測用）
+    _coverage_original: str = "full"   # 外擴／升級前的原始判定（badge 用）
     _coverage_end_pct: float | None = None
     _cn_weight_user = cn_weight        # 方案3：保留使用者原始 CN 強度（夾制前）
     _pre_ref = False                   # 方案3：是否要在 SDXL 前 Flux 外擴概念圖成全身 ref
     _pre_ref_done = False              # 方案3：pre-ref 外擴成功（成功則跳過 post 外擴、還原 CN）
-    _expand_engine: str | None = None  # T0-2：實際外擴引擎檔名（回傳 timings.models 供 UI 顯示，取代 hardcode）
+    _expand_engine: str | None = None  # 實際外擴引擎檔名（回傳 timings.models 供 UI 顯示）
 
     if inp.concept_imgs:
         valid_images: list[bytes] = []
@@ -581,8 +526,8 @@ async def _generate_design_core(
         if valid_images:
             all_flat = all(_is_flat_color_draft(img) for img in valid_images)
             logger.info("[prompt-log] %s concept images flat_draft=%s (%d imgs)", log_label, all_flat, len(valid_images))
-            _orig_ref_bytes = valid_images[0]  # A3 P2-2：不受 IPA/CN 閘控，供方案3 外擴判斷「有無概念圖」
-            # [CN-040] G0 能力閘控：非 SDXL 家族不取 IPA/CN 參考圖，避免跨架構注入
+            _orig_ref_bytes = valid_images[0]  # 不受 IPA/CN 閘控，供外擴判斷有無概念圖
+            # [CN-040] 非 SDXL 家族不取 IPA/CN 參考圖，避免跨架構注入
             if use_ipa and _profile.ipa_enabled:
                 _ipa_ref_bytes = valid_images[0]
             if use_controlnet and _profile.cn_enabled:
@@ -610,10 +555,9 @@ async def _generate_design_core(
                     if pixel_override:
                         logger.info("[%s] pixel-check override: %s → %s", log_label, _cn_coverage, pixel_override)
                         _cn_coverage = pixel_override
-                # T0-1：記錄 pre_ref/fullness 改寫前的原始判定，供 badge 區分「已外擴／升級」vs「未動」
+                # 記錄外擴／升級前的原始判定，供 badge 區分
                 _coverage_original = _cn_coverage
-                # T1A（2026-07-14）：反向升級。LLM 判 partial/bust 但草圖幾何實為完整站立全身
-                # → 升級 full、跳過外擴（否則在完整身體下方再 inpaint 一套腿＝幽靈下半身／比例拉長）。
+                # 草圖幾何實為完整全身 → 升級 full、跳過外擴，避免在身體下方再補一套腿
                 if (_FULLNESS_CHECK_ENABLED
                         and _cn_coverage in ("partial", "bust")
                         and _pixel_fullness_check(valid_images[0])):
@@ -654,10 +598,8 @@ async def _generate_design_core(
                 has_outfit = bool(use_outfit and inp.outfit)
                 has_hair_in_traits = bool(inp.core_traits and
                     any(kw in inp.core_traits for kw in ("髮", "頭髮", "hair")))
-                # [CN-045] vision 描述剝除服裝/髮型/膚色洩漏詞，避免蓋掉角色設定
-                # [CN-116] SYNC-008 改為「顏色歸設定欄位、結構歸視覺」：欄位有值時只拿掉視覺的
-                # 顏色詞，保留衣物件數／髮型形狀／姿勢／表情；線稿（all_flat）的顏色一律不採信。
-                # 髮型只在外觀欄寫了具體髮型（_HAIRSTYLE_KW）時才整句剝，只寫髮色不算。
+                # [CN-045][CN-116] 顏色歸設定欄位、結構歸視覺：欄位有值時只剝視覺的顏色詞；
+                # 線稿顏色一律不採信；外觀欄寫了具體髮型才整句剝髮型
                 has_hairstyle_in_traits = bool(inp.core_traits and
                     any(kw in inp.core_traits for kw in _HAIRSTYLE_KW))
                 visual_for_llm = _filter_visual_for_llm(
@@ -698,7 +640,7 @@ async def _generate_design_core(
     # ── Compile description ────────────────────────────────────────────────
     art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
     style = _resolve_style(art_style, active_wf)
-    # P1：art_style > workflow 級 prompt_profiles.yml > checkpoint family。
+    # 優先序：art_style > prompt_profiles.yml > checkpoint family
     _overrides = _resolve_prompt_overrides(art_style, active_wf)
 
     # [CN-046] reuse_prompt 整段跳過重編譯（非只跳 LLM）：否則已組裝字串會被二次組裝、前後綴重貼
@@ -734,7 +676,7 @@ async def _generate_design_core(
             steps = _profile.steps
     else:
         t0 = time.perf_counter()
-        # P4：debug prompt 來源標註（profile: <wf> / family fallback），僅供前端 DEBUG 顯示。
+        # debug prompt 來源標註，僅供前端 DEBUG 顯示
         _profile_source = _prompt_profile_source(art_style, active_wf)
         # [CN-047] 只有真要呼叫 Ollama 才 request_focus：搶一次 focus＝ComfyUI 卸掉約 11GB 再重載
         _compile_kwargs = dict(
@@ -754,8 +696,7 @@ async def _generate_design_core(
         _ai_prompt_compiled = ""
         if use_ai_prompt and inp.ai_prompt and inp.ai_prompt.strip():
             t0 = time.perf_counter()
-            # quality_prefix/suffix 只在主描述套一次，避免同一段 quality tag 被灌兩次
-            # （P1：workflow profile 的 quality_suffix 與既有 quality_prefix 同一防重複邏輯）。
+            # quality_prefix/suffix 只在主描述套一次，避免重複
             _ai_overrides = {**_overrides, "quality_prefix_override": "", "quality_suffix_override": ""}
             _ai_compile_kwargs = dict(
                 style=style, model=state.get_text_model(), **_ai_overrides,
@@ -808,8 +749,7 @@ async def _generate_design_core(
             ", male face, masculine features" if is_female else ""
         )
 
-        # P5-5：畫風 tag／權重優先序（art_style DB > workflow profile > .env > 無）見
-        # _resolve_style_extra()；未登錄 profile 時逐字等同改動前行為。
+        # 畫風 tag／權重優先序：art_style DB > workflow profile > .env（見 _resolve_style_extra）
         style_extra, _style_weight = _resolve_style_extra(art_style, active_wf)
         # [CN-048] style weight!=1.0 時畫風 tags 加權並前置到 identity，讓畫風由 prompt 承擔、CN 可降權
         style_front = ""
@@ -826,31 +766,28 @@ async def _generate_design_core(
 
         final_positive = gender_prefix + body_prefix + style_front + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
         final_positive = _dedup_tags(final_positive)  # 去框架/眼睛等重複,收稀釋
-        # E-2（2026-07-26）：剝除 LLM 自行吐出的多視圖/設定稿 tag（只作用於正向）。
+        # 剝除 LLM 自行吐出的多視圖／設定稿 tag（僅正向）
         final_positive = _strip_sheet_tags(final_positive)
-        # [CN-116] SYNC-008：家族 tag_order=subject_first（Anima 官方順序）→ quality/safety、主體、
-        # 畫風段、其餘。ComfyUI A4/A5（2026-09-24）驗證；illustrious 未設定＝零行為變更。
+        # [CN-116] tag_order=subject_first：quality/safety → 主體 → 畫風段 → 其餘
         if _workflow_tag_order(active_wf) == "subject_first":
             final_positive = _reorder_subject_first(
                 final_positive, _overrides.get("quality_prefix_override", ""), style_extra,
             )
 
         extra_neg = ("detailed background, complex background, scenery, landscape, buildings, environment"
-                     # 2026-06-21：抑制無端能量/火焰/光暈假影（不放 plain "glowing" 以免壓掉異色瞳/眼神光）
+                     # 抑制能量／火焰假影；不放 plain "glowing"，以免壓掉異色瞳與眼神光
                      ", energy aura, glowing aura, flames, fire, burning, embers, magic effect, spell effect"
                      ", particle effects, glowing hands, energy effect, smoke"
                      )
         if not is_expression:
             extra_neg = f"{extra_neg}, {_FULLBODY_NEG_TAGS}"
-            # E-1（2026-07-26）：多視圖抑制自 partial/bust 放寬到全 coverage —— 與正向端
-            # 改走單張全身插畫同批；只改正向不改負向，工作流內建 wildcard 仍可能帶回多視圖。
+            # 負向也要壓多視圖：工作流內建 wildcard 可能把多視圖帶回來
             extra_neg += ", multiple views, reference sheet, design sheet, multiple poses, chibi inset, inset image, sketch overlay"
         base_neg = negative
         # [CN-049] negative 優先序 art_style > workflow profile > PERSONAL_NEGATIVE > family 預設
         if PERSONAL_NEGATIVE_ENABLED and PERSONAL_NEGATIVE and not _overrides.get("negative_override"):
             base_neg = PERSONAL_NEGATIVE
-            # R4：negative_extra 為「補充」語義，須跨越 PERSONAL_NEGATIVE 取代仍生效。
-            # 非此分支時 base_neg 已是 compile() 的輸出（negative_extra 已在 compile 內附加），不重覆加。
+            # negative_extra 是補充語義，PERSONAL_NEGATIVE 取代後仍要附加（其他分支已由 compile 附加）
             _neg_extra = _overrides.get("negative_extra_override")
             if _neg_extra:
                 base_neg = f"{base_neg}, {_neg_extra}"
@@ -864,8 +801,7 @@ async def _generate_design_core(
     final_positive, final_negative = apply_content_guard(
         final_positive, final_negative, age=inp.age, layer="design", adult_negative=True)
 
-    # A3 P0-1：seed<0（含預設 -1）＝維持現行隨機行為；>=0 則沿用呼叫端指定值，
-    # 供「同 seed 連按兩次應輸出一致」的可重現實驗台驗收使用。
+    # seed<0＝隨機；>=0 沿用指定值（可重現）
     seed = random.randint(0, 2**31 - 1) if seed < 0 else seed
     _canvas_expand_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_WF).exists()
     _canvas_expand_sdxl_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_SDXL_WF).exists()
@@ -887,14 +823,13 @@ async def _generate_design_core(
         logger.info("[%s] 方案3 pre-ref 外擴（SDXL inpaint, ckpt=%s, coverage=%s → full, CN 還原 %.2f）",
                     log_label, _main_ckpt, _cn_coverage, _cn_weight_user)
         try:
-            # A3 P2-2：外擴輸入改用 _orig_ref_bytes（不受 IPA 閘控，Anima 一樣有概念圖）。
+            # 外擴用原始概念圖（不受 IPA 閘控）
             _expanded = await _run_canvas_expand_sdxl(
                 _orig_ref_bytes, _cn_coverage, final_positive, final_negative,
                 width, height, seed, _main_ckpt,
             )
             timings["canvas_expand"] = round(time.perf_counter() - t0_pre, 1)
-            # T3A：外擴輸出斷裂防線。偵測到幽靈下半身（主體內純背景空帶）→ 丟棄外擴、
-            # 保留方案1 基線（先前已設好的 _shrink_for_full_body ref + 夾制 CN），coverage 不還原 full。
+            # 外擴輸出偵測到主體內背景空帶 → 丟棄外擴，保留縮圖＋夾 CN 的基線
             if _EXPAND_BREAK_GUARD_ENABLED and _detect_body_break(_expanded):
                 logger.warning(
                     "[%s] 方案3 外擴輸出偵測到主體斷裂（幽靈下半身）→ 丟棄外擴、回退方案1（縮圖+夾CN）",
@@ -924,7 +859,7 @@ async def _generate_design_core(
     if (canvas_expand_mode == "pre"
             and not is_expression
             and _cn_coverage in ("partial", "bust")
-            and _orig_ref_bytes is not None  # A3 P2-2：同上，改用不受 IPA 閘控的原始概念圖
+            and _orig_ref_bytes is not None
             and _canvas_expand_available):
         t0 = time.perf_counter()
         logger.info("[%s] canvas-expand via Flux 2 (coverage=%s)", log_label, _cn_coverage)
@@ -994,10 +929,9 @@ async def _generate_design_core(
     need_ipa_inject = _ipa_ref_bytes is not None and not _wf_has_ipa(wf)
     need_cn_inject = _cn_ref_bytes is not None and not _wf_has_controlnet(wf)
     if need_ipa_inject or need_cn_inject:
-        # SYNC-001：checkpoint 以工作流內嵌值為準（見 _wf_checkpoint docstring）。
+        # checkpoint 以 workflow 內嵌值為準（見 _wf_checkpoint）
         _inject_models = resolve_capability(wf, _wf_checkpoint(wf))["models"]
-        # CN preprocessor：依 profile（illustrious=canny，復刻 V35 附件三品質）；
-        # pre-ref 外擴為彩色圖 → Canny 會抓雜訊 → 強制 AnimeLineArt。
+        # CN preprocessor 依 profile；外擴產物是彩色圖（Canny 會抓雜訊）→ 強制 AnimeLineArt
         if _pre_ref_done or _profile.cn_preprocessor != "canny":
             _cn_pp = {"type": "AnimeLineArtPreprocessor", "resolution": _profile.cn_resolution}
         else:
@@ -1051,8 +985,7 @@ async def _generate_design_core(
             _set_node_input(wf, _nid, "height", height)
         elif ct == "KSampler":
             _set_node_input(wf, _nid, "seed", seed)
-            # R3：steps=None（illustrious 家族現況）→ 不覆寫，沿用 workflow JSON 內建值
-            # （如 V37 官方 28 步）；有值的家族維持既有覆寫行為，零回歸。
+            # steps=None → 不覆寫，沿用 workflow JSON 內建值
             if steps is not None:
                 _set_node_input(wf, _nid, "steps", steps)
         elif ct == "IPAdapterAdvanced" and ipa_used:
@@ -1082,13 +1015,12 @@ async def _generate_design_core(
         cn_used = True
         logger.info("[%s] ControlNet (%s) injected, weight=%.2f", log_label, cn_mode, cn_weight)
 
-    # [CN-057] CN 替代路徑 img2img 低 denoise；SDXL 家族 _i2i_ref_bytes 恆 None，零回歸
+    # [CN-057] CN 替代路徑：img2img 低 denoise（SDXL 家族不走此路）
     i2i_used = False
     i2i_denoise: float | None = None
     lllite_used = False
     lllite_weight_used: str | None = None
-    # N1（SYNC-005）：先初始化，避免 LLLite 分支沒走到時，下方 params 組裝踩 NameError。
-    # （條件運算式本來就不會求值 else 側，但依賴那個行為是脆弱前提——顯式初始化比較誠實。）
+    # 顯式初始化：LLLite 分支未執行時下方 params 組裝仍可引用
     _lllite_strength: float | None = None
     if _i2i_ref_bytes is not None:
         # [CN-058] 先色彩正規化再對齊畫布，順序不可對調（先色後形，避免縮放插值糊掉二值線稿）
@@ -1171,8 +1103,7 @@ async def _generate_design_core(
         except Exception as e:
             logger.warning("[%s] canvas-expand 失敗，使用 SDXL 輸出: %s", log_label, e)
 
-    # S2-1/S2-2（2026-08-17）：結構控制機制要能從耗時表 / generation_history 一眼看出
-    # 走了哪條路 —— 08-17 記錄附件 3 的耗時表看不出走 img2img 還是 LLLite，本輪補上。
+    # 記錄實際走的結構控制路徑（CN／LLLite／img2img），供耗時表與歷史判讀
     if lllite_used:
         _mechanism = "lllite"
     elif i2i_used:
@@ -1192,7 +1123,7 @@ async def _generate_design_core(
     }
 
     _effective_steps = _effective_ksampler_steps(wf, steps)
-    _effective_cfg = _effective_ksampler_cfg(wf)  # A3 P0-4：workflow 實際生效 cfg
+    _effective_cfg = _effective_ksampler_cfg(wf)
 
     hist_id = record_generation(
         db,
@@ -1206,7 +1137,7 @@ async def _generate_design_core(
         negative=final_negative,
         params={
             "width": width, "height": height, "steps": _effective_steps,
-            "cfg": _effective_cfg,  # A3 P0-4：對應 D1（workflow 檔位/採樣參數 A/B 需要能單筆還原）
+            "cfg": _effective_cfg,
             "expression": expression, "art_style_id": art_style_id,
             "ipa_used": ipa_used, "ipa_weight": round(ipa_weight, 2),
             "cn_used": cn_used, "cn_weight": round(cn_weight, 2),
@@ -1251,7 +1182,7 @@ async def _generate_design_core(
     )
 
 
-# ── Character / Variant Design Sheet（薄轉接 → _generate_design_core，2026-06-13 項3 去重）──
+# ── Character / Variant Design Sheet（薄轉接 → _generate_design_core）──
 
 async def generate_character_design(
     character_id: int,
@@ -1263,16 +1194,12 @@ async def generate_character_design(
     use_ipa: bool = True,
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
-    cn_weight: float = 0.65,   # 2026-06-24：草圖開 CN 0.85 整圖品質略差,預設降 0.65 測試
-    seed: int = -1,            # A3 P0-1：-1=隨機（零回歸），>=0 沿用
-    reuse_prompt: bool = False,  # A3 P0-3：沿用上次 prompt，不重新編譯
+    cn_weight: float = 0.65,   # 草圖 CN 過高會拉低整圖品質
+    seed: int = -1,
+    reuse_prompt: bool = False,
     db: Session = Depends(get_db),
 ):
-    """
-    expression=None  → full-body character design sheet (768×1024)
-    expression=<key> → bust/face close-up with that expression (512×640)
-    Returns PNG bytes.
-    """
+    """角色人設圖生成（expression=None＝全身設定圖） [FD-043]"""
     character = db.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
@@ -1314,9 +1241,9 @@ async def generate_variant_design(
     use_ipa: bool = True,
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
-    cn_weight: float = 0.65,   # 2026-06-24：與 generate_character_design 同步降 0.65 測試
-    seed: int = -1,            # A3 P0-1：-1=隨機（零回歸），>=0 沿用
-    reuse_prompt: bool = False,  # A3 P0-3：沿用上次 prompt，不重新編譯
+    cn_weight: float = 0.65,
+    seed: int = -1,
+    reuse_prompt: bool = False,
     db: Session = Depends(get_db),
 ):
     """Generate a design sheet using the variant's data instead of the main character fields."""
@@ -1349,11 +1276,8 @@ async def generate_variant_design(
     )
 
 
-# ── 「以此角色生圖」：角色識別段英文 prompt（2026-09-24）─────────────────────────
-# 每次依角色「目前」欄位重新編譯（compile 有快取，同設定第二次不打 Ollama），不從 generation_history
-# 取上一回：歷史 prompt 會隨角色設定修改而過期，且夾帶人設圖專用的構圖段（全身/正面/純色背景）。
-# 組裝規則與 _generate_design_core 相同（性別/年齡/身高前綴 → ai_prompt → 主描述 → 畫風段 → 家族 tag_order），
-# 差別只在：不送名字（CN-038）、不送視覺抽取與構圖 suffix、負向不含人設圖專用的背景抑制詞。
+# ── 「以此角色生圖」：依角色目前欄位編譯識別段（不取歷史 prompt：會過期且帶構圖段）──
+# 組裝同 _generate_design_core，但不送名字（CN-038）、不含視覺抽取、構圖 suffix 與背景抑制詞
 async def build_identity_prompt(character_id: int, db: Session) -> dict:
     character = db.get(Character, character_id)
     if not character:

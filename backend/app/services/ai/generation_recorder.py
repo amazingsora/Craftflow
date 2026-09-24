@@ -1,9 +1,5 @@
-"""
-生圖參數記錄 helper（P3-1）。
-
-record_generation() 永不 raise：記錄失敗只記 log，絕不影響生成流程
-（resilient errors）。回傳 history id（失敗回 None），供 X-History-Id header。
-"""
+"""生圖參數記錄：record_generation() 永不 raise，回傳 history id（失敗回 None），
+供 X-History-Id header。"""
 from __future__ import annotations
 
 import logging

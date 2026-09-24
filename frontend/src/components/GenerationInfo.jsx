@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { apiGet } from '../api/client'
 
-// ── 生成資訊面板（2026-07-26）──────────────────────────────────────────────────
-// 資料源是後端 generation_history（已存齊 prompt/seed/參數/耗時），不在 localStorage
-// 另存一份，避免兩份真相。historyId 來自生圖回應的 X-History-Id header。
+// ── 生成資訊面板：資料只來自後端 generation_history（historyId＝X-History-Id）──
 export function GenerationInfo({ historyId, fetchPath }) {
   const [info, setInfo] = useState(null)
   const [err, setErr] = useState('')

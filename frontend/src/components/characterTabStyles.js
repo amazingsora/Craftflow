@@ -1,4 +1,4 @@
-// Craftflow CharacterTab 樣式（2026-06-13 A2 增量1：自 CharacterTab.jsx 抽出，純靜態）
+// CharacterTab 樣式（純靜態）
 
 export const S = {
   root: { display: 'flex', flexDirection: 'column', gap: 16 },

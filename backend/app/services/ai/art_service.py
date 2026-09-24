@@ -1,13 +1,4 @@
-"""
-Art AI services — all powered by Ollama vision model.
-
-Modes:
-  sketch_critique   — draft image → written improvement suggestions
-  finished_critique — finished illustration → detailed critique
-  line_color        — lineart → colour scheme suggestions
-  composition_ask   — freeform Q&A about composition / action / framing
-  describe          — general image description (for illustration metadata)
-"""
+"""Art AI services — all powered by Ollama vision model [FD-031]"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -43,10 +34,7 @@ def analyze_composition_bytes(
     user_question: str | None = None,
     model: str = ollama_client.DEFAULT_VISION_MODEL,
 ) -> tuple[str, str]:
-    """
-    上傳草稿並提出構圖問題，由 Vision 模型給出具體建議，並提煉出精準對齊草稿的 SDXL Prompt。
-    user_question 為 None 時，AI 自動分析構圖（不需使用者輸入問題）。
-    """
+    """上傳草稿並提問構圖，Vision 模型給建議並產出對齊草稿的 SDXL prompt [FD-032]"""
     if user_question:
         prompt = load_prompt("art/composition_analysis", user_question=user_question)
     else:
@@ -57,7 +45,6 @@ def analyze_composition_bytes(
         options={"num_predict": 450, "temperature": 0.2},  # 降低溫度以確保精準度與穩定度
     )
 
-    # 移除原本錯誤的 raw.startswith("[") 判定，直接進行切分
     advice = raw.strip()
 
     # 預設更加中性且安全的 Prompt，防止拉扯 ControlNet

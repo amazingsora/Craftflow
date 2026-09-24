@@ -1,20 +1,4 @@
-"""
-Training API — LoRA 訓練圖片管理 + Job CRUD + SSE 進度
-
-端點：
-  POST   /training/images/upload          上傳訓練圖片
-  GET    /training/images                 列出所有訓練圖片
-  PUT    /training/images/{id}/caption    更新 caption
-  DELETE /training/images/{id}            刪除圖片
-
-  POST   /training/jobs                   建立訓練 Job
-  GET    /training/jobs                   列出所有 Jobs
-  GET    /training/jobs/{id}              取得 Job 詳情
-  POST   /training/jobs/{id}/start        啟動訓練
-  POST   /training/jobs/{id}/stop         停止訓練
-  GET    /training/jobs/{id}/progress     SSE 進度串流
-  POST   /training/jobs/{id}/caption-all  用 Ollama Vision 批次生成 caption
-"""
+"""Training API — LoRA 訓練圖片管理 + Job CRUD + SSE 進度 [FD-025]"""
 from __future__ import annotations
 
 import asyncio

@@ -1,9 +1,4 @@
-"""章節 CRUD + 版本快照（revision）。
-
-每次更新章節前自動存快照，每章保留 CHAPTER_REVISIONS_KEEP 份（預設 20）；
-支援列出／取單筆／還原。reorder 走 PATCH，卷內排序見 api/volumes.py。
-「絕不覆蓋原始創作內容」的實作基礎。
-"""
+"""章節 CRUD + 版本快照（revision） [FD-015]"""
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,10 +19,7 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 
 def _snapshot_chapter(db: Session, chapter: Chapter) -> None:
-    """快照章節當前內容（不 commit，由呼叫端統一 commit）。
-
-    空內容不快照；每章保留最近 CHAPTER_REVISIONS_KEEP 版，舊的淘汰。
-    """
+    """快照章節當前內容（不 commit，由呼叫端統一 commit） [FD-016]"""
     if not (chapter.content or "").strip():
         return
     db.add(ChapterRevision(
