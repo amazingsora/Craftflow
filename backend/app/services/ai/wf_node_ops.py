@@ -1,10 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""ComfyUI workflow（API-format dict）節點操作工具。
-
-自 api/art_generate.py 下沉（2026-06-11 A1 階段 1）：
-IPA / ControlNet 節點偵測、參考圖注入、動態建鏈、bypass 拆鏈、
-prompt 注入（含 conditioning 邊回溯）。純 dict 操作，無 app 狀態依賴。
-"""
+"""ComfyUI workflow（API-format dict）節點操作：IPA／CN 偵測與注入、bypass、prompt 注入。"""
 from __future__ import annotations
 
 import logging
@@ -26,11 +21,7 @@ def _wf_has_ipa(wf: dict) -> bool:
 
 
 def _find_ipa_loadimage_id(wf: dict) -> str | None:
-    """
-    BFS backward from IPAdapterAdvanced.image input until a LoadImage node is found.
-    Handles arbitrary chains: LoadImage → CLIPVisionEncode → IPAdapterAdvanced, etc.
-    Returns the node_id string or None.
-    """
+    """BFS backward from IPAdapterAdvanced.image input until a LoadImage node is found [FD-095]"""
     # Find IPA node and get its image input reference
     ipa_img_ref: str | None = None
     for node in wf.values():
@@ -64,11 +55,7 @@ def _find_ipa_loadimage_id(wf: dict) -> str | None:
 
 
 def _inject_ipa_image(wf: dict, uploaded_name: str) -> bool:
-    """
-    Inject reference image only into the LoadImage node that feeds IPAdapterAdvanced.
-    Returns True on success, False if the chain wasn't found (workflow will still run,
-    just without the reference injection).
-    """
+    """Inject reference image only into the LoadImage node that feeds IPAdapterAdvanced [FD-096]"""
     node_id = _find_ipa_loadimage_id(wf)
     if node_id and node_id in wf:
         wf[node_id]["inputs"]["image"] = uploaded_name
@@ -79,11 +66,7 @@ def _inject_ipa_image(wf: dict, uploaded_name: str) -> bool:
 
 
 def _bypass_ipa_nodes(wf: dict) -> None:
-    """
-    Remove IPA nodes from an API-format workflow when no reference image is provided.
-    Rewires: upstream_model → IPAdapterAdvanced → KSampler
-         to: upstream_model → KSampler
-    """
+    """Remove IPA nodes from an API-format workflow when no reference image is provided [FD-097]"""
     ipa_id: str | None = None
     ipa_upstream_model = None
     for nid, node in wf.items():
@@ -161,19 +144,14 @@ _IPA_PLACEHOLDER_IMAGE = "char_concept_ref.png"
 _CN_PLACEHOLDER_IMAGE = "char_cn_ref.png"
 # AnimeLineArt 預處理解析度（與 Standard_V35 一致；取代原 Canny，避免機甲效果）
 _CANNY_RES = 1024
-# ControlNet 套用範圍（end=0.85：CN 權重需 ≥0.85 才夠貼合，見開發記錄 CN 權重偏好）
+# ControlNet 套用範圍（end=0.85：低於此貼合度不足）
 _CN_START_PERCENT, _CN_END_PERCENT = 0.0, 0.85
 # 注入節點的預設強度；實際值由端點依前端傳入的 ipa_weight / cn_weight 覆寫
 _IPA_DEFAULT_WEIGHT, _CN_DEFAULT_STRENGTH = 0.6, 0.85
 
 
 def _find_main_ksampler_id(wf: dict) -> str | None:
-    """回傳主取樣 KSampler 的 node id。
-
-    單一 KSampler → 直接回傳。
-    多 KSampler（如 hires-fix）→ 取 denoise==1.0 的主路徑，避免命中二次取樣；
-    皆無法判定時回傳第一個。
-    """
+    """回傳主取樣 KSampler 的 node id [FD-098]"""
     ks_ids = [
         k for k, n in wf.items()
         if isinstance(n, dict) and n.get("class_type") == "KSampler"
@@ -203,19 +181,8 @@ _PARAM_VALUE_KEYS = {
 
 
 def _get_node_input(wf: dict, node_id: str, key: str):
-    """讀 wf[node_id].inputs[key]；若該輸入是上游節點參照，往上游取實際字面值。
-
-    與 `_set_node_input` 共用同一組解析規則（同名字面輸入 → `_PARAM_VALUE_KEYS`），
-    寫入與讀出因此永遠對稱 —— 兩邊各寫一套解析必然會分歧。
-
-    Q5-1（2026-08-19）：作者型工作流（V37 node 18 / AnimaStandardV8 node 24）把
-    steps/cfg 集中在單一參數節點分送 KSampler 與 metadata，`KSampler.inputs.steps`
-    存的是 `["18", 1]` 這種參照。先前直接回傳它 → `generation_history.params.steps`
-    記成 list，可重現性記錄失真（08-19 §F7）。
-
-    Returns:
-        解析後的字面值；無法解析（找不到節點／來源不可解）時回 None。
-    """
+    """讀 wf[node_id].inputs[key]；若為上游節點參照則解出實際字面值，無法解析回 None。
+    與 `_set_node_input` 共用解析規則，讀寫對稱。"""
     node = wf.get(node_id)
     if not isinstance(node, dict):
         return None
@@ -236,13 +203,7 @@ def _get_node_input(wf: dict, node_id: str, key: str):
 
 
 def _set_node_input(wf: dict, node_id: str, key: str, value) -> bool:
-    """設定 wf[node_id].inputs[key]；若該輸入是上游節點參照，改寫到上游來源。
-
-    Returns:
-        True  — 值已寫入（字面值原地寫，或成功寫到上游來源）。
-        False — 該輸入是節點參照但來源無法解析，已退為在本節點寫字面值；
-                其他消費端（如 metadata）仍會讀到舊值，呼叫端應記錄警告。
-    """
+    """設定 wf[node_id].inputs[key]；若該輸入是上游節點參照，改寫到上游來源 [FD-099]"""
     node = wf.get(node_id)
     if not isinstance(node, dict):
         return False
@@ -284,10 +245,7 @@ def _set_node_input(wf: dict, node_id: str, key: str, value) -> bool:
 
 
 def _find_vae_ref(wf: dict) -> list | None:
-    """找出主取樣鏈使用的 VAE 來源 edge。
-
-    優先 VAEDecode.vae（必與 KSampler 同組），其次任一 VAELoader 的輸出。
-    """
+    """找出主取樣鏈使用的 VAE 來源 edge [FD-100]"""
     for n in wf.values():
         if isinstance(n, dict) and n.get("class_type") == "VAEDecode":
             ref = n.get("inputs", {}).get("vae")
@@ -300,16 +258,7 @@ def _find_vae_ref(wf: dict) -> list | None:
 
 
 def _inject_img2img(wf: dict, uploaded_name: str, denoise: float) -> bool:
-    """把主 KSampler 的 latent 來源改成參考圖（img2img），並設定 denoise。
-
-    Args:
-        uploaded_name: 已上傳到 ComfyUI 的檔名。**必須事先縮放成目標畫布尺寸** ——
-                       VAEEncode 的 latent 尺寸由輸入圖決定，會取代 EmptyLatentImage。
-        denoise:       0=完全照抄參考圖，1=完全重畫。
-
-    Returns:
-        True 注入成功；False 缺 KSampler 或找不到 VAE（呼叫端應視為 img2img 未啟用）。
-    """
+    """把主 KSampler 的 latent 來源改成參考圖（img2img），並設定 denoise [FD-101]"""
     ks_id = _find_main_ksampler_id(wf)
     if ks_id is None:
         logger.warning("[img2img] 找不到 KSampler，略過注入")
@@ -354,18 +303,7 @@ def _inject_lllite(wf: dict, image_name: str, lllite_name: str, strength: float,
                    start_percent: float = _LLLITE_START_PERCENT,
                    end_percent: float = _LLLITE_END_PERCENT,
                    node_class: str | None = None) -> bool:
-    """在 KSampler.model 上游插入 Anima LLLite 節點，回傳是否成功。
-
-    接線：  <原 model 來源> → <node_class>.model
-           LoadImage(草圖)  → <node_class>.image
-           <node_class>     → KSampler.model
-
-    node_class 由呼叫端傳入（capability 探測到的實際 class 名）；未傳時退到
-    _LLLITE_NODE_CLASS_FALLBACK，僅供相容，正常路徑不應觸發。
-
-    Resilient errors：找不到 KSampler 或 model 來源都回 False（讓呼叫端退 fallback），
-    不丟例外。
-    """
+    """在 KSampler.model 上游插入 Anima LLLite 節點，回傳是否成功 [FD-102]"""
     node_class = node_class or _LLLITE_NODE_CLASS_FALLBACK
     if _wf_has_lllite(wf):
         logger.info("[lllite] workflow 已含 LLLite 節點，不重複注入")
@@ -411,18 +349,7 @@ def _inject_ipa_cn_nodes(
     wf: dict, *, inject_ipa: bool, inject_cn: bool, models: dict | None = None,
     cn_preprocessor: dict | None = None,
 ) -> None:
-    """當工作流缺少 IPA / ControlNet 節點時，依 Standard_V35 模板動態建立並接線。
-
-    - IPA：在「現有 model 來源 → KSampler.model」之間插入 IPAdapterAdvanced 鏈。
-    - CN ：在「現有 positive/negative → KSampler」之間插入 ControlNetApplyAdvanced 鏈。
-
-    僅在對應功能啟用且工作流本身沒有該節點時呼叫（由端點判斷）；既有節點不重複注入。
-    節點 id 從現有最大數字 +1 起遞增，確保不衝突。圖片由後續 _inject_*_image 注入。
-
-    Args:
-        models: capability.INJECT_MODELS[family]，提供家族對應的模型檔名。
-                None 時回退模組層級常數（全 SDXL，維持既有行為）。
-    """
+    """當工作流缺少 IPA / ControlNet 節點時，依 Standard_V35 模板動態建立並接線 [FD-103]"""
     # 解析模型檔名：優先用 models 參數（多家族支援），次用模組常數（backward compat）
     _ipa_cv  = (models or {}).get("ipa_clipvision", _IPA_CLIPVISION_MODEL)
     _ipa_adp = (models or {}).get("ipa_adapter",    _IPA_ADAPTER_MODEL)
@@ -495,7 +422,7 @@ def _inject_ipa_cn_nodes(
             "class_type": "LoadImage",
             "inputs": {"image": _CN_PLACEHOLDER_IMAGE, "upload": "image"},
         }
-        # CN preprocessor 由 profile 決定（預設 AnimeLineArt；canny=V35 proven）
+        # CN preprocessor 由 profile 決定（預設 AnimeLineArt）
         _pp = cn_preprocessor or {"type": "AnimeLineArtPreprocessor", "resolution": _CANNY_RES}
         _pp_type = _pp.get("type", "AnimeLineArtPreprocessor")
         _pp_inputs = {"image": [loadimg_id, 0], "resolution": _pp.get("resolution", _CANNY_RES)}
@@ -524,10 +451,7 @@ def _inject_ipa_cn_nodes(
 
 
 def _inject_controlnet_image(wf: dict, uploaded_name: str) -> int:
-    """
-    Inject reference image into all LoadImage nodes that feed ControlNet preprocessors.
-    Returns the number of LoadImage nodes updated.
-    """
+    """Inject reference image into all LoadImage nodes that feed ControlNet preprocessors [FD-104]"""
     # Build set of node IDs that are ControlNet preprocessors
     preprocessor_ids: set[str] = set()
     for nid, node in wf.items():
@@ -569,20 +493,7 @@ def _inject_controlnet_image(wf: dict, uploaded_name: str) -> int:
 
 
 def _bypass_controlnet_nodes(wf: dict) -> None:
-    """
-    Remove ControlNet nodes from an API-format workflow when CN is disabled or
-    has no reference image. Stripping the CN chain means fewer nodes execute
-    (no preprocessor / controlnet model load) → faster generation.
-
-    ControlNetApplyAdvanced has *dual* conditioning outputs:
-        positive (slot 0) and negative (slot 1).
-    These are rewired back to the apply node's own upstream positive/negative
-    conditioning, then the CN-only node chain (apply, loader, union-type,
-    preprocessor, CN LoadImage) is stripped.
-
-    Asymmetric with _bypass_ipa_nodes (which rewires a single model output);
-    here two conditioning lines must be restored independently.
-    """
+    """CN 關閉或無參考圖時移除 workflow 內的 ControlNet 節點 [FD-105]"""
     apply_id: str | None = None
     for nid, node in wf.items():
         if isinstance(node, dict) and node.get("class_type") in _CN_APPLY_TYPES:
@@ -652,15 +563,7 @@ def _bypass_controlnet_nodes(wf: dict) -> None:
 def _resolve_conditioning(
     wf: dict, node_id: str, out_slot: int, clips: dict, _seen: frozenset = frozenset()
 ) -> str | None:
-    """Recursively follow a conditioning edge back to a CLIPTextEncode node.
-
-    Handles intermediate conditioning nodes by mapping their output slot to the
-    corresponding input edge:
-    - ControlNetApplyAdvanced: slot 0 → positive input, slot 1 → negative input
-    - Generic passthrough nodes: follow conditioning/positive/negative inputs in order
-
-    Returns the CLIPTextEncode node_id, or None if unreachable.
-    """
+    """Recursively follow a conditioning edge back to a CLIPTextEncode node [FD-106]"""
     if node_id in _seen:
         return None
     _seen = _seen | {node_id}
@@ -692,10 +595,7 @@ _METADATA_SAVER_PREFIX = "Image Saver"
 
 
 def _sync_saver_prompt_metadata(wf: dict, positive: str, negative: str) -> int:
-    """把實際送出的 positive/negative 同步進 Image Saver 系節點的 metadata 欄位。
-
-    Returns: 被同步的節點數（無 saver 節點時為 0，no-op）。
-    """
+    """把實際送出的 positive/negative 同步進 Image Saver 系節點的 metadata 欄位 [FD-107]"""
     synced = 0
     for nid, node in wf.items():
         if not isinstance(node, dict):
@@ -717,19 +617,7 @@ def _sync_saver_prompt_metadata(wf: dict, positive: str, negative: str) -> int:
 
 
 def _inject_prompts(wf: dict, positive: str, negative: str, age: int | None = None) -> None:
-    """Inject positive/negative prompts into CLIPTextEncode nodes.
-
-    Strategy (in order, stops as soon as both are resolved):
-      1. Trace KSampler.positive / KSampler.negative graph edges back to CLIPTextEncode nodes,
-         recursively passing through intermediate conditioning nodes (e.g. ControlNetApplyAdvanced).
-      2. _meta.title containing "positive" / "negative" (fallback for unusual topologies)
-      3. First two CLIPTextEncode nodes by node-id order (last resort)
-
-    The original text content of CLIPTextEncode nodes is never read — only overwritten.
-
-    [CN-118] 送進 ComfyUI 前的最後一道 NSFW／未成年閘（所有生圖路徑都經過這裡）。
-    age＝已知角色年齡（無則只靠正向標記判斷未成年情境）。
-    """
+    """Inject positive/negative prompts into CLIPTextEncode nodes [FD-108]"""
     positive, negative = apply_content_guard(positive, negative, age=age, layer="inject")
     clips = {
         nid: node for nid, node in wf.items()

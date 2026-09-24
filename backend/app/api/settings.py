@@ -1,17 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""
-Runtime settings endpoints (in-memory, reset on restart):
-  GET  /api/v1/settings/checkpoints   — list available checkpoints from ComfyUI
-  GET  /api/v1/settings/checkpoint    — active checkpoint name
-  POST /api/v1/settings/checkpoint    — switch active checkpoint
-  GET  /api/v1/settings/workflows     — list workflow JSON files
-  GET  /api/v1/settings/workflow      — active workflow filename
-  POST /api/v1/settings/workflow      — switch active workflow
-  GET  /api/v1/settings/capabilities  — IPA/CN capability for current mode+checkpoint
-  GET  /api/v1/settings/loras         — list LoRA models + active global LoRA
-  GET  /api/v1/settings/lora          — active global LoRA {name, strength}
-  POST /api/v1/settings/lora          — set global LoRA
-"""
+"""Runtime settings endpoints (in-memory, reset on restart) [FD-022]"""
 from __future__ import annotations
 
 import json
@@ -123,10 +111,7 @@ def list_workflows():
 
 @router.get("/capabilities", summary="取得目前 checkpoint/workflow 的 IPA/CN 能力")
 def get_capabilities():
-    """
-    回傳目前生效的 checkpoint + workflow 能力組合。
-    前端切換 checkpoint / workflow / 生成模式後應重抓此端點。
-    """
+    """回傳目前生效的 checkpoint + workflow 能力組合 [FD-023]"""
     # [CN-111] 改讀工作流實際生效的模型：舊寫法在 Anima 下誤判 sdxl → UI 顯示可用、後端靜默丟棄
     wf_name = state.get_workflow()
     ckpt = resolve_checkpoint_for_workflow(wf_name)
@@ -135,8 +120,7 @@ def get_capabilities():
     return {
         "ipa_supported": cap["ipa_supported"],
         "cn_supported":  cap["cn_supported"],
-        # D'-2：CN 不支援但有替代路徑時回傳其名稱（目前僅 "img2img"，Anima 用）。
-        # 前端據此保留「草圖引導」控制項並改標示，而非隱藏。
+        # CN 不支援時的替代路徑名稱；前端據此保留「草圖引導」控制項並改標示
         "cn_fallback":   cap.get("cn_fallback"),
         "family":        cap["family"],
     }

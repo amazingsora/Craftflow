@@ -1,11 +1,4 @@
-"""
-Art AI endpoints:
-  POST /api/v1/illustrations/{id}/analyze    — sketch / finished / color critique
-  POST /api/v1/illustrations/{id}/describe   — auto-fill ai_description field
-  POST /api/v1/illustrations/{id}/ask        — freeform art Q&A with image context
-  POST /api/v1/art/ask                       — freeform art Q&A (text only or with upload)
-  POST /api/v1/characters/{id}/describe-portrait — describe portrait → visual profile
-"""
+"""Art AI endpoints [FD-001]"""
 from __future__ import annotations
 
 from typing import Annotated, Optional
@@ -129,10 +122,7 @@ async def describe_character_portrait(
     db: DbDep,
     illustration_id: Optional[int] = None,
 ):
-    """
-    Describe a character's portrait illustration and save to character notes.
-    If illustration_id is provided, uses that; otherwise uses first portrait in DB.
-    """
+    """Describe a character's portrait illustration and save to character notes [FD-002]"""
     character = db.get(Character, character_id)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")

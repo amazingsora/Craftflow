@@ -1,12 +1,4 @@
-"""
-Consistency analysis — checks chapter text against character settings stored in DB.
-
-Two phases:
-  1. Surface scan (rule-based, always runs): forbidden_actions + name/alias detection
-  2. Semantic scan (LLM, opt-in): sends paragraph + character profile to Ollama
-
-Ported from tools/Craftflow/core/consistency_analyzer.py.
-"""
+"""Consistency analysis — checks chapter text against character settings stored in DB [FD-050]"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

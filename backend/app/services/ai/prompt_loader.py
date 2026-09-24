@@ -1,20 +1,4 @@
-"""
-Prompt file loader with hardcoded fallback defaults.
-
-Usage:
-    from app.services.ai.prompt_loader import load_prompt
-
-    # No variables — returns raw text:
-    prompt = load_prompt("art/sketch_critique")
-
-    # With variables — uses str.format_map():
-    prompt = load_prompt("character/generate_summary", name="Alice", raw_notes="...")
-
-File convention:
-    Prompt files live in backend/app/prompts/{key}.txt
-    Variables use {var_name} syntax.
-    Literal braces in JSON examples must be doubled: {{ and }}
-"""
+"""Prompt file loader with hardcoded fallback defaults [FD-086]"""
 from __future__ import annotations
 
 from pathlib import Path

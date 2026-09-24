@@ -1,11 +1,7 @@
-"""
-Rhythm analysis — rule-based, no LLM required.
-Ported from tools/Craftflow/core/rhythm_analyzer.py.
-"""
+"""Rhythm analysis — rule-based, no LLM required [FD-088]"""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass

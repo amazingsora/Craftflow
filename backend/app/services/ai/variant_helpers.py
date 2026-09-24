@@ -1,11 +1,4 @@
-"""角色變體(variant)資料 helper。
-
-自 character_design_service 抽離(2026-06-13 項2,零邏輯變更):
-原 _get_variants/_slot_index 定義於 character_design_service,
-導致 api/characters(純 CRUD)為兩個小 helper 而連帶拉進 PIL/comfyui 等重相依。
-本模組無重相依,供 api.characters 與 services.ai.character_design_service 共用,
-維持 api → services 單向依賴。
-"""
+"""角色變體（variant）資料 helper；刻意無重相依，供 api 與 service 共用。"""
 from __future__ import annotations
 
 import copy

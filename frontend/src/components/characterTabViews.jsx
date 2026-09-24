@@ -1,5 +1,4 @@
-// Craftflow CharacterTab 導覽 View（2026-06-13 A2 增量3a：自 CharacterTab.jsx 抽出，零行為變更）
-// 含 ProjectsView / ProjectCreateView / CharacterListView / FactionView / CharacterCreateView
+// CharacterTab 導覽 View：Projects / ProjectCreate / CharacterList / Faction / CharacterCreate
 
 import { useState, useEffect, useRef } from 'react'
 import { request, apiDelete, apiUrl } from '../api/client'
@@ -8,8 +7,7 @@ import { Spinner, StatusBadge, GenderPicker, DeleteConfirm } from './characterTa
 import { GENRES, STATUSES, apiFetch } from './characterTabShared.js'
 
 
-// 角色卡：CharacterListView（未分組）與 FactionView（成員）共用；children＝卡片底部的額外內容。
-// 2026-09-24 重複碼整合：原為 CharacterListView 內部元件＋FactionView 內聯複本（15 行逐字相同）。
+// 角色卡（CharacterListView／FactionView 共用）；children＝卡片底部的額外內容
 function CharCard({ c, onSelect, children }) {
   return (
     <div

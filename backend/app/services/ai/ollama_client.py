@@ -1,9 +1,4 @@
-"""
-Low-level Ollama HTTP client.
-Wraps both text generation and vision (image) analysis.
-All errors are caught and returned as strings rather than raised,
-so callers can decide how to surface them to the user.
-"""
+"""Low-level Ollama HTTP client [FD-072]"""
 from __future__ import annotations
 
 import base64
@@ -47,14 +42,7 @@ def _resize_for_vision(image_bytes: bytes, max_px: int = _VISION_MAX_PX) -> byte
 
 
 def _apply_keep_alive(payload: dict, keep_alive: Optional[int]) -> dict:
-    """keep_alive=None → 取 config 的 OLLAMA_KEEP_ALIVE_SEC（預設 0＝用完即退 VRAM）。
-
-    SYNC-006 N14（2026-09-20）：舊版 None 代表「不送這個欄位」，於是吃 Ollama 自己的
-    5 分鐘預設。char-gen 主線（compiler.py / vision_extract.py）早就自己傳 0，但
-    art_service / character_service / training 那幾條沒傳 —— 9B 模型就這樣在 16G 卡上
-    待 5 分鐘跟 ComfyUI 搶顯存，是主 KSampler 掉到 12.69 s/it 的上游成因之一。
-    設 OLLAMA_KEEP_ALIVE_SEC=-1 可回到舊行為（負值＝不送欄位，交還 Ollama 預設）。
-    """
+    """keep_alive=None → 用 OLLAMA_KEEP_ALIVE_SEC（預設 0＝用完即退 VRAM）；負值＝不送欄位。"""
     v = OLLAMA_KEEP_ALIVE_SEC if keep_alive is None else keep_alive
     if v >= 0:
         payload["keep_alive"] = v
@@ -67,15 +55,7 @@ def generate(
     options: Optional[dict] = None,
     keep_alive: Optional[int] = None,
 ) -> str:
-    """
-    Text generation via Ollama /api/generate.
-
-    options examples:
-      {"temperature": 0.3, "num_predict": 200}  — stable tag output
-      {"temperature": 0.8}                       — creative writing
-
-    keep_alive: seconds to keep model in VRAM after request (0 = unload immediately).
-    """
+    """Text generation via Ollama /api/generate [FD-073]"""
     # think=false: disable Qwen3 thinking mode so response is never empty.
     # Non-Qwen3 models ignore this field.
     payload: dict = {"model": model, "prompt": prompt, "stream": False, "think": False}
@@ -107,7 +87,7 @@ def analyze_image_bytes(
     options: Optional[dict] = None,
     keep_alive: Optional[int] = None,
 ) -> str:
-    # 單張＝多張版的特例（len==1 時 max_px 同為 _VISION_MAX_PX，payload 逐欄相同）；2026-09-24 重複碼整合
+    # 單張＝多張版的特例（payload 相同）
     return analyze_multi_images_bytes([image_bytes], prompt, model=model, options=options, keep_alive=keep_alive)
 
 
@@ -118,12 +98,7 @@ def analyze_multi_images_bytes(
     options: Optional[dict] = None,
     keep_alive: Optional[int] = None,
 ) -> str:
-    """
-    Send multiple images in one Ollama request so the vision model can
-    cross-reference them.  images_bytes must be non-empty.
-    Each image is resized to _VISION_MULTI_MAX_PX (smaller than single-image)
-    to prevent quadratic patch growth from causing extreme slowdown.
-    """
+    """一次請求送多張圖，讓視覺模型交互參照 [FD-074]"""
     try:
         max_px = _VISION_MULTI_MAX_PX if len(images_bytes) > 1 else _VISION_MAX_PX
         encoded = [
@@ -145,17 +120,13 @@ def _post_generate(payload: dict, timeout: int, label: str) -> str:
         r.raise_for_status()
         return r.json().get("response", "").strip()
     except requests.exceptions.ConnectionError:
-        return f"[{label} unavailable at {OLLAMA_BASE}: run `ollama serve` and ensure OLLAMA_HOST=0.0.0.0]"
+        return f"[{label} unavailable at {OLLAMA_BASE}: run `ollama serve`]"
     except Exception as e:
         return f"[{label} error at {OLLAMA_BASE}: {e}]"
 
 
 def is_error(response: str) -> bool:
-    """
-    True if `response` is one of this module's error strings (e.g. "[Vision error ...]").
-    Centralizes the `.startswith("[")` convention used across callers so the
-    error-marker format only needs to change in one place.
-    """
+    """True if `response` is one of this module's error strings (e.g. "[Vision error ...]") [FD-075]"""
     return bool(response) and response.startswith("[")
 
 

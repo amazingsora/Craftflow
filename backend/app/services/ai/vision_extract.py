@@ -1,10 +1,6 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""Vision 抽取與角色 SD 標籤工具。
-
-自 api/art_generate.py 下沉（2026-06-11 A1 階段 1）：
-身體 coverage 偵測、視覺特徵抽取（含合併單次呼叫版）、vision 結果快取、
-角色屬性（性別/年齡/身高）→ SD 標籤、服裝/髮型詞過濾。
-"""
+"""Vision 抽取與角色 SD 標籤：coverage 偵測、視覺特徵抽取與快取、
+角色屬性（性別/年齡/身高）→ SD 標籤、服裝/髮型詞過濾。"""
 from __future__ import annotations
 
 import hashlib
@@ -41,11 +37,7 @@ _FEATURE_ITEMS_MULTI = (
 
 
 def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str, str]:
-    """
-    Single Ollama call that combines body-coverage classification and visual feature extraction.
-    Returns (coverage: "full"|"partial"|"bust", visual_description: str).
-    Saves one full vision-model round-trip vs calling _detect_body_coverage + analyze_multi_images_bytes separately.
-    """
+    """Single Ollama call that combines body-coverage classification and visual feature extraction [FD-089]"""
     ignore_bg = (
         "【線稿警告】這可能是未上色的鉛筆稿／線稿，且常帶單色（如粉紅色）背景。"
         "規則一：完全忽略背景顏色——粉紅色或任何單色背景，絕不可當成髮色或服裝顏色。"
@@ -53,10 +45,8 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
         "只描述髮型長度與形狀、逐件服裝的款式、姿勢、表情與明顯特徵。嚴禁臆測顏色。只觀察「角色線條內」的特徵。"
     )
     n = len(images_bytes)
-    # 2026-06-23：不再抽「體型輪廓」——體型由年齡/身高欄位確定性決定
-    # （_age_body_tags/_height_body_tags），vision 版本只會衝突（如 petite vs tall slender）。
-    # [CN-116] SYNC-008：服裝改逐件、加姿勢與表情（草圖結構是視覺模型唯一能補的資訊）；
-    # 顏色仍照問（上色概念圖有用），線稿由規則二與 _filter_visual_for_llm(decolor_all) 雙重擋。
+    # [CN-116] 不抽體型（由年齡/身高決定）；服裝逐件＋姿勢＋表情。線稿顏色由規則二與
+    # _filter_visual_for_llm(decolor_all) 擋掉
     if n == 1:
         feature_q = (
             f"B. 視覺特徵（逗號分隔的中文短語，控制在{_FEATURE_CHARS_SINGLE}字以內）：\n"
@@ -90,8 +80,7 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
             model=state.get_vision_model(),
             # num_predict 放寬：thinking 類模型需額外 token 才能在推理後吐出格式輸出。
             options={"num_predict": 512, "temperature": 0.1},
-            # 2026-07-07 P0：呼叫完即退 VRAM，避免與後續 compile() 的文字模型同時駐留
-            # 導致 vram_manager._can_coexist("ollama") 誤判安全（見開發規劃 P0 根因 3）。
+            # 用完即退 VRAM，避免與後續 compile() 的文字模型同時駐留
             keep_alive=0,
         )
         # 診斷用：印出模型原始回應（含 think 段）→ 判斷回空主因（think 燒光/不照格式/真空回）
@@ -149,11 +138,7 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
 
 
 def _age_gender_tag(gender: str | None, age: int | None) -> str:
-    """
-    Return the primary SD subject tag(s) based on gender + age.
-    Placed at the very front of the positive prompt to anchor subject count.
-    Returns empty string when gender is unset.
-    """
+    """Return the primary SD subject tag(s) based on gender + age [FD-090]"""
     if gender == "female":
         base = "1girl" if (age is None or age < 25) else "1woman"
         suffix = ", mature female" if age is not None and age >= 40 else ""
@@ -168,12 +153,8 @@ def _age_gender_tag(gender: str | None, age: int | None) -> str:
 
 
 def _age_body_tags(age: int | None) -> str:
-    """Convert character age to SD body proportion tags.
-
-    S3（2026-07-13）：≤12 歲檔原本 7 個 tag（child...flat chest, small hands）整串前排
-    → 把比例壓成三頭身 chibi（第六輪 H3 實證）。縮為單一 `child`，拔 flat chest；
-    15-17 歲檔改空（`teenage girl, youthful` 純稀釋，體型已由 _height_body_tags 承擔）。
-    ≤6（toddler）與 13-14 檔維持原樣，未在本次 A/B 範圍。"""
+    """角色年齡 → SD 比例 tag。≤12 只給單一 `child`（多 tag 會壓成 chibi 比例）；
+    15–17 不給 tag（體型交給 _height_body_tags）。"""
     if age is None:
         return ""
     if age <= 6:
@@ -213,9 +194,7 @@ _CLOTHING_KW = {
 _HAIRSTYLE_KW = {
     "馬尾", "雙馬尾", "辮子", "捲髮", "直髮", "髮型", "長髮",
 }
-# [CN-103] 線稿膚色洩漏詞族一律剝除，真膚色由年齡/預設確定性決定
-# [CN-116] 拔掉「線條」：子字串比對誤殺「腿部有幾何線條裝飾」這類服裝細節（backend.log 09-23 實證）；
-#          真正的膚色洩漏句都另含「膚」「未填色」「線稿」，不靠「線條」也擋得到。
+# [CN-103][CN-116] 線稿膚色洩漏詞族一律剝除；不含「線條」（會誤殺服裝線條裝飾）
 _SKINTONE_LEAK_KW = {
     "膚色", "膚", "未上色", "未填色", "無色", "線稿",
     "tan skin", "skin tone", "uncolored", "colorless", "unpainted",
@@ -252,15 +231,8 @@ def _filter_visual_for_llm(
     strip_expression: bool = False, decolor_all: bool = False,
     decolor_clothing: bool = False, decolor_hair: bool = False,
 ) -> str:
-    """
-    Remove clothing / hairstyle / skin-tone-leak phrases from a comma-separated vision
-    description before sending it to the LLM, so it cannot hallucinate outfits, hairstyles,
-    or lineart skin-tone artifacts that conflict with explicitly defined character settings.
-
-    [CN-116] SYNC-008：「顏色歸設定欄位、結構歸視覺」。decolor_* 只拿掉顏色詞、保留
-    款式／件數／形狀，取代過去「欄位有值就整句剝除」的做法（該做法把草圖可見的雙馬尾、
-    外套＋短褲全丟光，raw_desc 只剩「淡色眼眸」）。strip_* 維持整句剝除語義。
-    """
+    """送 LLM 前過濾視覺描述，避免與角色設定衝突（[CN-116] 顏色歸欄位、結構歸視覺）。
+    decolor_* 只去顏色詞、保留款式／件數／形狀；strip_* 整句剝除。"""
     if not (strip_clothing or strip_hairstyle or strip_skin or strip_expression
             or decolor_all or decolor_clothing or decolor_hair):
         return visual
@@ -313,8 +285,7 @@ def _visual_extract_prompt(n: int) -> str:
 _VISION_CACHE_MAX = 32
 
 # [CN-105] 凡動到 coverage 判定或 vision prompt 就 bump 版本號，否則舊誤判結果被鎖死命中
-_VISION_FLOW_VERSION = "v5-2026-09-24"  # [CN-116] SYNC-008：特徵題改逐件服裝＋姿勢＋表情 → 清舊快取重抽
-# 前一版："v4-2026-07-14"（T1A：加入像素反向升級 fullness-check）
+_VISION_FLOW_VERSION = "v5-2026-09-24"  # 改 coverage／vision 邏輯時遞增，使舊快取失效
 
 
 def _load_vision_cache() -> dict[str, tuple[str, str]]:
@@ -351,19 +322,14 @@ def _vision_cache_key(images_bytes: list[bytes], mode: str) -> str:
     for b in images_bytes:
         h.update(len(b).to_bytes(8, "little"))
         h.update(b)
-    # H1：前綴流程版本號，改動 coverage/vision 邏輯後舊快取自動失效（見 _VISION_FLOW_VERSION）。
+    # 前綴流程版本號：邏輯改版後舊快取自動失效
     return f"{_VISION_FLOW_VERSION}|{mode}|{state.get_vision_model()}|{h.hexdigest()}"
 
 
 async def _vision_extract_cached(
     valid_images: list[bytes], need_coverage: bool,
 ) -> tuple[str, str]:
-    """
-    Shared vision-extraction step for character / variant design generation.
-    Returns (coverage, visual); coverage is "full" placeholder when
-    need_coverage=False.  Cache hit skips the Ollama call entirely
-    (including request_focus, so ComfyUI stays warm).
-    """
+    """Shared vision-extraction step for character / variant design generation [FD-091]"""
     mode = "coverage" if need_coverage else f"plain{len(valid_images)}"
     key = _vision_cache_key(valid_images, mode)
     cached = _VISION_CACHE.get(key)
@@ -383,7 +349,7 @@ async def _vision_extract_cached(
             valid_images, _visual_extract_prompt(len(valid_images)),
             model=state.get_vision_model(),
             options={"num_predict": 320, "temperature": 0.1},  # [CN-116] 字數上限放寬，160 會截斷
-            # 2026-07-07 P0：同上，呼叫完即退 VRAM
+            # 用完即退 VRAM
             keep_alive=0,
         )
 

@@ -1,14 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""
-Prompt style definitions — one config per model family.
-
-Each style defines:
-  quality_prefix  — prepended to final prompt (e.g. score tags for Pony)
-  negative        — model-appropriate negative prompt
-  banned_tags     — tags stripped from LLM output before quality_prefix is added
-                    The StyleConfig validator automatically adds quality_prefix tags here.
-  llm_template    — few-shot prompt sent to Ollama
-"""
+"""Prompt style definitions — one config per model family [FD-084]"""
 from __future__ import annotations
 
 import re
@@ -39,11 +30,7 @@ class StyleConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sync_banned_tags(self) -> StyleConfig:
-        """Automatically add quality_prefix tags to banned_tags to prevent duplication.
-
-        P2：先展開 SD 權重群組語法（見 _WEIGHT_GROUP_RE），再逐一 split，避免權重寫法
-        把 tag 拆爛成不會命中 banned_set 的破碎字串。
-        """
+        """Automatically add quality_prefix tags to banned_tags to prevent duplication [FD-085]"""
         if self.quality_prefix:
             expanded = _WEIGHT_GROUP_RE.sub(r'\1', self.quality_prefix)
             extra_banned = {t.strip() for t in expanded.split(",") if t.strip()}
@@ -90,24 +77,8 @@ _LINEART_ARTIFACT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# ── 平塗算子（SYNC-005 軌 S，2026-09-21）────────────────────────────────────
-# 為什麼要擋：底模原生就會平塗，這些同義算子疊上去落在過驅動區，把畫面推向高對比
-# → 高光炸開＝「油膩」。實證見 AGENT_SYNC §2.1「十」S-1（官方參考圖採樣參數與本專案
-# 完全相同、負向一字不差，而其正向一個平塗算子都沒有）。`prompt_profiles.yml` 的
-# anima anchor 已於同日清空 style_extra；本 set 負責擋 **LLM 自行吐出**的那一份。
-#
-# 為什麼要列變體：`compiler.py:561` 是 `normalized in banned_set` 的**精確字串比對**，
-# 不做詞幹還原 —— `flat colors`（複數）與 `flat color` 是兩個不同的鍵。實測（§2.4 5-2）
-# 13 種寫法中，單層權重 `(flat color:1.2)`、權重群組 `(a, b:1.2)`、未閉合括號、大小寫
-# 都已被 `:561` 的正規化攔下（**故不需再加任何權重展開邏輯**，Gemini §2.3-9 判斷正確），
-# 唯獨「巢狀權重 `((flat color:0.5):1.2)`」與「同義／複數變體」會漏 → 後者由本 set 收尾。
-# ⚠️ 巢狀權重仍會漏，**本輪不修**（LLM 不會自發吐出該寫法，它是 yml 繞 per-tag 權重用的）。
-#    已記入 doc/BACKLOG.md。
-# ⚠️ 只掛 PromptStyle.ANIMA，**不掛 Illustrious** —— 軌 S 的 Illustrious 五組 A/B 尚未
-#    判讀，掛上去會污染對照組。
-# ⚠️ 本 set 只作用於 **LLM 輸出**（compiler 的 sanitizer）。使用者在 art_style.extra_tags
-#    或 prompt_profiles.yml 手動指定的畫風 tag 走 service 層 `_resolve_style_extra()`，
-#    **不經 compile** ⇒ 不受本 set 影響，仍可手動把算子加回來。
+# ── 平塗算子：疊在原生平塗的底模上會過驅動（高光炸開）。僅擋 LLM 輸出、僅 ANIMA；
+# banned_set 是精確比對，故列出同義／複數變體。手動指定的畫風 tag 不受影響。
 _FLAT_STYLE_OPERATOR_TAGS = {
     # 上色方式
     "flat color", "flat colors", "flat colour", "flat colours",
@@ -123,13 +94,7 @@ _FLAT_STYLE_OPERATOR_TAGS = {
     "vibrant colors", "vibrant colours",
 }
 
-# ── 泛用風格／載體詞（SYNC-005 軌 S，2026-09-21，項目 3）────────────────────
-# 為什麼要擋：對以 danbooru 標籤為語料的動漫模型，「這是動漫插畫」是無效資訊 ——
-# 底模本身就只會畫動漫，這些詞只佔 token、稀釋真正的描述性 tag。
-# 實證：generation_history #748~#750 三筆的 LLM 輸出都帶 `anime style`，
-# 而 prompt_profiles.yml 的 anima anchor 註解（P5-8）早已自承該詞與
-# `character illustration`（_build_fullbody_suffix，已於本輪 D1 拔除）三重同義。
-# ⚠️ 同樣只掛 ANIMA。
+# ── 泛用風格詞：對動漫底模是無效資訊，只稀釋描述性 tag（僅 ANIMA）
 _GENERIC_STYLE_TAGS = {
     "anime style", "anime style illustration", "anime illustration", "anime art",
     "character illustration", "character design", "character sheet illustration",
@@ -349,7 +314,7 @@ Output: 1girl, solo, black hair, short hair, navy blue serafuku, short sleeves, 
 
 STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
     PromptStyle.SDXL: StyleConfig(
-        # 2026-06-23：對齊實測有效組合（amazing quality, absurdres）；原 high quality 偏弱。
+        # 實測有效組合；high quality 效果偏弱
         quality_prefix="masterpiece, best quality, amazing quality, absurdres",
         # 補強手指/解剖/壓縮假影防護（原版缺 bad hands/fingers/jpeg → 爛手與死白膚色擋不住）。
         negative=(
@@ -392,7 +357,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
         banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_ILLUSTRIOUS | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
         llm_template=_ILLUSTRIOUS_TEMPLATE,
     ),
-    # [CN-030] Anima 配方來自附件二實測基準，非官方 prompt（官方那組追了會洗白）；三項決策見 CODE_NOTES
+    # [CN-030] Anima 配方採實測基準而非官方 prompt（官方組會洗白）
     PromptStyle.ANIMA: StyleConfig(
         quality_prefix="masterpiece, best quality, absurdres, ultra detailed, high contrast",
         # [CN-031] Anima 負向三段結構；刻意不加裸 shadow（會壓掉角色身上的 shading）
@@ -402,8 +367,6 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
             "drop shadow, cast shadow, floor, ground, reflection, "
             "overexposed, washed out, faded, low contrast, blown out highlights, pale"
         ),
-        # SYNC-005 軌 S（2026-09-21）：補 _FLAT_STYLE_OPERATOR_TAGS。理由見該常數註解。
-        # 回滾＝刪掉下行的 `| _FLAT_STYLE_OPERATOR_TAGS`。
         banned_tags=(
             _QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS
             | _FLAT_STYLE_OPERATOR_TAGS | _GENERIC_STYLE_TAGS
@@ -427,7 +390,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
 }
 
 
-# [CN-032] booru upsampler system prompt 移植自 V37；措辭以 G1-1 手動 A/B 結果為準
+# [CN-032] booru upsampler system prompt；措辭以手動 A/B 結果為準
 UPSAMPLE_SYSTEM_PROMPT = """[TASK]
 You are a Danbooru tag upsampler for anime Stable Diffusion. Expand the given SHORT tag list
 into a denser, richer set of danbooru tags that describe the SAME subject and scene.

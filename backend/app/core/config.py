@@ -1,14 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""所有環境變數旋鈕的單一入口（讀專案根 .env）。
-
-分區：路徑 / AI 服務位址 / LoRA 訓練 / 資料安全（快照·備份）/ VRAM Guardian /
-Personal Style / Prompt 擴寫 / 生圖微調。
-
-慣例：
-  - 每個旋鈕都要有預設值，缺 .env 也能啟動。
-  - 新增旋鈕時預設值必須是「零行為變更」，需要實驗的功能預設關閉。
-  - 執行期可切換的設定（checkpoint/workflow/模型）不在這裡，在 core/state.py。
-"""
+"""所有環境變數旋鈕的單一入口（讀專案根 .env） [FD-028]"""
 import os
 from pathlib import Path
 
@@ -23,6 +14,9 @@ DB_PATH = BASE_DIR / "craftflow.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 API_PREFIX = "/api/v1"
+# 允許跨來源呼叫 API 的前端位址（逗號分隔）；前端經 Vite proxy 走同源，不需要放寬
+CORS_ORIGINS = [o.strip() for o in os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
 APP_TITLE = "Craftflow API"
 APP_VERSION = "0.1.0"
 
@@ -65,11 +59,9 @@ COMFYUI_JOB_TIMEOUT_SEC = int(os.getenv("COMFYUI_JOB_TIMEOUT_SEC", "1200"))
 # [CN-005] /free 是非同步排程，送出後須 poll 到 reserved 真的下降，否則量到的必是舊值
 VRAM_FREE_WAIT_SEC: float = float(os.getenv("VRAM_FREE_WAIT_SEC", "5"))
 VRAM_FREE_POLL_SEC: float = float(os.getenv("VRAM_FREE_POLL_SEC", "0.25"))
-# true = ComfyUI 沒讓出顯存就**不轉移 focus 到 ollama**（request_focus 回 False）。
-# 預設 false：現行呼叫端都忽略回傳值，維持零行為變更，先讓 log 累積實證再決定開不開。
+# true＝ComfyUI 沒讓出顯存就不轉移 focus 到 ollama（request_focus 回 False）
 VRAM_STRICT_FREE: bool = os.getenv("VRAM_STRICT_FREE", "false").lower() == "true"
-# 2026-09-21 訂正：舊版只要 reserved 有「下降」就算成功，實測 15.2G 只還 0.1G
-# 也被判定為 True —— 那不是釋放，是量測雜訊。改為要求最低歸還量。
+# 釋放判定的最低歸還量（小幅下降是量測雜訊，不算釋放）
 VRAM_FREE_MIN_DROP_GB: float = float(os.getenv("VRAM_FREE_MIN_DROP_GB", "1.0"))
 # reserved / total 超過此比例 ⇒ 顯卡已經塞滿、極可能正在用共享系統記憶體。
 # 這個狀態**不會自己恢復**（被換出的頁不會自動搬回 VRAM），只能重啟 ComfyUI。
@@ -89,9 +81,8 @@ PERSONAL_NEGATIVE: str = os.getenv("PERSONAL_NEGATIVE", "")
 # [CN-009] 畫風 tags 加權係數：!=1.0 時包成 (tag:w) 並前置到 identity；1.0=末端 append
 PERSONAL_STYLE_WEIGHT: float = float(os.getenv("PERSONAL_STYLE_WEIGHT", "1.0"))
 
-# [CN-115] 個人標籤分家族（SYNC-007 軌 P）：PERSONAL_STYLE_EXTRA_<家族>／PERSONAL_NEGATIVE_EXTRA_<家族>
-# 家族＝PromptStyle 值大寫（ANIMA / ILLUSTRIOUS / SDXL …）。疊加語義、留空＝關閉、不受上方 ENABLED 節制。
-# 刻意「呼叫時才讀」而非模組常數：家族是動態值，且讓測試能以 monkeypatch.setenv 隔離使用者 .env。
+# [CN-115] 分家族個人標籤 PERSONAL_<STYLE|NEGATIVE>_EXTRA_<家族大寫>：疊加語義、留空＝關閉。
+# 呼叫時才讀（家族是動態值，測試可用 setenv 隔離）
 PERSONAL_KIND_STYLE = "STYLE"
 PERSONAL_KIND_NEGATIVE = "NEGATIVE"
 # 測試隔離用（tests/conftest.py 依此清掉使用者 .env 的家族個人標籤）
@@ -107,8 +98,7 @@ def personal_family_extra(kind: str, family: str) -> str:
 # [CN-010] prompt 擴寫 stage2，預設關閉（需先手動 A/B 驗證），FLUX 不套用
 PROMPT_UPSAMPLE_ENABLED: bool = os.getenv("PROMPT_UPSAMPLE_ENABLED", "false").lower() == "true"
 PROMPT_UPSAMPLE_MODEL: str = os.getenv("PROMPT_UPSAMPLE_MODEL", "")  # 空 = 沿用 compile() 的 text model
-# 擴寫後 body tag 數上限（token 預算，G1-4）：擴寫會膨脹 tags，超限時從擴寫尾端砍，
-# 受保護的原始翻譯 tags（identity/subject）一律保留。0（預設）= 停用。
+# 擴寫後 body tag 上限：超限從擴寫尾端砍、原始 tag 保留；0＝停用
 PROMPT_MAX_BODY_TAGS: int = int(os.getenv("PROMPT_MAX_BODY_TAGS", "0"))
 
 # [CN-011] 編譯快取：命中則完全不呼叫 Ollama，省掉整段 11GB 卸載/重載。預設 0=停用
@@ -118,6 +108,8 @@ PROMPT_CACHE_TTL_SEC: int = int(os.getenv("PROMPT_CACHE_TTL_SEC", "0"))
 # true（預設）＝一般情境剝除露骨 tag、負向補 nsfw；false＝成人內容不過濾（debug 用）。
 # 未成年情境（角色 <18 或正向含 child 等標記）不受此旋鈕影響，永遠強制過濾。
 NSFW_GUARD_ENABLED: bool = os.getenv("NSFW_GUARD_ENABLED", "true").lower() == "true"
+# true＝回傳給前端的 PNG 去除內嵌 prompt／workflow（分享圖片不外洩）；生成資訊仍存在 DB
+PNG_STRIP_METADATA: bool = os.getenv("PNG_STRIP_METADATA", "true").lower() == "true"
 
 # ── 生圖微調旋鈕 ──────────────────────────────────────────────
 # flat_draft(線稿/平塗概念圖)當 IPA 參考會把成像拉平 → 自動把 IPA 權重乘此係數(下限0.1)。1.0=不降。

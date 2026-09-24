@@ -221,7 +221,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
     clearInterval(elapsedTimer.current)
   }
 
-  // B1：訂閱 job 進度 SSE，回傳完成後的圖片 blob
+  // 訂閱 job 進度 SSE，回傳完成後的圖片 blob
   const streamJobProgress = (jobId, onPct) => new Promise((resolve, reject) => {
     const es = new EventSource(apiUrl(`/art/jobs/${jobId}/progress`))
     es.onmessage = async (e) => {

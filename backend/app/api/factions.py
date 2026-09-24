@@ -1,14 +1,4 @@
-"""
-Faction API:
-  GET    /projects/{id}/factions                  — list factions with members
-  POST   /projects/{id}/factions                  — create faction
-  PUT    /factions/{id}                           — rename faction
-  DELETE /factions/{id}                           — delete faction
-  POST   /factions/{id}/thumbnail                 — upload thumbnail
-  GET    /factions/{id}/thumbnail                 — serve thumbnail
-  POST   /factions/{id}/members/{char_id}         — add member
-  DELETE /factions/{id}/members/{char_id}         — remove member
-"""
+"""Faction API [FD-019]"""
 from __future__ import annotations
 
 from typing import Annotated

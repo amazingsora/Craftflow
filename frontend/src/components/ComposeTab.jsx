@@ -107,7 +107,7 @@ const PLACEHOLDER_QUESTIONS = [
 export default function ComposeTab({ onAddHistory, activeVisionModel, capability = { ipa_supported: true, cn_supported: true }, onSendToGenerate }) {
   const ipaSupported = capability.ipa_supported
   const cnSupported  = capability.cn_supported
-  // D'（2026-07-25）：cnFallback 有值（Anima → 'img2img'）時控制項仍可用，只是換一條路實作。
+  // cnFallback 有值時控制項仍可用，後端改走替代路徑
   const cnFallback = capability.cn_fallback || null
   const cnUsable   = cnSupported || !!cnFallback
 
@@ -242,7 +242,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
           onChange={(e) => handleFile(e.target.files[0])}
         />
 
-        {/* IP-Adapter 角色外觀參考。D'（2026-07-25）：不支援時不再隱藏，改顯示原因＋替代方案 */}
+        {/* IP-Adapter 角色外觀參考；不支援時顯示原因＋替代方案 */}
         {!ipaSupported && (
           <CapabilityNotice title="角色外觀參考" kind="ipa" family={capability.family} />
         )}

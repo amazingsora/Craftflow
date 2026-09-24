@@ -1,15 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""角色 CRUD + 圖片資產管理（本檔為 api/ 第二大，30 個端點）。
-
-端點分四組，主角色與變體（variant slot）各一套、結構對稱：
-  - 角色本體      : CRUD、summarize（AI 摘要）
-  - portrait      : 單張代表圖
-  - concept-images: 使用者上傳的概念圖（最多 3 張）
-  - ai-images     : AI 生成的人設圖（最多 8 張）+ generation-info 反查生成參數
-
-generation-info：存圖時回填 GenerationHistory.saved_filename，讓「已存的圖 → 當初的
-prompt/seed/參數」可反查（見 models/generation_history.py）。
-"""
+"""角色 CRUD＋圖片資產管理（主角色與變體） [FD-017]"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -137,7 +127,7 @@ def delete_character(character_id: int, db: DbDep):
     db.commit()
 
 
-# 主角色／變體共用（2026-09-24 整合）：兩者只差欄位來源（Character 屬性 vs variant dict）
+# 主角色／變體共用：只差欄位來源（Character 屬性 vs variant dict）
 _SUMMARY_FIELDS = ("core_traits", "behavior_rules", "voice_style", "notes")
 
 
@@ -193,9 +183,6 @@ def get_portrait(character_id: int, db: DbDep):
 
 
 # ── 概念圖（max 3）／AI 人設圖（max 8）：主角色與變體 slot 共用 ─────────────────
-# 2026-09-24 重複碼整合：原 10 支端點（主角色 5 + 變體 5）逐支展開「查角色 → 取清單 →
-# 驗 index → 存／刪／讀檔」，彼此相似度 86–97%，差別只在清單位置（Character 欄位 vs
-# variants[slot]）與檔名前綴。行為（錯誤訊息、檢查順序、檔名格式）逐字保留。
 
 _MAX_CONCEPT = 3
 _MAX_AI_IMAGES = 8

@@ -1,9 +1,5 @@
-// 生成 / 訓練完成的通知（2026-06-13）
-// 三層：app 內右下角 toast（一定看得到，免權限）＋ OS 桌面通知（切到背景也看得到，需授權）＋ 通知音。
-// 設定存 localStorage：
-//   craftflow_notify       'on'|'off'（預設 on）— 通知總開關
-//   craftflow_notify_sound 'on'|'off'（預設 on）— 通知音
-// 所有呼叫皆容錯，不可讓主流程 crash。
+// 生成／訓練完成通知：app 內 toast ＋ OS 桌面通知 ＋ 通知音，皆容錯
+// localStorage：craftflow_notify / craftflow_notify_sound（'on'|'off'，預設 on）
 
 const K_NOTIFY = 'craftflow_notify'
 const K_SOUND = 'craftflow_notify_sound'

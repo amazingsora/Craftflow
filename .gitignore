@@ -54,3 +54,13 @@ backend/logs/
 data/p0_verify/
 # doc/ 不進版控（2026-09-23）
 /doc/
+
+# ── 隱私：執行期產物與個人內容（公開 repo 不收）────────────────
+data/logs/
+*.log.*
+data/debug/
+backend/data/vision_cache.json
+backend/data/expand_cache/
+Claude outputs/
+t1.png
+mailmap.txt

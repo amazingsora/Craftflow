@@ -242,5 +242,4 @@ def test_stuck_state_is_logged(monkeypatch, guardian, caplog):
     _fake_session(monkeypatch, sent)
     with caplog.at_level(logging.ERROR, logger=vm.logger.name):
         guardian._unload_comfyui_sync()
-    assert any("重啟 ComfyUI" in r.message % r.args if r.args else "重啟 ComfyUI" in r.message
-               for r in caplog.records)
+    assert any("重啟 ComfyUI" in r.getMessage() for r in caplog.records)

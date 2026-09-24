@@ -1,9 +1,4 @@
-"""api 層共用的上傳檔存取 helper。
-
-2026-09-24 重複碼整合：characters（portrait／概念圖／AI 圖，主角色＋變體）與 factions（縮圖）
-原本各自展開「驗型別 → mkdir → uuid 檔名 → copyfileobj」與「檔案不在就 404 → FileResponse」，
-七處逐字相同。集中於此，端點只保留各自的資料模型操作。
-"""
+"""api 層共用的上傳檔存取 helper（驗型別、存檔、送檔）。"""
 from __future__ import annotations
 
 import shutil

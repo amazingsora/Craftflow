@@ -1,10 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""Workflow 載入 / 風格偵測 / LoRA 注入 / ComfyUI 執行。
-
-自 api/art_generate.py 下沉（2026-06-11 A1 階段 1）。
-唯一非逐字搬移處：_SYSTEM_WORKFLOW_DIR / _STYLES_YML 的本機 fallback 路徑
-parents 索引依本檔深度調整（services/ai/ 比 api/ 深一層）；Docker 路徑不變。
-"""
+"""Workflow 載入 / 風格偵測 / LoRA 注入 / ComfyUI 執行。"""
 from __future__ import annotations
 
 import json
@@ -30,6 +25,7 @@ from app.services import comfyui_client
 from app.services.ai.prompt_engine import PromptStyle
 from app.services.ai.prompt_engine.styles import STYLE_CONFIG
 from app.schemas.art_generate import GenerateRequest
+from app.services.ai.capability import _STYLES_YML, load_checkpoint_styles_section
 from app.services.ai.wf_node_ops import _inject_prompts
 from app.services.ai.prompt_engine.content_guard import apply_content_guard
 
@@ -39,12 +35,7 @@ _SYSTEM_WORKFLOW_DIR = Path("/app/tools/Craftflow/diffusion/workflows")
 if not _SYSTEM_WORKFLOW_DIR.exists():
     _SYSTEM_WORKFLOW_DIR = Path(__file__).resolve().parents[4] / "tools" / "Craftflow" / "diffusion" / "workflows"
 
-# checkpoint_styles.yml — Docker path / local fallback
-_STYLES_YML = Path("/app/backend/checkpoint_styles.yml")
-if not _STYLES_YML.exists():
-    _STYLES_YML = Path(__file__).resolve().parents[3] / "checkpoint_styles.yml"
-
-# prompt_profiles.yml — workflow 級 prompt override（P1，2026-07-12）。同一路徑慣例。
+# prompt_profiles.yml：底模家族級 prompt 配方
 _PROMPT_PROFILES_YML = Path("/app/backend/prompt_profiles.yml")
 if not _PROMPT_PROFILES_YML.exists():
     _PROMPT_PROFILES_YML = Path(__file__).resolve().parents[3] / "prompt_profiles.yml"
@@ -77,13 +68,8 @@ def _compile_overrides(art_style: Optional[ArtStyle]) -> dict:
 
 
 def _load_prompt_profiles() -> dict:
-    """Load 底模家族（PromptStyle 值）→ prompt 配方 from prompt_profiles.yml `families:`。
-
-    [CN-114] SYNC-007（2026-09-23）：鍵由 workflow 檔名改為底模家族；舊 `profiles:` 區不再讀取。
-    未建檔／解析失敗 → {}（這層機制完全不介入，落回 STYLE_CONFIG 內建）。
-    不快取（同 _load_checkpoint_styles 慣例）：檔案小、每次讀取成本可忽略，
-    換來調參期間改 yml 免重啟即生效。
-    """
+    """讀 prompt_profiles.yml `families:`（[CN-114] 以底模家族為鍵）；失敗回 {}。
+    不快取：改 yml 免重啟即生效。"""
     global _LEGACY_PROFILES_WARNED
     try:
         with open(_PROMPT_PROFILES_YML, encoding="utf-8") as f:
@@ -102,8 +88,7 @@ def _load_prompt_profiles() -> dict:
     return data.get("families", {}) or {}
 
 
-# SYNC-001（2026-09-15）起的 warn-once 慣例；SYNC-007 起改記「家族」而非檔名。
-# 每張圖都會查好幾次 profile，不去重會把 log 洗掉；用集合讓「同一家族只吵一次」。
+# warn-once：每張圖會查多次 profile，同一家族只告警一次
 _PROFILE_MISS_WARNED: set[str] = set()
 _LEGACY_PROFILES_WARNED = False
 # [CN-114] _detect_style 兩個 SDXL 退路（讀檔失敗／checkpoint 未登錄）各自 warn-once 的鍵
@@ -114,11 +99,7 @@ _ANIMA_ARTIST_PREFIX = "@"
 
 
 def _profile_for_style(style: str, workflow: str = "") -> dict:
-    """查底模家族的 prompt 配方；**miss 時同一家族只記一次 WARNING**。
-
-    [CN-114] SYNC-007：本檔沒寫的家族（sdxl / pony / noobai …）落回 STYLE_CONFIG 內建屬預期，
-    告警只是讓「以為有配方其實沒有」變得看得見。workflow 參數僅用於訊息。
-    """
+    """查底模家族的 prompt 配方；miss 時落回 STYLE_CONFIG，同一家族只告警一次。"""
     profile = _load_prompt_profiles().get(style)
     if profile:
         return profile
@@ -133,25 +114,14 @@ def _profile_for_style(style: str, workflow: str = "") -> dict:
 
 
 def _profile_for(workflow: str) -> dict:
-    """查 workflow 所屬底模家族的 prompt 配方（prompt_profiles.yml `families:`）。
-
-    [CN-114] SYNC-007（2026-09-23）：原本以 workflow **檔名**為鍵，改名即整組脫鉤、靜默降級
-    （07-25、08-22、09-15、09-19 四次）。改為 workflow → 內嵌 checkpoint → `_detect_style()`
-    → 家族鍵，新增／改名 workflow 不需要任何登錄。
-
-    回傳 {} 代表該家族未設定 → 呼叫端落回 STYLE_CONFIG 內建 / .env。
-    """
+    """[CN-114] workflow → 內嵌 checkpoint → 家族 → prompt 配方；新增／改名 workflow 免登錄。
+    回傳 {}＝該家族未設定，呼叫端落回 STYLE_CONFIG／.env。"""
     return _profile_for_style(_detect_style(workflow).value, workflow)
 
 
 def _workflow_profile_overrides(workflow: str) -> dict:
-    """P1：查 workflow 所屬家族（[CN-114]）在 prompt_profiles.yml 是否有設定 quality_prefix /
-    quality_suffix / negative / negative_extra；只有實際登錄（非空）的欄位才放進回傳 dict，
-    未登錄欄位不佔位，讓 compile() 的預設 fallback（checkpoint family）維持有效。
-
-    negative（取代語義）與 negative_extra（補充語義，R4）互不排斥，可同時登錄：
-    前者決定 negative 主體、後者附加於其後。
-    """
+    """家族在 prompt_profiles.yml 登錄的 quality_prefix/suffix、negative（取代）、negative_extra（補充）；
+    只放非空欄位，未登錄者交給 compile() 的預設 fallback。"""
     profile = _profile_for(workflow)
     if not profile:
         return {}
@@ -168,16 +138,8 @@ def _workflow_profile_overrides(workflow: str) -> dict:
 
 
 def _workflow_style_extra(workflow: str) -> tuple[str, Optional[float]]:
-    """P5-5：查 workflow 所屬家族（[CN-114]）在 prompt_profiles.yml 是否設定 style_extra / style_extra_weight。
-    與 _workflow_profile_overrides 平行，共用同一個 _profile_for()（含 miss 告警）。
-
-    這兩個欄位**不進** _resolve_prompt_overrides() 的回傳 dict —— 那個 dict 是
-    compile_prompt() 的 kwargs，而 style_extra 是 compile 之後在 service 層組裝的
-    （character_design_service.py 的 _resolve_style_extra()／final_positive 組裝處）。
-
-    未登錄 workflow 或欄位留白 → ("", None)，呼叫端落回 .env
-    PERSONAL_STYLE_EXTRA_TAGS / PERSONAL_STYLE_WEIGHT（零回歸）。
-    """
+    """取 workflow 所屬家族的 style_extra / style_extra_weight；未設定回 ("", None)。
+    不併入 compile 的 overrides：style_extra 在 compile 之後於 service 層組裝。"""
     profile = _profile_for(workflow)
     if not profile:
         return "", None
@@ -193,13 +155,8 @@ def _workflow_tag_order(workflow: str) -> str:
 
 
 def _resolve_prompt_overrides(art_style: Optional[ArtStyle], workflow: str) -> dict:
-    """P1：整合 compile_prompt() 的三個 override 欄位，優先序：
-    art_style 個別欄位 > workflow 級 prompt_profiles.yml > checkpoint family
-    （後者由 compile() 內部 fallback 到 STYLE_CONFIG，這裡不重複填）。
-
-    只用「非空」值覆寫下層，避免 art_style 留白的欄位把 workflow profile 的定案值蓋掉
-    （_compile_overrides 對已存在的 art_style 一律回傳含 None 值的 key，不可直接 dict merge）。
-    """
+    """compile_prompt() 的 override：art_style 欄位 > prompt_profiles.yml > checkpoint family。
+    只用非空值覆寫下層（art_style 留白欄位不可蓋掉 profile 值）。"""
     out = dict(_workflow_profile_overrides(workflow))
     if art_style:
         if art_style.quality_prefix:
@@ -210,11 +167,8 @@ def _resolve_prompt_overrides(art_style: Optional[ArtStyle], workflow: str) -> d
 
 
 def _prompt_profile_source(art_style: Optional[ArtStyle], workflow: str) -> str:
-    """P4：回傳 debug prompt 用的來源標註字串，反映 _resolve_prompt_overrides 的實際優先序。
-      - 所屬家族在 prompt_profiles.yml families: 有設定 → "family: <家族>"（[CN-114] SYNC-007）
-      - 否則 → "family fallback (STYLE_CONFIG: <家族>)"（compile() 內部 fallback 到 STYLE_CONFIG）
-      - art_style 另有覆寫 quality_prefix/negative 時，附加 " +art_style#<id>" 標註疊加層。
-    純標註用途，不影響任何生成邏輯。"""
+    """debug 用 prompt 來源標註："family: <家族>" 或 "family fallback (...)"，
+    art_style 有覆寫時附加 " +art_style#<id>"。"""
     style = _detect_style(workflow).value
     if _profile_for_style(style, workflow):
         src = f"family: {style}"
@@ -228,9 +182,8 @@ def _prompt_profile_source(art_style: Optional[ArtStyle], workflow: str) -> str:
 
 
 def _personal_extra(kind: str, workflow: str) -> str:
-    """[CN-115] SYNC-007 軌 P：取 workflow 所屬家族的個人標籤（.env PERSONAL_<kind>_EXTRA_<家族>）。
-    家族判定與 families[] 同源（_detect_style），新家族零改碼。疊加語義由呼叫端負責。
-    非 anima 家族的值含 `@` → warn-once（`@` 是 Anima 畫師前綴，SDXL 系訓練時沒見過這種寫法）。"""
+    """[CN-115] 取 workflow 所屬家族的個人標籤（.env PERSONAL_<kind>_EXTRA_<家族>）。
+    非 anima 家族的值含 `@`（Anima 畫師前綴）時 warn-once。"""
     family = _detect_style(workflow).value
     value = personal_family_extra(kind, family)
     if (value and _ANIMA_ARTIST_PREFIX in value and family != PromptStyle.ANIMA.value
@@ -251,17 +204,7 @@ _LORA_DIR_WARNED = False
 
 
 def _lora_dir_ok() -> bool:
-    """LoRA 目錄存在與否，warn-once。
-
-    SYNC-005 L3（2026-09-20）：`COMFYUI_LORAS_DIR` 預設是 `C:\\ComfyUI\\models\\loras`，
-    使用者機器上實際在 `F:\\wk\\ComfyUI_portable\\...`，而 .env 那行本來被註解掉。
-    兩個吃這個常數的功能都是**讀不到就安靜回 None／[]**：
-      · `_lora_arch()`  → 架構健檢從頭到尾空轉（LoRA 架構不符也不會警告）
-      · `lora_trigger_words()` → 觸發詞永遠空的，LoRA 只剩殘留效果
-    兩者都不該讓生成失敗，但**也不該一聲不吭** —— 沿用 SYNC-001／SYNC-002 的
-    warn-once 慣例（`_PROFILE_MISS_WARNED` / `_LLLITE_UNAVAILABLE_WARNED`），
-    同一個問題只吵一次，其餘走 DEBUG。
-    """
+    """COMFYUI_LORAS_DIR 是否存在（warn-once）。不存在時架構健檢與觸發詞注入會靜默失效。"""
     global _LORA_DIR_WARNED
     if COMFYUI_LORAS_DIR.exists():
         return True
@@ -307,22 +250,8 @@ _LORA_TRIGGER_CACHE: dict = {}
 
 
 def lora_trigger_words(loras: list) -> list[str]:
-    """讀同名 `.civitai.info` 的 `trainedWords`，回傳去重後的觸發詞清單。
-
-    SYNC-005 軌 L（2026-09-19）。**為什麼需要這個**：`_inject_loras()` 只插節點，
-    不碰 prompt。而畫風 LoRA 的效果強度高度依賴觸發詞 —— 實例
-    `Blue_archive_style.safetensors` 的 `ss_tag_frequency` 只有**單一 tag**
-    `blue archive style`+U+200B，出現 270 次（＝每一張訓練圖都是這一句 caption）。
-    不帶觸發詞時 LoRA 仍會改權重、但效果剩殘留強度 ——
-    **付了全部 VRAM 與時間代價，只拿到一小部分畫風**（AGENT_SYNC §2.1 E11b）。
-
-    ⚠️ `trainedWords` 可能含**零寬空格 U+200B 等不可見字元**（上例就是），
-    那是訓練 caption 的一部分，必須**原樣保留**，不可 strip 掉或正規化 ——
-    使用者手打也打不出來，這正是自動注入的價值。此處只去頭尾的一般空白
-    （`str.strip()` 不會移除 U+200B）。
-
-    best-effort：檔案不存在／JSON 壞掉／欄位缺 → 回空 list，絕不讓生成失敗。
-    """
+    """讀同名 `.civitai.info` 的 `trainedWords`，回傳去重後的觸發詞（讀不到回 []）。
+    觸發詞可能含 U+200B 等不可見字元，屬 caption 一部分，必須原樣保留。"""
     out: list[str] = []
     if not _lora_dir_ok():
         return out
@@ -355,12 +284,7 @@ def lora_trigger_words(loras: list) -> list[str]:
 
 
 def _inject_loras(wf: dict, loras: list) -> None:
-    """Insert a LoraLoader chain into the workflow (mutates wf in place).
-
-    Finds CheckpointLoaderSimple as the chain root, then rewires KSampler.model
-    and all CLIPTextEncode.clip to point to the last LoRA node output.
-    Empty model names are silently skipped.
-    """
+    """Insert a LoraLoader chain into the workflow (mutates wf in place) [FD-109]"""
     valid = [l for l in (loras or []) if isinstance(l, dict) and l.get("model", "").strip()]
     if not valid:
         return
@@ -471,40 +395,22 @@ def _load_workflow(name: str) -> dict:
 
 
 def _is_custom_workflow(name: str) -> bool:
-    """True = 工作流位於使用者 CUSTOM_WORKFLOWS_DIR（即前端「自訂 Workflow 模式」）。
-
-    此模式下 Checkpoint/全域 LoRA「由 workflow 本身決定」，後端不注入全域 LoRA；
-    Checkpoint 模式（系統 text_to_image.json）才注入全域 LoRA。
-    角色 / 畫風 LoRA 屬個別實體設定，不受此模式影響。
-    """
+    """True = 工作流位於使用者 CUSTOM_WORKFLOWS_DIR（即前端「自訂 Workflow 模式」） [FD-110]"""
     return (CUSTOM_WORKFLOWS_DIR / name).exists()
 
 
 def _load_checkpoint_styles() -> dict:
-    """Load checkpoint → style mapping from YAML. Returns {} on error."""
-    try:
-        with open(_STYLES_YML, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return data.get("checkpoints", {})
-    except Exception as e:
-        logger.warning("Could not load checkpoint_styles.yml: %s", e)
-        return {}
+    """checkpoint 檔名 pattern → prompt style。"""
+    return load_checkpoint_styles_section("checkpoints")
 
 
 def _detect_style(workflow_name: str = "text_to_image.json") -> PromptStyle:
-    """
-    Read the model name from a workflow, then look it up in checkpoint_styles.yml.
-    Falls back to SDXL if not found.
-
-    2026-07-25 (AC-2)：模型名改由 capability.extract_checkpoint_from_wf 取得——原本只讀
-    CheckpointLoaderSimple，Anima 這類 UNETLoader 工作流一律落到 SDXL fallback，
-    prompt 被套錯家族配方。共用函式同時涵蓋 UNETLoader / GGUF 變體。
-    """
+    """從 workflow 取模型名（含 UNETLoader／GGUF）查 checkpoint_styles.yml；找不到回 SDXL。"""
     mapping = _load_checkpoint_styles()
     try:
         wf = _load_workflow(workflow_name)
     except Exception as e:
-        # [CN-114] SYNC-007：家族決定 prompt 配方，退 SDXL 不可再靜默（Gemini §2.3 Q3）
+        # [CN-114] 家族決定 prompt 配方，退回 SDXL 必須告警
         _warn_style_fallback(f"load:{workflow_name}",
                              "[prompt-style] 讀不到 workflow '%s'（%s）→ 家族退回 sdxl",
                              workflow_name, e)
@@ -539,11 +445,7 @@ def _warn_style_fallback(key: str, msg: str, *args) -> None:
 
 
 def _replace_negative_seeds(wf: dict, seed: int) -> None:
-    """Replace seed=-1 in any node that carries a seed widget (KSampler, rgthree Seed, etc.).
-
-    Only replaces when the current value is -1 (the ComfyUI "random each run" sentinel)
-    and the value is a plain int (not a link reference list).
-    """
+    """Replace seed=-1 in any node that carries a seed widget (KSampler, rgthree Seed, etc.) [FD-111]"""
     for node in wf.values():
         if not isinstance(node, dict):
             continue
@@ -592,7 +494,7 @@ def _run(workflow: dict) -> bytes:
     try:
         filenames = comfyui_client.wait_for_result(prompt_id, COMFYUI_JOB_TIMEOUT_SEC)
     except TimeoutError as e:
-        # [CN-108] 本路徑原本完全沒有 log，逾時只能靠 ComfyUI 端還原現場 —— 補上記錄
+        # [CN-108] 記錄逾時現場
         logger.error("[comfyui] 主生成逾時：prompt_id=%s timeout=%ss —— ComfyUI 很可能仍在跑並會把圖存進 output/，"
                      "請查 ComfyUI 端 log 的 'Prompt executed in'。放寬上限：.env 的 COMFYUI_JOB_TIMEOUT_SEC",
                      prompt_id, COMFYUI_JOB_TIMEOUT_SEC)
@@ -605,7 +507,7 @@ def _run(workflow: dict) -> bytes:
 async def _run_comfyui(workflow: dict) -> bytes:
     return await run_in_threadpool(_run, workflow)
 
-# ── txt2img 組裝 / inpaint·upscale 風格解析（A1 Step 4 自 api 下沉）─────────────────────────────
+# ── txt2img 組裝 / inpaint·upscale 風格解析 ─────────────────────────────
 
 def _character_age(db: Session, character_id: Optional[int]) -> Optional[int]:
     if not character_id:
@@ -615,10 +517,7 @@ def _character_age(db: Session, character_id: Optional[int]) -> Optional[int]:
 
 
 def _build_txt2img(req: "GenerateRequest", db: Session, batch_size: int = 1):
-    """txt2img workflow 組裝（sync /art/generate 與 async job 共用）。
-
-    回傳 (wf, seed, style, prompt, negative, lora_list)。
-    """
+    """txt2img workflow 組裝（sync /art/generate 與 async job 共用） [FD-112]"""
     art_style = db.get(ArtStyle, req.art_style_id) if req.art_style_id else None
     style = _resolve_style(art_style)
     default_neg = (art_style.negative or STYLE_CONFIG[style].negative) if art_style else STYLE_CONFIG[style].negative

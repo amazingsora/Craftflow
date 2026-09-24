@@ -1,10 +1,4 @@
-"""
-小說 Markdown 匯出（P2-1）。
-
-結構：書名頁 → 目錄 → 未分卷章節 → 各卷章節；插圖依 linked_chapter_id
-附於章節末尾。zip 模式將插圖一併打包（images/），md 內用相對路徑引用，
-解壓即為可攜帶的完整書稿。
-"""
+"""小說 Markdown 匯出 [FD-115]"""
 from __future__ import annotations
 
 import io
@@ -151,7 +145,7 @@ def export_zip(db: Session, project_id: int) -> tuple[bytes, str] | None:
     return buf.getvalue(), f"{project.title}.zip"
 
 
-# ── 角色設定集匯出（P2 後續）──────────────────────────────────────────────────
+# ── 角色設定集匯出 ──────────────────────────────────────────────────
 
 _PORTRAIT_DIR = UPLOAD_DIR / "portraits"
 

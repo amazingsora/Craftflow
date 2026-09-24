@@ -1,13 +1,4 @@
-"""
-影像編輯 workflow 改造（P5：inpainting / upscale）。
-
-兩者皆以 text_to_image 型 workflow（CheckpointLoader + CLIPTextEncode×2 +
-EmptyLatentImage + KSampler + VAEDecode）為基底做原地改造：
-- inpaint：EmptyLatentImage → VAEEncodeForInpaint（原節點 id 保留，KSampler 連線不動）
-- upscale：EmptyLatentImage → VAEEncode + LatentUpscaleBy（hires-fix，低 denoise 重採樣）
-
-只用 ComfyUI 核心節點，不需安裝額外模型/custom nodes。
-"""
+"""影像編輯 workflow 改造（inpainting / upscale） [FD-055]"""
 from __future__ import annotations
 
 import logging

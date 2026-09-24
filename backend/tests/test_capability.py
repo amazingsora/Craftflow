@@ -64,7 +64,7 @@ def test_detect_lllite_failure_is_not_cached_forever(monkeypatch):
         calls["n"] += 1
         raise OSError("connection refused")
 
-    monkeypatch.setattr(cc.requests, "get", boom)
+    monkeypatch.setattr(cc.SESSION, "get", boom)
     assert cc.detect_lllite()["available"] is False
     assert calls["n"] == 1
     # 退避期內：不重打 API，直接回上次結果
@@ -96,7 +96,7 @@ def test_detect_lllite_recovers_after_comfyui_comes_up(monkeypatch):
             raise OSError("connection refused")
         return _Resp()
 
-    monkeypatch.setattr(cc.requests, "get", fake_get)
+    monkeypatch.setattr(cc.SESSION, "get", fake_get)
     assert cc.detect_lllite()["available"] is False
     state["up"] = True
     cc._lllite_fail["until"] = time.monotonic() - 1      # 模擬退避期滿
@@ -113,7 +113,7 @@ def test_detect_lllite_recovers_after_comfyui_comes_up(monkeypatch):
 def test_reset_lllite_cache_clears_failure_backoff(monkeypatch):
     """reset 必須同時清失敗退避——只清成功快取的話，使用者按「重新探測」會沒反應。"""
     _reset()
-    monkeypatch.setattr(cc.requests, "get", lambda *a, **kw: (_ for _ in ()).throw(OSError("down")))
+    monkeypatch.setattr(cc.SESSION, "get", lambda *a, **kw: (_ for _ in ()).throw(OSError("down")))
     cc.detect_lllite()
     assert cc._lllite_fail is not None
     cc.reset_lllite_cache()

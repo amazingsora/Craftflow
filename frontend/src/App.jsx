@@ -12,8 +12,7 @@ import { GenerationInfo } from './components/GenerationInfo.jsx'
 
 const _HISTORY_KEY = 'craftflow_history_v2'
 const _MAX_HISTORY = 100
-// 2026-07-26：300 → 768。原值下「檢視」把 300px 圖放大到 80vw 顯示 → 明顯模糊。
-// 提高解析度會撐大 localStorage（見 _saveHistory 的配額降階），故同批加降階邏輯。
+// 縮圖邊長：過小在「檢視」放大時會糊；過大會撐爆 localStorage（見 _saveHistory 降階）
 const _THUMB_PX = 768
 const _THUMB_QUALITY = 0.85
 // localStorage 配額超出時，依序砍到剩幾筆再試（最後一階只留最新 5 筆）。
@@ -64,9 +63,7 @@ async function _makeThumbnail(url) {
   })
 }
 
-// 持久化時 url 一律換成縮圖：item.url 是 blob: object URL，重整後即失效。
-// 2026-07-26：縮圖放大到 768px 後單筆約 100-200KB，100 筆必爆 localStorage 5-10MB 配額，
-// 故改為逐階減量重試，而非原本「全部 → 40 筆」兩階（40 筆在新尺寸下仍會爆，等同靜默全丟）。
+// 持久化時 url 換成縮圖（blob URL 重整即失效）；超出 localStorage 配額時逐階減量重試
 function _saveHistory(items) {
   for (const n of _HISTORY_QUOTA_STEPS) {
     try {
@@ -94,7 +91,6 @@ function _badgeLabel(type) {
 }
 
 const TABS = [
-  // TODO: 草稿→線稿功能暫時隱藏，待評估是否整合進角色管理或移除
   { id: 'process', label: '草稿 → 線稿', hidden: true },
   { id: 'novel', label: '小說' },
   { id: 'generate', label: '文字 → 生圖' },
@@ -378,8 +374,7 @@ export default function App() {
   const [activeCheckpoint, setActiveCheckpoint] = useState('')
   const [workflows, setWorkflows] = useState([])
   const [activeWorkflow, setActiveWorkflow] = useState('text_to_image.json')
-  // capability: { ipa_supported, cn_supported, family }（由 /settings/capabilities 統一取得）
-  // cn_fallback（2026-07-25 D'-2）：CN 不支援但有替代路徑時為 'img2img'（Anima）。
+  // capability 由 /settings/capabilities 取得；cn_fallback＝CN 不支援時的替代路徑
   const [capability, setCapability] = useState({ ipa_supported: true, cn_supported: true, cn_fallback: null, family: 'sdxl' })
   const [generationMode, setGenerationMode] = useState(
     () => localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint'
@@ -609,7 +604,7 @@ export default function App() {
 
   useEffect(() => { ensureNotifyPermission() }, [])
 
-  // D3 側欄響應式收合（手動切換持久化；視窗跨 880px 門檻時自動收/展）
+  // 側欄響應式收合（手動切換持久化；視窗跨 880px 門檻時自動收／展）
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('craftflow_sidebar_collapsed')
     if (saved !== null) return saved === 'true'
@@ -879,9 +874,7 @@ export default function App() {
         <div style={S.lightboxOverlay} onClick={() => setLightboxItem(null)}>
           <div style={S.lightboxBox} onClick={e => e.stopPropagation()}>
             <button style={S.lightboxClose} onClick={() => setLightboxItem(null)}>×</button>
-            {/* 2026-07-26：改為優先原圖。本次工作階段 item.url 是全解析度 blob，
-                原本寫 thumbnail ?? url 等於永遠拿 768px（舊版 300px）縮圖再放大到
-                80vw → 必糊。重整後 _saveHistory 已把 url 覆寫成縮圖，此處自動退回縮圖。 */}
+            {/* 優先原圖（本次工作階段的 blob）；重整後 url 已被換成縮圖 */}
             <img
               src={lightboxItem.url ?? lightboxItem.thumbnail}
               style={S.lightboxImg}

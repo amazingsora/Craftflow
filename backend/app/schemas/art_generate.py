@@ -1,8 +1,4 @@
-"""art_generate request models。
-
-自 api/art_generate.py 下沉（2026-06-13 A1 Step 4）：
-解除 services 對 api 層型別的依賴（_build_txt2img 吃 GenerateRequest）。
-"""
+"""art_generate request models（放在 schemas 讓 services 不依賴 api 層）。"""
 from __future__ import annotations
 
 from typing import Optional

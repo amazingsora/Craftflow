@@ -1,10 +1,4 @@
-"""
-AI text analysis endpoints:
-  POST /api/v1/chapters/{id}/analyze     — rhythm + consistency analysis
-  POST /api/v1/chapters/{id}/rewrite     — generate rewrite suggestions
-  POST /api/v1/characters/{id}/extract   — extract traits from chapter text
-  POST /api/v1/characters/{id}/ask       — character design Q&A
-"""
+"""AI text analysis endpoints [FD-003]"""
 from __future__ import annotations
 
 from typing import Annotated, Optional, List

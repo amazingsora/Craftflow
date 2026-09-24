@@ -1,4 +1,4 @@
-"""小說匯出 API（P2）。"""
+"""小說匯出 API。"""
 from typing import Annotated, Literal
 from urllib.parse import quote
 
@@ -23,10 +23,7 @@ def _attachment_headers(filename: str) -> dict:
 
 @router.get("/projects/{project_id}/export/markdown", summary="小說匯出（Markdown）")
 def export_markdown(project_id: int, db: DbDep, format: Literal["zip", "md"] = "zip"):
-    """
-    format=zip（預設）→ {書名}.md + images/ 打包下載（可攜帶完整書稿）
-    format=md         → 純 Markdown 文字（插圖仍以 images/ 相對路徑引用）
-    """
+    """匯出小說 Markdown（預設 zip：md＋images/） [FD-018]"""
     if format == "md":
         result = export_service.build_markdown(db, project_id)
         if result is None:

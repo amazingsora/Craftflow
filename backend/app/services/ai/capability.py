@@ -1,17 +1,6 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""
-Checkpoint family detection + IPA/CN injection model lookup + capability resolution.
-
-B2 (2026-06-17)：集中能力判斷邏輯，單一真相來源。
-  - INJECT_MODELS : family → 注入模型檔名對照表
-  - resolve_family: checkpoint 檔名 → family string
-  - resolve_capability: workflow dict + checkpoint → {ipa_supported, cn_supported, family, models}
-
-設計原則：
-  - 未知家族 fallback = 'sdxl'（現況全 SDXL，零行為變更）
-  - 'flux' 不在 INJECT_MODELS → IPA/CN 不支援注入
-  - workflow 已有節點 → 該功能仍算支援（節點偵測優先）
-"""
+"""Checkpoint 家族偵測、IPA/CN 注入模型對照與能力判定（單一真相來源）。
+未知家族 fallback 'sdxl'；workflow 已有節點時該功能即算支援。"""
 from __future__ import annotations
 
 import logging
@@ -55,11 +44,7 @@ _UNET_ONLY_FAMILIES = frozenset({"anima"})
 
 
 def extract_checkpoint_from_wf(wf: dict) -> str:
-    """從 workflow dict 取出模型檔名。純函式，無 I/O。
-
-    優先序：CheckpointLoaderSimple.ckpt_name → UNETLoader 系 .unet_name → ""。
-    回 "" 表示此工作流未內嵌模型名，呼叫端應退回全域 checkpoint。
-    """
+    """從 workflow dict 取出模型檔名。純函式，無 I/O [FD-033]"""
     if not isinstance(wf, dict):
         return ""
     ckpt = next(
@@ -79,11 +64,7 @@ def extract_checkpoint_from_wf(wf: dict) -> str:
 
 
 def resolve_checkpoint_for_workflow(workflow_name: str) -> str:
-    """工作流名 → 實際生效的模型檔名（內嵌優先，讀不到才退回全域 checkpoint）。
-
-    custom workflow 的模型內嵌於 JSON（不被全域覆寫），是實際生成所用，故以內嵌值為準。
-    任何錯誤 → 退回全域 checkpoint，不讓呼叫端 crash。
-    """
+    """工作流名 → 實際生效的模型檔名（內嵌優先，讀不到才退回全域 checkpoint） [FD-034]"""
     wf: dict = {}
     try:
         from app.services.ai.workflow_builder import _load_workflow
@@ -100,24 +81,24 @@ def resolve_checkpoint_for_workflow(workflow_name: str) -> str:
         return ""
 
 
-def _load_families() -> dict[str, str]:
-    """Load checkpoint-pattern → family from checkpoint_styles.yml `families` section."""
+def load_checkpoint_styles_section(section: str) -> dict:
+    """讀 checkpoint_styles.yml 的一個區段（checkpoints／families）；失敗回 {}。"""
     try:
         with open(_STYLES_YML, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        return data.get("families", {})
+        return data.get(section, {})
     except Exception as e:
-        logger.warning("[capability] Could not load checkpoint_styles.yml families: %s", e)
+        logger.warning("Could not load checkpoint_styles.yml [%s]: %s", section, e)
         return {}
 
 
-def resolve_family(checkpoint_name: str) -> str:
-    """
-    Map checkpoint filename → family string.
+def _load_families() -> dict[str, str]:
+    """checkpoint 檔名 pattern → family。"""
+    return load_checkpoint_styles_section("families")
 
-    Pattern matching：case-insensitive substring，同 _detect_style 邏輯。
-    Fallback = 'sdxl'（現況全 SDXL，維持零行為變更）。
-    """
+
+def resolve_family(checkpoint_name: str) -> str:
+    """Map checkpoint filename → family string [FD-035]"""
     if not checkpoint_name:
         return "sdxl"
     families = _load_families()
@@ -132,23 +113,7 @@ def resolve_family(checkpoint_name: str) -> str:
 
 
 def resolve_capability(wf: dict, checkpoint_name: str) -> dict:
-    """
-    Compute capability for a given workflow dict + checkpoint.
-
-    Returns:
-        {
-          "ipa_supported": bool,
-          "cn_supported":  bool,
-          "family":        str,
-          "models":        dict | None,   # 注入模型檔名；None = 不支援注入
-          "family_conflict": str | None,  # SYNC-003："loader_mismatch" = 名稱與載入節點矛盾
-        }
-
-    判定邏輯（混合）：
-      1. wf 已有節點 → 支援（無論家族）
-      2. INJECT_MODELS[family] 有對應模型 → 可動態注入 → 支援
-      否則 → 不支援
-    """
+    """Compute capability for a given workflow dict + checkpoint [FD-036]"""
     family = resolve_family(checkpoint_name)
 
     # [CN-089] 名稱判定與載入節點矛盾 → 什麼都不注入，也不改判 sdxl（護欄不猜）
@@ -200,21 +165,16 @@ def resolve_capability(wf: dict, checkpoint_name: str) -> dict:
         "lllite_node_class": lllite_node_class,  # 探測到的實際 class 名，None = 未探測/不可用
         "family":        family,
         "models":        models,
-        "family_conflict": None,             # SYNC-003 A2：None = 名稱與載入節點一致
+        "family_conflict": None,             # None＝名稱與載入節點一致
     }
 
 
-# SYNC-003 A2（2026-09-16）：已告警過的 (checkpoint, family)。每張圖會解析 capability
-# 多次（API 閘門＋service 內兩處），不去重會洗版；沿用 `_LLLITE_UNAVAILABLE_WARNED` 慣例。
+# 已告警過的 (checkpoint, family)：每張圖會解析多次，去重避免洗版
 _LOADER_CONFLICT_WARNED: set[tuple[str, str]] = set()
 
 
 def _is_loader_family_conflict(wf: dict, family: str) -> bool:
-    """family 必須用 UNet 載入器，但工作流只有 CheckpointLoaderSimple → True。純函式。
-
-    wf 為空或非 dict（呼叫端讀不到工作流時會傳 {}）→ False：沒有結構資訊就不下判斷，
-    維持既有依名稱的行為。
-    """
+    """family 必須用 UNet 載入器，但工作流只有 CheckpointLoaderSimple → True。純函式 [FD-037]"""
     if family not in _UNET_ONLY_FAMILIES or not isinstance(wf, dict):
         return False
     types = {n.get("class_type") for n in wf.values() if isinstance(n, dict)}
@@ -240,7 +200,7 @@ def _warn_loader_family_conflict(checkpoint_name: str, family: str) -> None:
 _lllite_node_class_cache: str | None = None
 
 
-# [CN-094] warn-once：同一 reason 只吵一次（實測會洗版 28 次），reason 變了才再吵
+# [CN-094] warn-once：同一 reason 只告警一次，reason 變了才再告警
 _LLLITE_UNAVAILABLE_WARNED: set[str] = set()
 
 
@@ -256,11 +216,7 @@ def _warn_lllite_unavailable(reason: str, detail: str) -> None:
 
 
 def _resolve_lllite_weight() -> str | None:
-    """問 ComfyUI 有沒有可用的 Anima LLLite 權重，回檔名或 None。
-
-    偵測結果在 comfyui_client 內快取（成功永久、失敗退避），故不會每次生成都打 API。
-    任何失敗都回 None → 自動退到鏈的下一個機制（Resilient errors）。
-    """
+    """問 ComfyUI 有沒有可用的 Anima LLLite 權重，回檔名或 None [FD-038]"""
     global _lllite_node_class_cache
     try:
         from app.services import comfyui_client
@@ -283,9 +239,5 @@ def _resolve_lllite_weight() -> str | None:
 
 
 def _resolve_lllite_node_class() -> str | None:
-    """回傳最近一次 _resolve_lllite_weight() 探測到的實際 class 名。
-
-    不獨立打 API —— 呼叫端必須先呼叫過 _resolve_lllite_weight()（resolve_capability
-    的呼叫順序已保證這點）。這是刻意的側寫快取而非參數，見上方註解。
-    """
+    """回傳最近一次 _resolve_lllite_weight() 探測到的實際 class 名 [FD-039]"""
     return _lllite_node_class_cache

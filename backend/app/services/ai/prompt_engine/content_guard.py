@@ -1,22 +1,6 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""NSFW／未成年內容護欄 —— 全專案唯一入口（2026-09-24 整合）。
-
-歷史：S9（2026-07-13）的 `_NSFW_BANNED`（compiler sanitize 層）＋人設圖固定補 nsfw 負向，
-在 ca2267f（09-21）被拔除；本檔把原本散在 compiler／character_design_service 的規則集中，
-並補上「送進 ComfyUI 前最後一道閘」（wf_node_ops._inject_prompts）。
-
-兩層、兩種強度：
-  1. 未成年情境（角色年齡 < MINOR_AGE_LIMIT，或正向含 child/loli/… 等標記）
-     → **一律強制**：剝除性相關 tag（含 cleavage/lingerie 等擦邊詞）＋負向補 MINOR_NEGATIVE_GUARD。
-       不受 NSFW_GUARD_ENABLED 控制，沒有開關，也不應該加開關。
-  2. 一般情境 → 受 `.env` 的 NSFW_GUARD_ENABLED（預設 true）控制：
-       剝除正向露骨 tag；負向只在 adult_negative=True 的呼叫點（人設圖，沿用 S9）補 NSFW_NEGATIVE_GUARD，
-       其餘路徑不動負向 → 未含露骨 tag 的 prompt 逐字不變（illustrious golden 鎖零回歸）。
-       false＝成人內容不過濾（debug 用）。
-
-Debug：每次實際剝除都會 logger.info 一行 `[nsfw-guard] layer=… minor=… age=… removed=[…]`，
-grep `nsfw-guard` 即可看到每一層拿掉了什麼。
-"""
+"""[CN-118] NSFW／未成年內容護欄（全專案唯一入口）。
+未成年情境一律強制、無開關；一般情境受 NSFW_GUARD_ENABLED 控制。log 關鍵字 `nsfw-guard`。"""
 from __future__ import annotations
 
 import logging
@@ -106,10 +90,7 @@ def _append_missing(negative: str, guard: str) -> str:
 
 def apply_content_guard(positive: str, negative: str, age: Optional[int] = None,
                         layer: str = "", adult_negative: bool = False) -> tuple[str, str]:
-    """回傳 (正向, 負向)。冪等：同一組輸入重複套用結果不變。
-
-    adult_negative：一般情境是否也在負向補 NSFW_NEGATIVE_GUARD（未成年情境一律補）。
-    """
+    """回傳 (正向, 負向)。冪等：同一組輸入重複套用結果不變 [FD-083]"""
     minor = is_minor_context(positive, age)
     if minor:
         pattern, neg_guard = _MINOR_SEXUAL_RE, MINOR_NEGATIVE_GUARD

@@ -1,5 +1,4 @@
-// Craftflow CharacterTab 葉子元件（2026-06-13 A2 增量2：自 CharacterTab.jsx 抽出）
-// 相依：S（樣式）、React hooks；STATUS_COLOR / GENDER_OPTIONS 為內部用，不外曝。
+// CharacterTab 葉子元件（STATUS_COLOR / GENDER_OPTIONS 僅內部使用）
 
 import { useState, useEffect } from 'react'
 import { S } from './characterTabStyles.js'

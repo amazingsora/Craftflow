@@ -1,6 +1,4 @@
-// 生圖類分頁（Process／Generate／Compose）共用的樣式 token。
-// 2026-09-24 重複碼整合：三個分頁的 S 物件中下列區塊逐字相同（最長 24 行），抽出後以
-// `key: UI.key` 或 `{ ...UI.key, 覆寫 }` 引用；數值與原本完全一致，不改外觀。
+// 生圖類分頁（Process／Generate／Compose）共用樣式；以 `UI.key` 或 `{ ...UI.key, 覆寫 }` 引用
 
 export const UI = {
   btnPrimary: {
