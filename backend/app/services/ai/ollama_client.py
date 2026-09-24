@@ -107,16 +107,8 @@ def analyze_image_bytes(
     options: Optional[dict] = None,
     keep_alive: Optional[int] = None,
 ) -> str:
-    try:
-        resized = _resize_for_vision(image_bytes)
-        image_b64 = base64.b64encode(resized).decode()
-        payload: dict = {"model": model, "prompt": prompt, "images": [image_b64], "stream": False, "think": False}
-        if options:
-            payload["options"] = options
-        _apply_keep_alive(payload, keep_alive)
-        return _post_generate(payload, TIMEOUT_VISION, "Vision")
-    except Exception as e:
-        return f"[Vision error at {OLLAMA_BASE}: {e}]"
+    # 單張＝多張版的特例（len==1 時 max_px 同為 _VISION_MAX_PX，payload 逐欄相同）；2026-09-24 重複碼整合
+    return analyze_multi_images_bytes([image_bytes], prompt, model=model, options=options, keep_alive=keep_alive)
 
 
 def analyze_multi_images_bytes(

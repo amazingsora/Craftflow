@@ -12,17 +12,18 @@ prompt/seed/參數」可反查（見 models/generation_history.py）。
 """
 from __future__ import annotations
 
-import shutil
-import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, status
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.api._upload_utils import (
+    ensure_image_type, file_response_or_404, remove_file_if_exists, save_upload,
+)
 from app.core.config import UPLOAD_DIR
 from app.core.database import get_db
 from app.core import state
@@ -42,7 +43,6 @@ router = APIRouter(tags=["characters"])
 DbDep = Annotated[Session, Depends(get_db)]
 
 _PORTRAIT_DIR = UPLOAD_DIR / "portraits"
-_ALLOWED = {"image/jpeg", "image/png", "image/webp"}
 
 
 # [CN-110] 以 X-History-Id 回填 saved_filename，讓「已存的圖 → 當初的 prompt/seed/參數/耗時」可反查
@@ -68,10 +68,20 @@ def _history_for_file(db: Session, filename: str) -> GenerationHistory:
     return rec
 
 
-def _nth_ai_image(existing: list[str], index: int) -> str:
+def _get_character_or_404(db: Session, character_id: int) -> Character:
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return character
+
+
+def _nth_image(existing: list[str], index: int, label: str = "AI 圖") -> str:
     if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="AI 圖不存在")
+        raise HTTPException(status_code=404, detail=f"{label}不存在")
     return existing[index]
+
+
+_nth_ai_image = _nth_image  # 舊名（tests/test_generation_info_link.py 引用）
 
 
 @router.get("/characters/default-project")
@@ -106,17 +116,13 @@ def create_character(project_id: int, data: CharacterCreate, db: DbDep):
 
 @router.get("/characters/{character_id}", response_model=CharacterResponse)
 def get_character(character_id: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+    character = _get_character_or_404(db, character_id)
     return character
 
 
 @router.put("/characters/{character_id}", response_model=CharacterResponse)
 def update_character(character_id: int, data: CharacterUpdate, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+    character = _get_character_or_404(db, character_id)
     for key, value in data.model_dump(exclude_unset=True).items():
         setattr(character, key, value)
     db.commit()
@@ -126,34 +132,35 @@ def update_character(character_id: int, data: CharacterUpdate, db: DbDep):
 
 @router.delete("/characters/{character_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_character(character_id: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+    character = _get_character_or_404(db, character_id)
     db.delete(character)
     db.commit()
 
 
-@router.post("/characters/{character_id}/summarize", response_model=CharacterResponse)
-def summarize_character(character_id: int, db: DbDep, model: Optional[str] = None):
-    """AI organises the character's raw notes into a structured profile summary."""
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+# 主角色／變體共用（2026-09-24 整合）：兩者只差欄位來源（Character 屬性 vs variant dict）
+_SUMMARY_FIELDS = ("core_traits", "behavior_rules", "voice_style", "notes")
+
+
+def _summarize_or_503(name: str, fields: dict, model: Optional[str]) -> str:
     used_model = model or state.get_text_model()
-    summary = character_service.generate_summary(
-        name=character.name,
-        core_traits=character.core_traits,
-        behavior_rules=character.behavior_rules,
-        voice_style=character.voice_style,
-        notes=character.notes,
-        model=used_model,
-    )
+    summary = character_service.generate_summary(name=name, model=used_model, **fields)
     if not summary or _ollama_is_error(summary):
         raise HTTPException(
             status_code=503,
             detail=f"Ollama 回傳錯誤（模型：{used_model}）：{summary or '空回應'}",
         )
-    character.ai_summary = summary
+    return summary
+
+
+@router.post("/characters/{character_id}/summarize", response_model=CharacterResponse)
+def summarize_character(character_id: int, db: DbDep, model: Optional[str] = None):
+    """AI organises the character's raw notes into a structured profile summary."""
+    character = _get_character_or_404(db, character_id)
+    character.ai_summary = _summarize_or_503(
+        character.name,
+        {f: getattr(character, f) for f in _SUMMARY_FIELDS},
+        model,
+    )
     db.commit()
     db.refresh(character)
     return character
@@ -166,25 +173,10 @@ async def upload_portrait(
     db: DbDep,
 ):
     """Upload a concept image for this character."""
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    if file.content_type not in _ALLOWED:
-        raise HTTPException(status_code=400, detail=f"Unsupported type: {file.content_type}")
-
-    _PORTRAIT_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename).suffix if file.filename else ".png"
-    filename = f"{character_id}_{uuid.uuid4().hex}{suffix}"
-    dest = _PORTRAIT_DIR / filename
-    with dest.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    # Remove old portrait file if present
-    if character.portrait_path:
-        old = _PORTRAIT_DIR / character.portrait_path
-        if old.exists():
-            old.unlink(missing_ok=True)
-
+    character = _get_character_or_404(db, character_id)
+    ensure_image_type(file)
+    filename = save_upload(file, _PORTRAIT_DIR, f"{character_id}_")
+    remove_file_if_exists(_PORTRAIT_DIR, character.portrait_path)
     character.portrait_path = filename
     db.commit()
     db.refresh(character)
@@ -197,16 +189,90 @@ def get_portrait(character_id: int, db: DbDep):
     character = db.get(Character, character_id)
     if not character or not character.portrait_path:
         raise HTTPException(status_code=404, detail="Portrait not found")
-    path = _PORTRAIT_DIR / character.portrait_path
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Portrait file missing")
-    return FileResponse(str(path))
+    return file_response_or_404(_PORTRAIT_DIR / character.portrait_path, "Portrait file missing")
 
 
-# ── Concept Images (multi, max 3) ─────────────────────────────────────────────
+# ── 概念圖（max 3）／AI 人設圖（max 8）：主角色與變體 slot 共用 ─────────────────
+# 2026-09-24 重複碼整合：原 10 支端點（主角色 5 + 變體 5）逐支展開「查角色 → 取清單 →
+# 驗 index → 存／刪／讀檔」，彼此相似度 86–97%，差別只在清單位置（Character 欄位 vs
+# variants[slot]）與檔名前綴。行為（錯誤訊息、檢查順序、檔名格式）逐字保留。
 
 _MAX_CONCEPT = 3
+_MAX_AI_IMAGES = 8
 _AI_IMAGE_DIR = UPLOAD_DIR / "ai_images"
+
+
+@dataclass(frozen=True)
+class _ImageKind:
+    field: str          # Character／variant dict 上的清單欄位名
+    directory: Path
+    max_count: int
+    file_tag: str       # 檔名片段：concept / ai
+    label: str          # 錯誤訊息用
+    full_detail: str    # 數量已滿的 400 訊息
+    check_type: bool    # 上傳時驗 content-type（沿用原行為：AI 圖不驗）
+
+
+_CONCEPT = _ImageKind("concept_images", _PORTRAIT_DIR, _MAX_CONCEPT, "concept", "概念圖",
+                      f"最多只能上傳 {_MAX_CONCEPT} 張概念圖", check_type=True)
+_AI = _ImageKind("ai_generated_images", _AI_IMAGE_DIR, _MAX_AI_IMAGES, "ai", "AI 圖",
+                 f"最多只能儲存 {_MAX_AI_IMAGES} 張 AI 生成圖", check_type=False)
+
+
+def _image_list(character: Character, slot: Optional[int], kind: _ImageKind) -> list[str]:
+    """slot=None → 主角色；1..N → 變體（經 _slot_index 驗證）。回傳可修改的副本。"""
+    if slot is None:
+        return list(getattr(character, kind.field) or [])
+    return list(_get_variants(character)[_slot_index(slot)].get(kind.field) or [])
+
+
+def _set_image_list(character: Character, slot: Optional[int], kind: _ImageKind, files: list[str]) -> None:
+    if slot is None:
+        setattr(character, kind.field, files)
+        return
+    variants = _get_variants(character)
+    variants[_slot_index(slot)][kind.field] = files
+    character.variants = variants
+    flag_modified(character, 'variants')
+
+
+def _add_image(db: Session, character_id: int, slot: Optional[int], kind: _ImageKind,
+               file: UploadFile, history_id: Optional[int] = None) -> Character:
+    character = _get_character_or_404(db, character_id)
+    if kind.check_type:
+        ensure_image_type(file)
+    existing = _image_list(character, slot, kind)
+    if len(existing) >= kind.max_count:
+        raise HTTPException(status_code=400, detail=kind.full_detail)
+    slot_tag = "" if slot is None else f"v{slot}_"
+    filename = save_upload(file, kind.directory, f"{slot_tag}{kind.file_tag}_{character_id}_")
+    _set_image_list(character, slot, kind, [*existing, filename])
+    _bind_history_to_file(db, history_id, filename)
+    db.commit()
+    db.refresh(character)
+    return character
+
+
+def _remove_image(db: Session, character_id: int, slot: Optional[int], kind: _ImageKind,
+                  index: int) -> Character:
+    character = _get_character_or_404(db, character_id)
+    existing = _image_list(character, slot, kind)
+    (kind.directory / _nth_image(existing, index, kind.label)).unlink(missing_ok=True)
+    _set_image_list(character, slot, kind, [f for i, f in enumerate(existing) if i != index])
+    db.commit()
+    db.refresh(character)
+    return character
+
+
+def _serve_image(db: Session, character_id: int, slot: Optional[int], kind: _ImageKind, index: int):
+    existing = _image_list(_get_character_or_404(db, character_id), slot, kind)
+    return file_response_or_404(kind.directory / _nth_image(existing, index, kind.label),
+                                f"{kind.label}檔案不存在")
+
+
+def _ai_image_generation_info(db: Session, character_id: int, slot: Optional[int], index: int):
+    existing = _image_list(_get_character_or_404(db, character_id), slot, _AI)
+    return _history_for_file(db, _nth_image(existing, index, _AI.label))
 
 
 @router.post("/characters/{character_id}/concept-images", response_model=CharacterResponse)
@@ -215,64 +281,17 @@ async def upload_concept_image(
     file: Annotated[UploadFile, File(...)],
     db: DbDep,
 ):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    if file.content_type not in _ALLOWED:
-        raise HTTPException(status_code=400, detail=f"Unsupported type: {file.content_type}")
-    existing = list(character.concept_images or [])
-    if len(existing) >= _MAX_CONCEPT:
-        raise HTTPException(status_code=400, detail=f"最多只能上傳 {_MAX_CONCEPT} 張概念圖")
-
-    _PORTRAIT_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename).suffix if file.filename else ".png"
-    filename = f"concept_{character_id}_{uuid.uuid4().hex}{suffix}"
-    dest = _PORTRAIT_DIR / filename
-    with dest.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    character.concept_images = [*existing, filename]
-    db.commit()
-    db.refresh(character)
-    return character
+    return _add_image(db, character_id, None, _CONCEPT, file)
 
 
 @router.delete("/characters/{character_id}/concept-images/{index}", response_model=CharacterResponse)
 def delete_concept_image(character_id: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    existing = list(character.concept_images or [])
-    if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="概念圖不存在")
-
-    filename = existing[index]
-    path = _PORTRAIT_DIR / filename
-    path.unlink(missing_ok=True)
-
-    character.concept_images = [f for i, f in enumerate(existing) if i != index]
-    db.commit()
-    db.refresh(character)
-    return character
+    return _remove_image(db, character_id, None, _CONCEPT, index)
 
 
 @router.get("/characters/{character_id}/concept-images/{index}")
 def get_concept_image(character_id: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    existing = list(character.concept_images or [])
-    if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="概念圖不存在")
-    path = _PORTRAIT_DIR / existing[index]
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="概念圖檔案不存在")
-    return FileResponse(str(path))
-
-
-# ── AI Generated Images (max 3) ───────────────────────────────────────────────
-
-_MAX_AI_IMAGES = 8
+    return _serve_image(db, character_id, None, _CONCEPT, index)
 
 
 @router.post("/characters/{character_id}/ai-images", response_model=CharacterResponse)
@@ -282,69 +301,24 @@ async def save_ai_image(
     db: DbDep,
     history_id: Annotated[Optional[int], Form()] = None,
 ):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    existing = list(character.ai_generated_images or [])
-    if len(existing) >= _MAX_AI_IMAGES:
-        raise HTTPException(status_code=400, detail=f"最多只能儲存 {_MAX_AI_IMAGES} 張 AI 生成圖")
-
-    _AI_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename).suffix if file.filename else ".png"
-    filename = f"ai_{character_id}_{uuid.uuid4().hex}{suffix}"
-    dest = _AI_IMAGE_DIR / filename
-    with dest.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    character.ai_generated_images = [*existing, filename]
-    _bind_history_to_file(db, history_id, filename)
-    db.commit()
-    db.refresh(character)
-    return character
+    return _add_image(db, character_id, None, _AI, file, history_id)
 
 
 @router.delete("/characters/{character_id}/ai-images/{index}", response_model=CharacterResponse)
 def delete_ai_image(character_id: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    existing = list(character.ai_generated_images or [])
-    if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="AI 圖不存在")
-
-    filename = existing[index]
-    path = _AI_IMAGE_DIR / filename
-    path.unlink(missing_ok=True)
-
-    character.ai_generated_images = [f for i, f in enumerate(existing) if i != index]
-    db.commit()
-    db.refresh(character)
-    return character
+    return _remove_image(db, character_id, None, _AI, index)
 
 
 @router.get("/characters/{character_id}/ai-images/{index}")
 def get_ai_image(character_id: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    existing = list(character.ai_generated_images or [])
-    if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="AI 圖不存在")
-    path = _AI_IMAGE_DIR / existing[index]
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="AI 圖檔案不存在")
-    return FileResponse(str(path))
+    return _serve_image(db, character_id, None, _AI, index)
 
 
 @router.get("/characters/{character_id}/ai-images/{index}/generation-info",
             response_model=GenerationHistoryResponse)
 def get_ai_image_generation_info(character_id: int, index: int, db: DbDep):
     """已存 AI 人設圖 → 當初的 prompt / seed / 參數 / 耗時。"""
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    filename = _nth_ai_image(list(character.ai_generated_images or []), index)
-    return _history_for_file(db, filename)
+    return _ai_image_generation_info(db, character_id, None, index)
 
 
 # ── Variant text-field CRUD ───────────────────────────────────────────────────
@@ -366,18 +340,14 @@ class VariantUpdate(BaseModel):
 
 @router.get("/characters/{character_id}/variants/{slot}")
 def get_variant(character_id: int, slot: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+    character = _get_character_or_404(db, character_id)
     idx = _slot_index(slot)
     return _get_variants(character)[idx]
 
 
 @router.put("/characters/{character_id}/variants/{slot}", response_model=CharacterResponse)
 def update_variant(character_id: int, slot: int, data: VariantUpdate, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+    character = _get_character_or_404(db, character_id)
     idx = _slot_index(slot)
     variants = _get_variants(character)
     variants[idx].update({k: v for k, v in data.model_dump(exclude_unset=True).items()})
@@ -388,74 +358,25 @@ def update_variant(character_id: int, slot: int, data: VariantUpdate, db: DbDep)
     return character
 
 
-# ── Variant concept images ────────────────────────────────────────────────────
+# ── Variant concept／AI images（共用上方 _add_image／_remove_image／_serve_image） ──
 
 @router.post("/characters/{character_id}/variants/{slot}/concept-images", response_model=CharacterResponse)
 async def upload_variant_concept_image(
     character_id: int, slot: int,
     file: Annotated[UploadFile, File(...)], db: DbDep,
 ):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    if file.content_type not in _ALLOWED:
-        raise HTTPException(status_code=400, detail=f"Unsupported type: {file.content_type}")
-    idx = _slot_index(slot)
-    variants = _get_variants(character)
-    existing = list(variants[idx].get("concept_images") or [])
-    if len(existing) >= _MAX_CONCEPT:
-        raise HTTPException(status_code=400, detail=f"最多只能上傳 {_MAX_CONCEPT} 張概念圖")
-
-    _PORTRAIT_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename).suffix if file.filename else ".png"
-    filename = f"v{slot}_concept_{character_id}_{uuid.uuid4().hex}{suffix}"
-    dest = _PORTRAIT_DIR / filename
-    with dest.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    variants[idx]["concept_images"] = [*existing, filename]
-    character.variants = variants
-    flag_modified(character, 'variants')
-    db.commit()
-    db.refresh(character)
-    return character
+    return _add_image(db, character_id, slot, _CONCEPT, file)
 
 
 @router.delete("/characters/{character_id}/variants/{slot}/concept-images/{index}", response_model=CharacterResponse)
 def delete_variant_concept_image(character_id: int, slot: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    idx = _slot_index(slot)
-    variants = _get_variants(character)
-    existing = list(variants[idx].get("concept_images") or [])
-    if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="概念圖不存在")
-    (_PORTRAIT_DIR / existing[index]).unlink(missing_ok=True)
-    variants[idx]["concept_images"] = [f for i, f in enumerate(existing) if i != index]
-    character.variants = variants
-    flag_modified(character, 'variants')
-    db.commit()
-    db.refresh(character)
-    return character
+    return _remove_image(db, character_id, slot, _CONCEPT, index)
 
 
 @router.get("/characters/{character_id}/variants/{slot}/concept-images/{index}")
 def get_variant_concept_image(character_id: int, slot: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    idx = _slot_index(slot)
-    existing = list((_get_variants(character)[idx].get("concept_images")) or [])
-    if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="概念圖不存在")
-    path = _PORTRAIT_DIR / existing[index]
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="概念圖檔案不存在")
-    return FileResponse(str(path))
+    return _serve_image(db, character_id, slot, _CONCEPT, index)
 
-
-# ── Variant AI images ─────────────────────────────────────────────────────────
 
 @router.post("/characters/{character_id}/variants/{slot}/ai-images", response_model=CharacterResponse)
 async def save_variant_ai_image(
@@ -463,101 +384,36 @@ async def save_variant_ai_image(
     file: Annotated[UploadFile, File(...)], db: DbDep,
     history_id: Annotated[Optional[int], Form()] = None,
 ):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    idx = _slot_index(slot)
-    variants = _get_variants(character)
-    existing = list(variants[idx].get("ai_generated_images") or [])
-    if len(existing) >= _MAX_AI_IMAGES:
-        raise HTTPException(status_code=400, detail=f"最多只能儲存 {_MAX_AI_IMAGES} 張 AI 生成圖")
-
-    _AI_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename).suffix if file.filename else ".png"
-    filename = f"v{slot}_ai_{character_id}_{uuid.uuid4().hex}{suffix}"
-    dest = _AI_IMAGE_DIR / filename
-    with dest.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    variants[idx]["ai_generated_images"] = [*existing, filename]
-    character.variants = variants
-    flag_modified(character, 'variants')
-    _bind_history_to_file(db, history_id, filename)
-    db.commit()
-    db.refresh(character)
-    return character
+    return _add_image(db, character_id, slot, _AI, file, history_id)
 
 
 @router.delete("/characters/{character_id}/variants/{slot}/ai-images/{index}", response_model=CharacterResponse)
 def delete_variant_ai_image(character_id: int, slot: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    idx = _slot_index(slot)
-    variants = _get_variants(character)
-    existing = list(variants[idx].get("ai_generated_images") or [])
-    if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="AI 圖不存在")
-    (_AI_IMAGE_DIR / existing[index]).unlink(missing_ok=True)
-    variants[idx]["ai_generated_images"] = [f for i, f in enumerate(existing) if i != index]
-    character.variants = variants
-    flag_modified(character, 'variants')
-    db.commit()
-    db.refresh(character)
-    return character
+    return _remove_image(db, character_id, slot, _AI, index)
 
 
 @router.get("/characters/{character_id}/variants/{slot}/ai-images/{index}")
 def get_variant_ai_image(character_id: int, slot: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    idx = _slot_index(slot)
-    existing = list((_get_variants(character)[idx].get("ai_generated_images")) or [])
-    if index < 0 or index >= len(existing):
-        raise HTTPException(status_code=404, detail="AI 圖不存在")
-    path = _AI_IMAGE_DIR / existing[index]
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="AI 圖檔案不存在")
-    return FileResponse(str(path))
+    return _serve_image(db, character_id, slot, _AI, index)
 
 
 @router.get("/characters/{character_id}/variants/{slot}/ai-images/{index}/generation-info",
             response_model=GenerationHistoryResponse)
 def get_variant_ai_image_generation_info(character_id: int, slot: int, index: int, db: DbDep):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-    idx = _slot_index(slot)
-    existing = list((_get_variants(character)[idx].get("ai_generated_images")) or [])
-    return _history_for_file(db, _nth_ai_image(existing, index))
+    return _ai_image_generation_info(db, character_id, slot, index)
 
 
 # ── Variant summarize ─────────────────────────────────────────────────────────
 
 @router.post("/characters/{character_id}/variants/{slot}/summarize", response_model=CharacterResponse)
 def summarize_variant(character_id: int, slot: int, db: DbDep, model: Optional[str] = None):
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+    character = _get_character_or_404(db, character_id)
     idx = _slot_index(slot)
     variants = _get_variants(character)
     v = variants[idx]
-    used_model = model or state.get_text_model()
-    summary = character_service.generate_summary(
-        name=character.name,
-        core_traits=v.get("core_traits"),
-        behavior_rules=v.get("behavior_rules"),
-        voice_style=v.get("voice_style"),
-        notes=v.get("notes"),
-        model=used_model,
+    variants[idx]["ai_summary"] = _summarize_or_503(
+        character.name, {f: v.get(f) for f in _SUMMARY_FIELDS}, model,
     )
-    if not summary or _ollama_is_error(summary):
-        raise HTTPException(
-            status_code=503,
-            detail=f"Ollama 回傳錯誤（模型：{used_model}）：{summary or '空回應'}",
-        )
-    variants[idx]["ai_summary"] = summary
     character.variants = variants
     flag_modified(character, 'variants')
     db.commit()

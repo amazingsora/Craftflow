@@ -48,6 +48,8 @@ def unsubscribe_progress(job_id: str, q) -> None:
     qs = _progress_queues.get(job_id, [])
     if q in qs:
         qs.remove(q)
+    if not qs:
+        _progress_queues.pop(job_id, None)
 
 
 def _push_progress(job_id: str, event) -> None:
@@ -56,6 +58,41 @@ def _push_progress(job_id: str, event) -> None:
             q.put_nowait(event)
         except Exception:
             pass
+
+
+_TERMINAL_STATUSES = ("done", "error")
+_SSE_HEARTBEAT_SECONDS = 15
+
+
+async def stream_job_events(job: GenJob):
+    """
+    SSE 事件產生器（供 GET /art/jobs/{id}/progress）。
+
+    - 先訂閱再判斷狀態：兩者之間沒有 await，不會漏掉 finally 推出的終結事件。
+    - job 已結束（前端訂閱晚於完成）→ 直接送終結事件收尾。
+    - 逾時只送 heartbeat 並繼續等，不結束串流（長 job 會超過單次 timeout）。
+    - 每次 heartbeat 順便檢查狀態，作為終結事件遺失時的保底。
+    """
+    q = subscribe_progress(job.id)
+    try:
+        if job.status in _TERMINAL_STATUSES:
+            yield {**job.progress, "event": job.status}
+            return
+        yield {**job.progress, "event": "snapshot"}
+        while True:
+            try:
+                ev = await asyncio.wait_for(q.get(), timeout=_SSE_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                if job.status in _TERMINAL_STATUSES:
+                    yield {**job.progress, "event": job.status}
+                    return
+                yield {"heartbeat": True}
+                continue
+            if ev is None:  # 哨兵：run_txt2img_job finally 已推完終結事件
+                return
+            yield ev
+    finally:
+        unsubscribe_progress(job.id, q)
 
 
 def create_job(meta: dict) -> GenJob:

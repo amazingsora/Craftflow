@@ -64,19 +64,22 @@ flowchart LR
 
 ## 1. 目前議題
 
-> ✍️ 本卡由 Claude 依使用者 2026-09-19 的三項裁決代擬。Codex／Gemini 以本卡為準。
+> ✍️ 本卡由 Claude 依使用者 2026-09-23 對話裁決代擬（「家族當預設就好」「不要有固定配方，移除」「不等 Gemini 原文，先寫 §2.1」）。Codex／Gemini 以本卡為準。
+> ID 說明：`SYNC-006` 已被 2026-09-20 的 N14（`/free` 量測時機）非正式使用（見 `doc/BACKLOG.md` D 節、`CODE_NOTES.md`），為避免撞號本案取 `SYNC-007`。
 
 | 欄位 | 內容 |
 |---|---|
-| **ID** | `SYNC-005` |
-| **標題** | 畫風「太平塗」與 Anima 條件控制失效：拆掉全域平塗算子、把 LLLite 修到真正可用 |
-| **提出者 / 日期** | amazingsora / 2026-09-19（口頭回饋：「anima 的 CN 效果不如 SDXL 且畫風沒有達到我的要求」「fabricatedXL_v70 也是畫風差一點，太平塗」） |
-| **前案** | `SYNC-004` 已提前歸檔至 `doc/agent_sync/2026-09-19_SYNC-004_出圖品質對標官方範例.md`。本案**不接手**其未完成項（C2/C3/C5、本機 pytest、git add），只沿用其證據（T0 PASS、T0-E1～E3） |
-| **目標** | ① 找出「太平塗」的單一元凶並拆掉，而不是繼續整組調權重<br>② 把 Anima 的 LLLite 從「只給六成」修到真正可用，並量化底模錯配的代價<br>③ 補上臉部修復的有效強度<br>④ 修掉一份會誤導下一輪決策的錯誤文件 |
-| **軌** | **S｜畫風算子 A/B**（零程式，改 yml）<br>**N｜Anima 條件控制**（小面積程式＋零程式對照）<br>**F｜臉部修復強度**（零程式，改 workflow widget）<br>**X｜文件修正**（零程式） |
-| **範圍限制** | ① 使用者裁決**維持 D1 純 prompt，LoRA 本輪不啟用** → 軌 S 不得引入任何 LoRA<br>② 使用者裁決 **Anima 不封存，要修到可用** → 軌 N 不得以「建議放棄」結案<br>③ 不換顯卡、不升 ComfyUI 版本<br>④ 不動 `custom_workflows` 節點拓樸（沿用 SYNC-004 §1 的使用者明示）；軌 F 只改既有節點的 widget 值<br>⑤ 不做兩段式放大／hires-fix |
-| **驗收標準** | **S**：五組單變因對照跑完，能指名「太平塗」的元凶是哪一個 tag；勝出組的皮膚有明暗階層（非單一平色塊）且布料仍為硬邊 cel<br>**N**：`lllite_strength` 與 UI 滑桿解耦，掃描區間涵蓋 1.0 以上；`base10` 同代對照有圖有數據，能回答「底模錯配吃掉多少貼合度」<br>**F**：臉部五官可辨識度目視提升，且未出現換臉／崩臉<br>**共同**：`cd backend && pytest tests/` 全綠；`Standard_V38` 預設路徑零行為變更（所有新旋鈕預設值＝現況） |
-| **狀態** | 🔵 執行中（Gemini §2.3 已回；Codex §2.2 未參與。§2.4 整合、§2.5 核可、§2.6 落地完成：軌 E／V／L／I／N／X 全數沙箱驗證通過，測試 +10。**待使用者本機**：重啟後端、`pytest tests/`、依 §2.6「四、」五步測試、`git add`。軌 S 五組畫風 A/B 待本機判讀） |
+| **ID** | `SYNC-007` |
+| **標題** | prompt 配方改以「底模家族」為鍵：移除 workflow 檔名層、V37 定版配方退役、illustrious 換 R1 配方；**追加軌 P：個人自訂標籤分家族 `.env`** |
+| **提出者 / 日期** | amazingsora / 2026-09-23 |
+| **前案** | `SYNC-005` 提前歸檔至 `doc/agent_sync/2026-09-23_SYNC-005_畫風太平塗-Anima條件控制.md`；遺留本機項目轉 `doc/BACKLOG.md` §A9。本案沿用其證據，不接手其遺留項 |
+| **目標** | ① 新增／改名 workflow（如 `Standard_V41`）**不必改 yml**，底模已知即生效<br>② 從結構上消滅「檔名脫鉤 → 靜默降級」（07-25、08-22、09-15、09-19 已發生四次）<br>③ illustrious 家族換成 09-23 ComfyUI 驗證過的 R1 配方<br>④ V37 定版配方退役；「V37 零回歸鎖」改為「illustrious 家族路徑鎖」 |
+| **軌** | **M｜yml 結構遷移**（零行為變更，先做）<br>**R｜illustrious 配方換 R1**（單一變因，M 驗收後才做）<br>**T｜測試改寫＋反向護欄**<br>**D｜文件同步**<br>**P｜個人自訂標籤分家族 `.env`**（09-23 追加；R 驗收後才做，單一變因；規劃見 §2.1-P） |
+| **範圍限制** | ① 不動 `custom_workflows` 節點與 widget<br>② `anima` 家族配方**逐字搬移**，本案不調<br>③ 不改 `checkpoint_styles.yml` 兩區重複問題（轉 BACKLOG）<br>④ 不改 `gen_profile.GEN_PROFILE`<br>⑤ 不保留 workflow 例外層（使用者裁決）；個案實驗改走 art_style（DB）<br>⑥（軌 P）個人標籤**只放 `.env`**（09-23 起不進 git），不進 yml／不進 DB |
+| **驗收標準** | **M**：磁碟上每支 workflow 解析出的 `quality_prefix / negative / negative_extra / style_extra / style_extra_weight` 與遷移前**逐字相同**（比對腳本）<br>**R**：露碧娜 × `Standard_V38` × seed 17021106 × IPA 0.2 × CN 0.75 → 正向尾端為 R1 畫風段、全文無 `flat color`；目視接近 R1 參考圖<br>**T**：`cd backend && pytest tests/` 全綠；新護欄對「複製一支 V41」零登錄通過、對「未知 checkpoint」紅燈<br>**共同**：新增 workflow 不需碰 yml<br>**P**：未設個人鍵 → prompt 與改動前逐字相同；設鍵 → 只作用於該家族，illustrious 出圖接近 ComfyUI K2 |
+| **狀態** | 🔵 執行中（軌 M／R／P 程式面完成並驗證；待使用者本機 pytest、R／P 實機驗收、commit） |
+
+> 09-23 15:40 追加軌 P（使用者：「Anima 額外客製標籤用 `blue archive, @kozaki yuusuke`，以 `.env` 處理且不參與 git，由使用者自行添加」「SDXL 測試後沒問題走 B」）。併入本案而非另開 SYNC-008：本案 M 尚未 commit、R 未做，另開會第五度提前歸檔；且 P 與 R 改的是同一條 `style_extra` 組裝鏈。
 
 > 開新議題：把本區塊換成新議題卡，舊議題整段移到 `doc/agent_sync/`（見 §3）。
 
@@ -88,247 +91,147 @@ flowchart LR
 
 #### 〇、結論（先講）
 
-**三個回饋是同一件事：我們在用「全域平塗算子」假造畫風。**
-
-`flat color` 是**全域**算子——它不分布料與皮膚，一律壓成無階層的純色塊。
-而目標畫風（蔚藍檔案立繪）的實際構成是：
+**`prompt_profiles.yml` 以 workflow 檔名為鍵，但它實際上從來只有「每個底模家族一份配方」。**
+18 個登錄鍵只有 3 份相異配方（E1），沒有任何一支 workflow 需要與同家族不同的配方；
+而檔名鍵每換一次版號就要補登錄，漏了就靜默降級（E4）。改成以**底模家族**為鍵後：
 
 ```
-布料 → 硬邊 cel 階梯陰影     ← cel shading 給的就是這個（對）
-皮膚 → 柔邊漸層 + 反光高光    ← flat color 把這個消滅了（錯）
-線條 → 粗黑收邊              ← thick outlines（與平塗無關，不該動）
+改前：workflow 檔名 ──(名單查表，漏登錄＝靜默降級)──► 配方
+改後：workflow ─► 內嵌 checkpoint ─► checkpoint_styles.yml ─► PromptStyle ─► families[style] ─► 配方
+                                              （既有機制，_detect_style 已在用）
 ```
 
-**所以「太平塗」的頭號嫌疑犯是 `flat color`，不是 `cel shading`，更不是權重太高。**
-這個假設在 2026-09-15 的記憶裡就寫過（「BA 立繪實際是布料硬邊 cel ＋ 皮膚柔邊漸層與反光，
-`flat color` 是全域算子，翻譯時只取硬邊沒保住皮膚有階」），對應的 A/B 從那天排到現在**一次都沒跑**。
-本案軌 S 的全部工作就是把這個 A/B 跑完。
+優先序：`art_style（DB）` ＞ `families[style]`（yml）＞ `STYLE_CONFIG`（程式內建，pony／noobai／sdxl 等未調校家族）＞ `.env`（僅 style_extra）
 
-**Anima 的 CN 弱，三條成因裡有兩條可修、一條是外部事實：**
-
-| # | 成因 | 性質 | 本案能不能處理 |
-|---|---|---|---|
-| 1 | strength 被當成 0~1 尺度餵進去，實際只給 **0.6 倍** | **實錘缺陷** | ✅ N1，小面積程式 |
-| 2 | LLLite 權重訓練在 Anima-**Base v1.0**，現行底模是 `anima_turboV11`，隔兩代 | 外部事實 | ⚠️ N2 只能**量化**代價，不能消除 |
-| 3 | 無 IPAdapter、`ToDetailerPipe` 是死節點 | 能力缺口 | ⬛ 不在本案（BACKLOG N1） |
-
-**成因 1 是本案最高槓桿的一項**：使用者習慣 SDXL ControlNet 的 0.75 ≈ 高貼合，
-但同一個 0.75 餵給 LLLite 只是 **0.75 倍乘數、低於官方 default 1.0**。
-「Anima CN 不如 SDXL」這個觀感，至少有一部分是這個尺度錯配直接造成的。
+改動集中在一個咽喉點 `workflow_builder._profile_for()`（E5），**不改任何函式簽章與呼叫端**。
+執行拆兩步：**M（結構遷移、零行為變更）→ 驗收 → R（換 R1 配方）**，確保「結構」與「配方」兩個變因分開驗。
 
 ---
 
-#### 一、證據（E1～E8，全部附檔名:行號或指令輸出）
+#### 一、證據
 
-**E1｜現況畫風配方（軌 S 的基準）**
+**E1｜18 個登錄鍵＝3 份配方（零例外）**（讀 `backend/prompt_profiles.yml` 依配方分組）
 
-`backend/prompt_profiles.yml`，anchor `&illustrious_fabricatedxl`：
+| 配方 | 登錄鍵 | 在磁碟 |
+|---|---|---|
+| illustrious（`&illustrious_fabricatedxl`，`prompt_profiles.yml:48`） | Standard_V37 / Standard_V38 / Advanced_V38 / Standard_V38_NOVE | V37 ✗ |
+| V35 黃金對照（`prompt_profiles.yml:121`） | Standard_V35 | ✗ |
+| anima（`&anima_aesthetic_turbo`，`prompt_profiles.yml:151`） | V8 / V8turbo / V8_Aesthetic / V8_trubo11 / Advanced×2 / `_0919`×4 / V8_base10 / V9×2 | V8、V8turbo、V8_base10 ✗ |
+
+磁碟上 13 支 workflow 全部是某個 anchor 的原樣複製（`<<: *anchor`，無任何欄位覆寫）。
+
+**E2｜V37 零回歸鎖早已失效**
+- `data/custom_workflows/Standard_V37.json` 不存在（只在 `history/`）。
+- `tests/test_anima_family.py:31-35` 的 `_load()` 遇檔案不存在即 `pytest.skip` → `:233`、`:697`、`:866`、`:1009` 四組 V37 鎖**一直被跳過**。
+- 仍在跑的只有 `:242`（驗 `STYLE_CONFIG[ILLUSTRIOUS]`，家族層）與 `:250`（驗「V37 有登錄」，本案刪除）。
+- 同型教訓：`feedback_test_locks_wrong_target`（鎖不存在的對象＝沒鎖）。
+
+**E3｜家族解析已存在，且鍵空間與下層一致**
+- `workflow_builder.py:447 _detect_style()`：workflow → `capability.extract_checkpoint_from_wf` → `checkpoint_styles.yml` 的 `checkpoints:` 區 → `PromptStyle`。
+- `prompt_engine/styles.py:344 STYLE_CONFIG: dict[PromptStyle, StyleConfig]` —— yml 家族層直接疊在它上面，**同一組鍵**（`illustrious`／`anima`／`sdxl`…）。
+
+**E4｜檔名鍵的靜默降級史**：07-25 novaAnimeXL 漏登錄、08-22 V8turbo 漏登錄、09-15 V37→V38 改名六支全 miss（SYNC-001）、09-19 `Standard_V38_NOVE` 未登錄（SYNC-005 E10）。SYNC-001 的對策（anchor＋warn-once＋磁碟反向護欄）是**止血**，每次新增仍要人記得登錄。
+
+**E5｜單一咽喉點**：所有讀取都經 `workflow_builder.py:112 _profile_for()`：
+`_workflow_profile_overrides()`（:133）、`_workflow_style_extra()`（:159）、`_prompt_profile_source()`（:190）；
+`_resolve_prompt_overrides()`（:175）再包前者。外部呼叫端只有 `character_design_service.py:50-55, 470, 664, 700`（grep `app/` 全域確認）。
+
+**E6｜R1 配方實證（2026-09-23）**
+- ComfyUI `output/CharDesign_V38_IPA/final_00001_.png`：fabricatedXL_v70、seed 17021106、28 步、CFG 6、euler_a、CN Union Canny 100/200 0.75/0→0.85、IPA plus ViT-H 0.2 linear（參考 `char_concept_ref.png`），使用者評「還不錯」。
+- 同條件換回 Craftflow #815 原 prompt（`final_00002_`）明顯較平 → 差異只在 prompt。
+- R1 與 2026-06-09 最佳圖（`output/2026-06-09-004800_fabricatedXL_v70_17021106.png`，由 dHash 比對 729 張尋回、嵌入 workflow 完整）同方向：**畫風段放最後、不加權、不含 `flat color`**。
+
+**E7｜`style_extra_weight: 1.0` 正是 R1 的組裝方式**
+`character_design_service.py` final_positive 組裝處：`_style_weight != 1.0` → 加權並**前置**；`== 1.0` → `style_extra_str` **接在最尾端**。
+`prompt_profiles.yml:110` 註解稱 1.0 是應避免的退化行為（[CN-048] 的 chunk 稀釋顧慮）—— **E6 實測推翻**，須在 CODE_NOTES 對 CN-048 加訂正。
+
+---
+
+#### 二、設計決策
+
+| # | 決策 | 理由 |
+|---|---|---|
+| D1 | 鍵＝`PromptStyle` 值（`_detect_style(workflow).value`，來源 `checkpoint_styles.yml` 的 `checkpoints:` 區） | 與下層 `STYLE_CONFIG` 同鍵空間（E3）。**不用** `capability.resolve_family`（`families:` 區）：兩區有差異，例 `AnythingXL → anythingxl`（checkpoints）vs `sdxl`（families），混用會讓 prompt 層與 STYLE_CONFIG 對不上 |
+| D2 | yml 頂層鍵 `profiles:` → `families:`；舊 `profiles:` **不再讀取**，存在時 WARNING 一次「舊格式已停用」 | 使用者裁決不保留 workflow 層；不做雙軌相容以免兩份真相 |
+| D3 | 函式名與簽章全部不改（`_profile_for(workflow)` 仍收檔名，內部轉 style） | Surgical；呼叫端零改動（E5） |
+| D4 | miss 告警改以 style 為單位 warn-once；訊息改為「家族 X 未在 prompt_profiles.yml 設定 → 使用 STYLE_CONFIG 內建」 | pony／sdxl 等未調校家族落回內建是**預期行為**，不該每支 workflow 各吵一次 |
+| D5 | debug 來源標註：`family: illustrious`／`family fallback (STYLE_CONFIG: sdxl)`，保留 `+art_style#id` | DEBUG prompt 一眼看出吃到哪層 |
+| D6 | 將來 Anima **Base** 版（score 規則與 aesthetic 相反）不預留結構，需要時走 art_style | YAGNI；目前磁碟上無 base workflow（E1） |
+
+---
+
+#### 三、改動清單（檔名:行號 → 怎麼改）
+
+**軌 M（零行為變更）**
+
+| 檔 | 位置 | 改法 |
+|---|---|---|
+| `backend/prompt_profiles.yml` | 全檔（395 行） | 改寫為 `families:` 兩條：`illustrious` ＝ 現行 `Standard_V38.json` 解析值**逐字**；`anima` ＝ 現行 `AnimaStandardV9_aesthetic.json` 解析值逐字（含 `style_extra: ""`、`style_extra_weight: 2.0`）。長篇沿革註解移到 CODE_NOTES 新條目，yml 只留一行 `# [CN-xxx]` |
+| `backend/app/services/ai/workflow_builder.py` | `:76-91 _load_prompt_profiles()` | 改讀 `data.get("families")`；偵測到 `profiles` 鍵 → warn-once（D2）；docstring 更新 |
+| 同上 | `:96 _PROFILE_MISS_WARNED` | 改記 style 值 |
+| 同上 | `:99-123 _profile_for()` | `style = _detect_style(workflow).value` → `_load_prompt_profiles().get(style)`；miss 訊息依 D4 |
+| 同上 | `:184-198 _prompt_profile_source()` | 依 D5 |
+| `character_design_service.py` | `_resolve_style_extra()`（:469）與 style weight 分支 | **不改邏輯**，只更新註解中「workflow profile」字樣為「family profile」 |
+
+**軌 R（M 驗收後）**：`families.illustrious` 換成 R1：
 
 ```yaml
-style_extra: "flat color, cel shading, thick outlines"
-style_extra_weight: 1.2
+illustrious:
+  quality_prefix: "masterpiece, best quality, amazing quality, absurdres"
+  style_extra: "anime game illustration, clean lineart, soft shading, crisp edges, bright highlights, detailed eyes, high detail"
+  style_extra_weight: 1.0
+  negative: >-
+    bad quality, worst quality, worst detail, lowres, jpeg artifacts, blurry,
+    sketch, rough lineart, monochrome, greyscale,
+    bad anatomy, bad hands, bad proportions, extra fingers, missing fingers, fused fingers, extra limbs, deformed,
+    photorealistic, 3d, heavy rendering, oily skin, shiny skin,
+    artist name, signature, watermark, text, username, patreon, twitter username,
+    detailed background, scenery, floor, cast shadow,
+    nsfw, nude
 ```
+（`multiple views`、`cropped`、背景雜物、`male face` 由 `character_design_service` 的 `extra_neg` 自動附加，不重複列。`nsfw, nude` 為 R1 之外新增的人設圖全年齡防護，見 §2.1 八 Q6。）
 
-實際出圖驗證（`generation_history` #643，`Advanced_V38.json`）：
+**軌 T（測試）**
 
-```
-1girl, child, petite, (flat color:1.2), (cel shading:1.2), (thick outlines:1.2),
-masterpiece, best quality, absurdres, red eyes, green eyes, smile, ...
-```
-
-→ SYNC-004 的 C4 已落地（五項→三項），**但使用者的「太平塗」是在 C4 之後回報的** ⇒ 砍 tag 數不是解方。
-
-**E2｜畫風 tag 的加權與位置機制（改動時的硬約束）**
-
-`character_design_service.py:815-826`：
-
-```python
-if _style_weight != 1.0:
-    _weighted = ", ".join(f"({t.strip()}:{_style_weight})" for t in style_extra.split(",") if t.strip())
-    style_front = f"{_weighted}, " if _weighted else ""
-else:
-    style_extra_str = f", {style_extra}"
-```
-
-→ **`style_extra_weight` 設成 1.0 會同時改變權重與位置兩個變因**（前置 → 末端 append）。
-SYNC-004 的 N8 已記錄過這個坑。**軌 S 的所有對照組權重一律用 1.2 或 1.1，絕不用 1.0。**
-
-**E3｜`flat color` 與 `cel shading` 語義不同（軌 S 的主假設依據）**
-
-danbooru 語彙：`flat color` = 無漸層的純色填充；`cel shading` = 賽璐璐式**硬邊階梯陰影**（前提是**有**陰影）。
-兩者不是同義詞，是**互斥傾向**——`flat color` 要求沒有陰影，`cel shading` 要求有硬邊陰影。
-現行配方把兩者同時加權 1.2 前置 ⇒ **prompt 自己打自己**（與 P5-9 記錄的
-「`(flat cel shaded coloring:2.0)` ＋ `ultra detailed, high contrast` 互打」同型）。
-
-⚠️ 這是 Claude 的**語義推論，不是實測**。軌 S 的五組對照就是為了證實或推翻它。
-
-**E4｜LLLite strength 被當成 0~1 尺度（實錘缺陷）**
-
-`character_design_service.py:1131-1133`：
-
-```python
-lllite_used = _inject_lllite(
-    wf, _up, _lllite_weight, _cn_weight_user, end_percent=_end_pct,
-    node_class=_lllite_node_class,
-)
-```
-
-`_cn_weight_user` = UI 的 CN 滑桿原始值（`:548`，範圍 0.1~1.5，實際常用 0.6~0.75）。
-而 `wf_node_ops.py:356` 自己的註解寫著節點規格：
-
-```
-#   required: model(MODEL) / lllite_name(檔名) / image(IMAGE) / strength(FLOAT, -10~10,
-```
-
-`ComfyUI-Anima-LLLite/nodes.py:130` default **1.0**、range −10~10；`:192` 直接傳 `multiplier=strength`。
-
-→ **這是 LoRA-like 乘數，不是 ControlNet 的 0~1 權重。** 現行程式碼的註解（`:1127-1128`）
-寫「strength 與 SDXL CN weight 同向 → 直接用滑桿值」——**方向沒錯，尺度錯了**。
-`generation_history` #640/#641 記錄的 `lllite_strength = 0.6` ⇒ 實際只給了官方預設的六成。
-
-**E5｜官方沒有 turbo／aesthetic 專屬 LLLite 權重（外部事實，不可改）**
-
-`huggingface.co/kohya-ss/Anima-LLLite` README 實查（2026-09-19）：
-released 權重只有 `anima-lllite-inpainting-v2.safetensors` 與
-`anima-lllite-any-test-like-v2.safetensors`，**兩支皆訓練於 Anima-Base v1.0**；
-其餘為 Preview3 legacy。本機 `ComfyUI/models/controlnet/` 實際只有後者一支。
-
-→ 「換一支對得上 turbo 的權重」這條路**不存在**。軌 N 只能在「修尺度」與「換底模對齊」兩者裡選。
-
-**E6｜`AnimaStandardV8_base10.json` 已預先登錄，檔案未放（N2 的零成本入口）**
-
-`prompt_profiles.yml` 末段（SYNC-003 B1）已登錄該檔名並 `<<: *anima_aesthetic_turbo`，
-註明「先登錄、檔案後放：名單制，檔案不存在時本行零作用」。
-
-→ N2 的對照組**不需要改任何設定**，使用者複製一份 workflow 改 `unet_name` 即可，且 prompt 配方天然同源（單變因）。
-
-**E7｜主線 FaceDetailer 確實在輸出鏈上，但 denoise 偏保守**
-
-節點鏈實查（`data/custom_workflows/`）：
-
-```
-Standard_V38 :  27 FaceDetailerPipe → 75 ImpactSwitch(input1=input2=['27',0]) → 54 Image Saver
-Advanced_V38 :  33 FaceDetailerPipe → 164 ImpactSwitch(input1=['33',0])        → 124 Image Saver
-```
-
-→ **SYNC-004 的 N11 可結案：主線臉部修復是有在跑的。**
-但兩支的 `FaceDetailerPipe` 都是 `steps 14 / denoise 0.26 / feather 16`；
-`guide_size` Standard 寫死 512、Advanced 接 node 68。
-
-全身取景下臉框約 70~100px（T0-E1：#633–638 臉部佔畫面高度約 6%），
-放大到 512 後 denoise 0.26 只夠「微調」不足以「重畫五官」⇒ 臉糊的直接原因。
-
-**E8｜`ComfyUI_portable/CLAUDE.md` 的 LoRA 記載有錯（會誤導下一輪決策）**
-
-實查 safetensors `__metadata__` 與同名 `.civitai.info`：
-
-| LoRA | 文件記載 | 實際 | 差異 |
-|---|---|---|---|
-| `ag31_style_ba_v1-000016` | 「**SD1.5 (LoKr)**，不可用於 SDXL/Anima」 | `ss_base_model_version=sdxl_base_v1-0`、`ss_sd_model_name=animagine-xl-3.1.safetensors`、`ss_network_module=lycoris.kohya`；civitai `baseModel: SDXL 1.0` | ❌ **架構記錯**。它是 SDXL LyCORIS，不是 SD1.5 |
-| `Blue_archive_style` | 「SDXL / 畫風」 | civitai `baseModel: **Illustrious**`，`trainedWords: ['Blue archive style​']` | ⚠️ 不精確（Illustrious 是 SDXL 衍生，但與 `fabricatedXL_v70` 同族這點沒記到）；**觸發詞結尾帶 U+200B 零寬空格**，未記載 |
-
-→ 本輪 D1 裁決不啟用 LoRA，**但這份錯誤記載必須先修**：下一輪若重新評估 LoRA，
-這兩條會直接導致選錯或觸發失敗。軌 X 只改文件，零風險。
-
----
-
-#### 二、根因（一句話）
-
-**畫風端**：用全域算子（`flat color`）去描述一個分區現象（布料平、皮膚有階），
-壓平布料的同時把皮膚一起壓平——調權重或砍 tag 數都動不了這個，只能拆掉那個算子本身。
-
-**條件控制端**：把一個 LoRA-like 乘數（default 1.0、range −10~10）接在一個 0~1 語義的 UI 滑桿上，
-於是使用者每次都在給不到官方預設值的強度，然後得出「LLLite 不如 ControlNet」的結論。
-
----
-
-#### 三、方案
-
-##### 軌 S｜畫風算子 A/B（零程式，改 `prompt_profiles.yml` 的 anchor）
-
-> 全部固定 seed、純 txt2img（取消「概念圖參考」與「ControlNet」）、`Advanced_V38.json`、同一角色。
-> `_load_prompt_profiles()` 不快取（`workflow_builder.py:79-81`）⇒ **改 yml 免重啟後端**。
-
-| 組 | `style_extra` | weight | 驗證什麼 |
-|---|---|---|---|
-| **S0** | `flat color, cel shading, thick outlines` | 1.2 | 現況基準（＝#643，可沿用不重跑） |
-| **S1** ⭐ | `cel shading, thick outlines` | 1.2 | **主假設**：拔掉 `flat color` → 皮膚回復明暗階層，布料仍硬邊 |
-| **S2** | `flat color, thick outlines` | 1.2 | 反向對照：如果 S2 也改善，元凶就不是 `flat color` 而是「兩者相衝」 |
-| **S3** | `flat color, cel shading, thick outlines` | **1.1** | 分離「tag 組成」與「權重」兩個變因 |
-| **S4** | `thick outlines` | 1.2 | 極端組：平塗算子全拔（T0-E2 已證底模原生就會平塗） |
-
-**判讀順序**：先看皮膚（有沒有明暗階層）、再看布料（是不是硬邊 cel）、最後才看整體討不討喜。
-**回滾**：改回 S0 字串即可，yml 註解會寫明。
-
-##### 軌 N｜Anima 條件控制修到可用
-
-| ID | 內容 | 性質 |
+| 檔 | 現況 | 改法 |
 |---|---|---|
-| **N1** | `character_design_service.py:1132` 的 strength 與 UI 滑桿解耦：新增 `.env` 的 `LLLITE_STRENGTH_SCALE`（`core/config.py` 的 `_env_float` 慣例），實際 strength ＝ `_cn_weight_user × SCALE`。**預設 1.0 ⇒ 零行為變更**；`generation_history.params.lllite_strength` 改記**實際送出值**而非滑桿值 | 程式，小面積 |
-| **N2** | 掃 `LLLITE_STRENGTH_SCALE` = 1.0 / 1.7 / 2.2（對應 CN 0.6 時 strength ≈ 0.6 / 1.0 / 1.3），同草圖同 seed 各出一張 | 零程式（改 .env） |
-| **N3** | 使用者複製 `AnimaStandardV8_trubo11.json` → `AnimaStandardV8_base10.json`，只改 `unet_name` 為 `anima_baseV10.safetensors`（yml 已登錄，見 E6），與 turbo 組同 seed 對照 | 零程式 |
-| **N4** | `end_percent` 現為 `coverage_cn_end_pct[full]=0.85`，掃 0.85 vs 1.0 | 零程式（`gen_profile.py` 的 `GEN_PROFILE`） |
+| `tests/test_workflow_builder.py:96-232`（P1／P4／P5-5 機制測試） | monkeypatch 檔名鍵 `"Standard_V37.json"` | 改為家族鍵，並 monkeypatch `_detect_style` 回傳指定 style；斷言不變 |
+| 同 `:355-437`（實檔配方鎖） | 點名歷史檔名 | 改鎖 `families.illustrious`／`families.anima` 實值（R 後為 R1 值） |
+| 同 `:447-468 test_all_custom_workflows_are_registered` | 要求每支檔名登錄 | **改寫為** `test_all_custom_workflows_resolve_to_configured_family`：列舉磁碟，逐支要求 ① 抽得到 checkpoint ② 命中 `checkpoint_styles.yml` 某 pattern（非 SDXL 預設退路）③ 解析出的 style 在 `families:` 內 |
+| 同 `:471 test_profile_for_warns_once_on_miss` | 檔名單位 | 改 style 單位 |
+| 新增 | — | `test_new_workflow_needs_no_registration`：tmp 目錄複製 V38 為 `Standard_V41_test.json`，斷言 profile 與 V38 相同、source 為 `family: illustrious` |
+| `tests/test_anima_family.py:233,697,866,1009` | 載入 V37（一直 skip） | 改載 `Standard_V38.json`（同 fabricatedXL），測試名 `v37` → `illustrious_path`；斷言內容不變 |
+| 同 `:250 test_v37_profile_registered_and_anima_not` | 驗 V37 登錄 | 刪除（由新護欄取代） |
+| 同 `:789-840`（G-1／G-2 V37 品質段） | 鎖 V37 配方文字 | 刪除 |
+| 同 其餘 anima profile 斷言（共 24 處引用） | 點名 V8／V9 檔名 | 改鎖 `families.anima` |
+| `tests/test_character_design_pure.py`（23 處）、`test_gen_profile.py`（5）、`test_generation_info_link.py`（1） | 待逐條確認是否依賴檔名鍵 | 執行時逐條檢視；**非** profile 機制的斷言不動 |
+| `tests/golden/snapshots.json` | prompt 快照 | M 後應零差異（本身即驗收）；R 後只允許 illustrious 案例變動，**anima 案例必須零差異** |
 
-> ⚠️ **N1 的 `lllite_strength` 記錄口徑要一起改**，否則掃描結果全部記成滑桿值，
-> 事後無法從 `generation_history` 反查（同 SYNC-004 Q5-1「steps 記錄失真」的同型問題）。
->
-> ⚠️ **N2 與 N3 不可合併**：前者測「給夠強度會不會好」，後者測「底模同代會不會好」。
-> 合併就回到 08-17 S3「LLLite ＋ 換底模雙變因」的歸因陷阱。
-
-##### 軌 F｜臉部修復強度（零程式，只改既有節點 widget 值）
-
-| ID | 內容 |
-|---|---|
-| **F1** | `Standard_V38.json` node 27 / `Advanced_V38.json` node 33 的 `denoise`：0.26 → **0.40** A/B |
-| **F2** | 若 F1 出現換臉／崩臉，退 0.33；若仍糊，`Standard_V38` node 27 的 `guide_size` 512 → 768 |
-
-> 依使用者「不動節點拓樸」的限制，F 軌**只改 widget 值不改連線**。
-> 沿用 SYNC-004 §2.5 的做法：**產生 `_F1` 對照檔，原檔不動**，並同步登錄 `prompt_profiles.yml`（否則靜默脫鉤，SYNC-001 原始災情）。
-
-##### 軌 X｜文件修正（零程式，零風險）
-
-| ID | 內容 |
-|---|---|
-| **X1** | 修 `ComfyUI_portable/CLAUDE.md` 的 LoRA 表：`ag31_style_ba_v1-000016` 改記為 **SDXL LyCORIS（animagine-xl-3.1）**；`Blue_archive_style` 補記 **baseModel=Illustrious、與 `fabricatedXL_v70` 同族**、觸發詞 `Blue archive style` **結尾含 U+200B** |
-| **X2** | 同檔補一行：本表的架構欄位應以 safetensors `__metadata__.ss_base_model_version` ＋ 同名 `.civitai.info` 的 `baseModel` 為準，不憑檔名推測 |
+**軌 D（文件）**：`CLAUDE.md`（零程式設定點表 `prompt_profiles.yml` 一列、編程檢查點 4／5 的 V37 鎖描述）、`AGENTS.md`、`GEMINI.md`（慣例需一致）、`doc/MODULE_MAP.md`、`doc/reference/CODE_NOTES.md`（新條目：家族鍵設計；對 SYNC-001 相關條目與 CN-048 加「訂正（2026-09-23）」，不刪舊條目）、`doc/BACKLOG.md`（`checkpoint_styles.yml` 兩區重複）。
 
 ---
 
-#### 四、執行順序
+#### 四、驗收步驟
 
-```
-S1/S2/S3/S4（四張圖，一次跑完）─→ 判讀選出勝出組 ─→ 寫回 anchor
-        │
-        └─→ 同時可做：X1/X2（純文件）
-                        │
-F1（臉部 denoise）───────┘
-        │
-        ▼
-N1（程式，解耦 strength）─→ N2（掃 SCALE）─→ N3（base10 同代對照）─→ N4（end_percent）
-```
-
-**S 軌排最前**，因為它是使用者最在意的一項，且零程式、可即時回滾、一輪就有答案。
-**N 軌排最後**，因為 N1 是本案唯一的程式改動，要等 S 軌的基準穩定後再引入新變因。
-
-##### 本案不做的（明確劃界）
-
-- 不啟用任何 LoRA（D1 裁決）
-- 不動 SYNC-004 遺留的 C2／C3／C5
-- 不補 Anima 的 `FaceDetailerPipe`（BACKLOG N1）
-- 不動 `Standard_V38` / `Advanced_V38` 的採樣參數（SYNC-004 E4 已確認與官方一致）
+1. **M 比對腳本**（沙箱可跑，免 fastapi）：遷移前先把磁碟 13 支 workflow 的 5 欄位解析結果存成 JSON；遷移後重跑，逐字 diff 必須為空。
+2. `cd backend && pytest tests/`（本機；沙箱缺套件）。
+3. **R 實機**：露碧娜 × `Standard_V38` × seed 17021106 × IPA 0.2 × CN 0.75 → 查該筆 `generation_history.positive`：尾端為 R1 畫風段、無 `flat color`、`params.prompt_profile` = `family: illustrious`。
+4. **零登錄驗證**：複製 `Standard_V38.json` 為 `Standard_V41_test.json`，不改 yml，UI 切過去生成 → source 同上；驗完刪檔。
 
 ---
 
 #### 五、風險與回滾
 
-| # | 風險 | 徵兆 | 回滾 |
-|---|---|---|---|
-| R1 | S1 拔掉 `flat color` 後畫面變厚塗／失去平塗感 | 布料出現柔邊漸層 | 改回 S0 字串（yml，免重啟） |
-| R2 | S4（算子全拔）後畫風完全跟著底模走，與目標差更遠 | 出現環境光／厚塗 | 同上；S4 本來就是探邊界的極端組 |
-| R3 | **N1 改了 `lllite_strength` 的記錄口徑，舊資料的語義與新資料不同** | `generation_history` 跨 #644 前後不可直接比較 | 不可回滾，**必須在開發記錄寫明分界 id** |
-| R4 | N2 把 strength 拉到 1.3 後構圖被草圖鎖死、失去底模補細節的空間 | 出圖僵硬、線條照描 | 降回 SCALE 1.0；並改用 N4 的 `end_percent` 釋放末段 |
-| R5 | F1 denoise 0.40 造成換臉（五官與草圖不一致） | 臉與 CN 參考明顯不同人 | 退 0.33，或回 0.26 原檔（`_F1` 是獨立檔，原檔未動） |
-| R6 | `_F1` 新檔名未登錄 `prompt_profiles.yml` → 靜默脫鉤 | prompt 配方落回 family + .env | **落地時同步登錄**，`test_all_custom_workflows_are_registered` 會擋 |
+| 風險 | 影響 | 對策 |
+|---|---|---|
+| 改家族配方＝同家族所有 workflow 一起變 | 單一 workflow A/B 失去隔離 | 個案實驗走 art_style（DB 最高優先，已支援 quality_prefix／negative／extra_tags） |
+| 靜默降級點移到「checkpoint 未登錄 `checkpoint_styles.yml`」（`_detect_style` 退 SDXL 不吵） | 新底模吃到 sdxl 內建配方 | 軌 T 新護欄第 ② 項；另於 `_detect_style` 退路加 warn-once（小改，列入 M） |
+| art_style.base_style 與 checkpoint 家族不一致 | compile 用 art_style 的 STYLE_CONFIG、yml 用 checkpoint 家族 | 見八 Q1，請 Codex／Gemini 表態 |
+| 測試改動量大（約 140 處引用，多為 monkeypatch 鍵名） | diff 大、審查成本高 | M、R 各自一個 commit；M 的測試改動只換鍵不換斷言 |
+| R1 只在一個角色、一個 seed 驗過 | 家族預設可能過擬合 | R 驗收加跑第二個角色（`聖真希` id 3）＋隨機 seed 2 張，目視無崩壞才定案 |
+| `_detect_style` 每次都讀 workflow JSON | 每張圖多 3 次讀檔 | 檔小、成本可忽略；若 `_load_workflow` 無快取也不在本案處理 |
+
+**回滾**：M、R 分兩個 commit。R 有問題 → 只還原 `families.illustrious` 區塊（yml 免重啟生效）；M 有問題 → revert M commit（`prompt_profiles.yml` 在 git 內）。
 
 ---
 
@@ -336,780 +239,324 @@ N1（程式，解耦 strength）─→ N2（掃 SCALE）─→ N3（base10 同�
 
 | 方案 | 否決理由 |
 |---|---|
-| 啟用 `Blue_archive_style` LoRA | 使用者 2026-09-19 裁決「先跑算子 A/B，LoRA 之後再說」。證據已備妥於 E8，下輪要用可直接取用 |
-| 封存 Anima 對照線 | 使用者 2026-09-19 裁決「沒有封存的選項，只有弄到好」 |
-| 換底模到 `novaAnimeXL_ilV190` | 會同時改變畫風基準，S 軌的對照組立刻失效。等 S 軌有結論再議 |
-| 只調 `style_extra_weight` 不動 tag 組成 | E1 已證 C4 砍過 tag 數、使用者仍回報太平塗；且 E3 指出問題在**算子選擇**不在強度。S3 保留此組作對照，但不作為主線 |
-| 下載新的 LLLite 權重對齊 turbo | E5：官方只有兩支 v2 權重，皆訓練於 Base v1.0，不存在 turbo 專屬權重 |
+| 以「SDXL 大類」為鍵 | SDXL 下 illustrious／pony／noobai 提示詞方言不相容（pony 需 `score_9…`）；Anima 不是 SDXL |
+| 保留 workflow 例外層 | 使用者裁決；且 E1 顯示現況零例外 |
+| 檔名正規化／模糊比對（V38→V3x） | SYNC-001 已否決：把明確鍵換成會誤命中的猜測規則 |
+| 以 `gen_profile` family（`capability.resolve_family`）為鍵 | 與 `STYLE_CONFIG` 鍵空間不一致（D1） |
+| 把配方寫回 `styles.STYLE_CONFIG`（Python） | 調配方要改碼＋重啟；yml 免重啟是 P5 調參期的關鍵便利 |
+| 本案一併合併 `checkpoint_styles.yml` 兩區 | 會同時動 prompt 與 GEN_PROFILE 兩條解析，範圍過大；轉 BACKLOG |
 
 ---
+
+#### 七、不在本案（順手記）
+
+- `families.anima` 負向含 `child, toddler, chibi`，而角色年齡欄位 ≤12 時 `_age_body_tags()` 會在正向加 `child` → 正負向互打。屬年齡策略（BACKLOG F4），本案配方逐字搬移不處理。
+- `checkpoint_styles.yml` 的 `checkpoints:` 與 `families:` 兩區內容幾乎重複、需雙寫 → 轉 BACKLOG。
+
+---
+
+#### 八、請 Codex／Gemini 特別檢查的問題
+
+1. **Q1**：art_style 設了 `base_style`（例：art_style 指定 pony，但 workflow 底模是 fabricatedXL）時，yml 家族層應跟 **checkpoint 家族**（本案 D1）還是 **art_style.base_style**？後者需把 `style` 傳進 `_profile_for`，會改簽章。
+2. **Q2**：除 `character_design_service` 外，是否還有路徑（`/art/generate`、`compose`、LoRA 訓練預覽等）間接依賴檔名鍵 profile？我 grep `app/` 只找到 E5 所列呼叫端，請獨立複核。
+3. **Q3**：`_detect_style()` 在 `_load_workflow` 失敗時直接回 SDXL（`workflow_builder.py:456-459`）。家族層啟用後，這條退路是否需要與 `_profile_for` 的 miss 告警合併成一條訊息？
+4. **Q4**：M／R 拆兩步是否必要，或可一次到位（以 golden 快照差異同時驗兩者）？
+5. **Q5**：`test_character_design_pure.py` 的 23 處引用中，是否有斷言實際依賴「檔名鍵」語義（而非只是拿 V37 當範例字串）？
+6. **Q6**：R1 之外新增的 `nsfw, nude` 負向，對 fabricatedXL 全年齡人設圖是否有可觀察的副作用（例如壓低 `bare shoulders` 類正常服裝描述）？
+7. **Q7**：R1 僅一角色一 seed 實證，作為家族預設是否足夠？若不足，最小補證集合為何？
+
+<!-- HANDOFF: Claude DONE @ 2026-09-23 14:15 -->
+
+### 2.1-P Claude 規劃（追加：軌 P 個人自訂標籤分家族 `.env`）
+
+#### 〇、結論（先講）
+
+使用者的個人畫風標籤要放 `.env`（不進 git），而且**各家族寫法不同**（`@` 是 Anima 專用畫師前綴）。
+現行 `PERSONAL_STYLE_EXTRA_TAGS` 是「全域單值＋yml `style_extra` 為空才生效」的 fallback（E-P1），illustrious 永遠吃不到；Anima 吃得到只是因為 `families.anima.style_extra` 恰好是空字串。
+→ 新增**分家族、疊加語義**的 `.env` 鍵，家族名沿用本案 `PromptStyle` 值，新家族零改碼。
+
+```
+.env（使用者自填，不進 git）
+PERSONAL_STYLE_EXTRA_ANIMA=blue archive, @kozaki yuusuke
+PERSONAL_STYLE_EXTRA_ILLUSTRIOUS=blue archive, kozaki yuusuke
+PERSONAL_NEGATIVE_EXTRA_ANIMA=(halo:1.5)
+PERSONAL_NEGATIVE_EXTRA_ILLUSTRIOUS=halo
+
+正向：style_extra = [art_style.extra_tags ｜ families[f].style_extra ｜ 舊全域 fallback]（既有，不動）
+                    ＋ PERSONAL_STYLE_EXTRA_<F>（新，疊加）
+      → 沿用既有 weight／位置規則（character_design_service.py:778-787，不新增旋鈕）
+負向：final_negative ＋ PERSONAL_NEGATIVE_EXTRA_<F>（新，疊加，任何分支都生效）
+F = _detect_style(workflow).value.upper()（與 families[] 同一個家族判定來源）
+```
+
+#### 一、證據
+
+- **E-P1**｜`backend/app/services/ai/character_design_service.py:469-477` `_resolve_style_extra`：`.env` 只在 art_style 與 yml 皆空且 `PERSONAL_STYLE_ENABLED` 時才取代；是**單值、取代語義**。
+- **E-P2**｜`backend/app/core/config.py:84-90`：`PERSONAL_*` 皆為 import 時求值的模組常數；`config.py:20` `load_dotenv(BASE_DIR.parent / ".env")` ⇒ pytest 也會載入使用者真實 `.env`。`backend/tests/` 無 `conftest.py`。
+- **E-P3**｜09-23 ComfyUI SDXL A/B（`人設圖CN_IPA_V38_K0~K3_workflow.json`，R1 底、seed 17021106）使用者判讀：**K1 認得畫師**；K2（尾端）與 K3（前段）差異在誤差內 ⇒ illustrious 走既有「weight 1.0 → 尾端 append」即可，**不需新增位置機制**。
+- **E-P4**｜Anima 的 ComfyUI 驗證（A 系列 `Anima_miao_FaceCN_BA_A*`）是**不加權、置於 `1girl, solo` 之後**；Craftflow `prompt_profiles.yml` `families.anima.style_extra_weight: 2.0`（註解自稱佔位）⇒ 個人標籤會被包成 `(tag:2.0)` 前置（`character_design_service.py:778-785`），**此組合未驗證**。
+- **E-P5**｜`character_design_service.py:806`：`PERSONAL_NEGATIVE` 是取代語義，且 yml 有 `negative` 時直接跳過 ⇒ 今天無法用 `.env` 補 `halo`。
+- **E-P6**｜`_resolve_style_extra` 只有角色設計用；`backend/app/api/art_generate.py:114、:653` 只吃 `_extra_tags(art_style)`，不經本鏈。
+- **E-P7**｜09-23 使用者已 `git rm --cached .env`，`.gitignore:2` 生效。
+
+#### 二、設計決策
+
+| # | 決策 | 理由 |
+|---|---|---|
+| P-D1 | 鍵名 `PERSONAL_STYLE_EXTRA_<家族>`／`PERSONAL_NEGATIVE_EXTRA_<家族>`；**呼叫時** `os.getenv` 讀取，不做模組常數 | 家族是動態值；可用 `monkeypatch.setenv` 測試 |
+| P-D2 | **疊加**：接在已解析的 style_extra 之後，不論其來源（art_style／yml／舊 fallback） | 個人偏好跨畫風；取代語義會與 yml 配方互斥（E-P1 的老問題） |
+| P-D3 | 權重與位置**跟家族既有規則**，不加新旋鈕 | illustrious（R 後 weight 1.0）＝尾端＝K2 已驗；anima 2.0 前置交給驗收決定（見 Q-P2） |
+| P-D4 | 無開關：鍵不存在或空字串＝關；不受 `PERSONAL_STYLE_ENABLED` 節制 | 少一個會忘記打開的開關；舊開關只管舊 fallback |
+| P-D5 | 舊鍵 `PERSONAL_STYLE_EXTRA_TAGS`／`PERSONAL_NEGATIVE` 保留原語義 | 零回歸；新舊重複的 tag 由 `_dedup_tags` 收斂 |
+| P-D6 | `_prompt_profile_source` 命中時附加 ` +personal(.env)` | DEBUG prompt 能一眼看出個人層有沒有生效（「先看 runtime 再分析」教訓） |
+
+#### 三、改動清單（檔名:行號 → 怎麼改）
+
+| # | 位置 | 改法 |
+|---|---|---|
+| P-1 | `backend/app/core/config.py:84-90` 之後 | 新增 `personal_family_extra(kind: str, family: str) -> str`：`os.getenv(f"PERSONAL_{kind}_EXTRA_{family.upper()}", "").strip()`；`kind` 以常數 `PERSONAL_KIND_STYLE="STYLE"`／`PERSONAL_KIND_NEGATIVE="NEGATIVE"` 表示，避免魔術字串 |
+| P-2 | `character_design_service.py:469-477` `_resolve_style_extra` | 既有解析後：`fam = _detect_style(workflow).value`；`personal = personal_family_extra(STYLE, fam)`；非空則 `style_extra = f"{style_extra}, {personal}" if style_extra else personal`。**簽章不變**；`_detect_style` 加進 `:43` 的 `workflow_builder` import |
+| P-3 | `character_design_service.py:813`（`final_negative` 組好）與 `:814`（`_dedup_tags`）之間 | 非空則 `final_negative += f", {personal_neg}"` |
+| P-4 | `workflow_builder.py:200` `_prompt_profile_source` | 該家族任一 personal 鍵非空 → 附加 ` +personal(.env)` |
+| P-5 | `backend/tests/conftest.py`（新檔） | autouse fixture：`monkeypatch.delenv` 所有 `PERSONAL_STYLE_EXTRA_*`／`PERSONAL_NEGATIVE_EXTRA_*`，隔離使用者真實 `.env`（E-P2） |
+| P-5 | `backend/tests/test_character_design_pure.py` | 新增：①無鍵＝逐字零回歸 ②anima 鍵疊加且吃家族 weight 2.0 包裝 ③illustrious 鍵 weight 1.0 接尾端 ④**跨家族不外洩**（設 ANIMA、偵測為 illustrious → 無）⑤art_style 有 extra_tags 時仍疊加 ⑥家族有 negative 時 personal negative 仍附加 ⑦來源標註含 `+personal(.env)` |
+| P-6 | `.env.example:24-34`、`CLAUDE.md` 零程式設定點表、`doc/reference/CODE_NOTES.md`（CN-115）、`doc/BACKLOG.md` | 範例（全註解）與優先序圖；BACKLOG 記 art_generate 範圍（Q-P3）與「art_style.base_style 與 yml 家族判定可能不一致」對 P 的影響 |
+
+#### 四、驗收步驟
+
+1. `cd backend && pytest tests/` → 除 §2.6 已知 6 條外全綠。
+2. **負向對照**：`.env` 不設任何新鍵 → 露碧娜 DEBUG prompt 與改動前**逐字相同**。
+3. illustrious（R 完成後）：露碧娜 × `Standard_V38` × seed 17021106 → 正向尾端 `…, blue archive, kozaki yuusuke`、負向含 `halo`、來源標 `family: illustrious +personal(.env)`；目視接近 ComfyUI K2。
+4. anima：露碧娜 × `AnimaStandardV9_miaomiaoHarem` → 正向含 `(blue archive:2.0), (@kozaki yuusuke:2.0)`；對照 ComfyUI A 系列。出現光環或角色漂移 → §2.5 裁決是否把 `families.anima.style_extra_weight` 改 1.0（會觸及本案範圍限制 ②）。
+
+#### 五、風險與回滾
+
+| 風險 | 對策 |
+|---|---|
+| 真實 `.env` 的個人鍵污染測試 | P-5 conftest 自動清除 |
+| Anima 版權 tag 被 2.0 加權前置 → 光環／角色特徵被拉向 BA | 驗收 4；必要時裁決 weight |
+| 使用者在 illustrious 鍵誤用 `@` 或未跳脫括號 | `.env.example` 寫明各家族寫法；是否加 warn-once 見 Q-P4 |
+| `.env` 不進 git → 換機器後設定不隨行 | 使用者裁決即如此；`.env.example` 留範本 |
+
+回滾：刪 `.env` 新鍵即回到改動前行為（不必改碼）；程式面單一 commit 可 revert。
+
+#### 六、否決的方案
+
+| 方案 | 否決理由 |
+|---|---|
+| 單一全域鍵＋非 Anima 自動剝 `@` | 隱性轉換；兩家族差異不只 `@`（權重量級、可用 tag 集合） |
+| 個人標籤寫進 yml | 違反「不進 git」 |
+| 把舊 `PERSONAL_STYLE_EXTRA_TAGS` 改成疊加語義 | 破壞零回歸，且仍是單值 |
+| 走 art_style（DB） | 以畫風為單位而非使用者偏好；且會被 P-D2 疊加，不衝突 |
 
 #### 七、請 Codex／Gemini 特別檢查的問題
 
-1. **E3 的語義推論站不站得住？** `flat color` 與 `cel shading` 在 danbooru / Illustrious 訓練分佈裡是否真的互斥？有沒有反例（大量同時帶兩者且皮膚仍有階層的圖）？
-2. **軌 S 的五組設計有沒有漏掉必要的對照？** 特別是：要不要補一組「`flat color` 降到 0.9、`cel shading` 維持 1.2」的分項權重組？現行機制支不支援單 tag 各自權重（`character_design_service.py:815-826` 看起來是整組同一個 weight）？
-3. **N1 的 `LLLITE_STRENGTH_SCALE` 是不是最小改動？** 有沒有更乾淨的做法（例如在 `gen_profile.py` 的 `GEN_PROFILE` 加一個 family 級的 `lllite_strength_scale`，而不是全域 .env）？
-4. **N1 改 `lllite_strength` 記錄口徑會不會打到既有測試？** 列出所有斷言該欄位的測試。
-5. **軌 F 的 `_F1` 對照檔要不要也做 Anima 四支？** 還是主線兩支就夠（Anima 本來就沒有 FaceDetailer）？
-6. **`ImpactSwitch` 的 `select: 1` 在 `Advanced_V38` 只有 `input1`** —— 這是不是代表該 switch 實際上是無作用的直通？有沒有可能某些情況下 select 被改寫成 2 而導致 detailer 被繞過？
-7. **有沒有比「改 denoise」更省事的臉部改善手段**，在不動拓樸的前提下？（例如 `guide_size` / `feather` / detailer 的 `wildcard` 欄位現為 `[CONCAT] {face|face,detailed face}`）
-8. **X1 之外，`ComfyUI_portable/CLAUDE.md` 還有沒有其他與實際檔案不符的記載？** 請用 safetensors metadata 反向驗證整張表（這是 SYNC-001「測試鎖錯對象 → 改成列舉真實來源反向驗證」的同型做法）。
+1. **Q-P1**：P-D2「對 art_style.extra_tags 也疊加」合理嗎？還是 art_style 有值時應完全取代？
+2. **Q-P2**：Anima 版權／畫師 tag 在 2.0 加權前置 vs 1.0 尾端，有無官方或社群證據可先判斷？
+3. **Q-P3**：`art_generate.py`（一般插畫）要不要本案一併吃個人鍵，或轉 BACKLOG？
+4. **Q-P4**：非 anima 家族的個人鍵含 `@` 時要不要 warn-once？
+5. **Q-P5**：新增 `tests/conftest.py` autouse 會不會影響既有依賴真實 `.env` 值的測試？
+6. **Q-P6**：執行順序 M commit → R 驗收 → P，同意嗎？
+
+<!-- HANDOFF: Claude 軌P DONE @ 2026-09-23 15:45 -->
 
-
----
-
-#### 八、規劃後追加的新發現（2026-09-19 下午，E9～E13）
-
-> §2.1 的「一～七」已於稍早 HANDOFF。本節是**之後**由使用者實機回饋觸發的追加證據，
-> 刻意另起一節而不改寫上文，避免事後看不出哪些是原始判斷、哪些是修正。
-> **E9 與 E10 會直接改變軌 S 的操作方式，Codex／Gemini 請一併納入。**
-
-**E9｜`PERSONAL_STYLE_ENABLED=false` 對現役六支 workflow 完全無效（實錘）**
-
-`character_design_service.py:474-482`：
-
-```python
-def _resolve_style_extra(art_style, workflow) -> tuple[str, float]:
-    profile_extra, profile_weight = _workflow_style_extra(workflow)
-    style_extra = _extra_tags(art_style)
-    if not style_extra and profile_extra:
-        style_extra = profile_extra                                    # ← yml 先中
-    if not style_extra and PERSONAL_STYLE_ENABLED and PERSONAL_STYLE_EXTRA_TAGS:
-        style_extra = PERSONAL_STYLE_EXTRA_TAGS                        # ← 永遠走不到
-```
-
-`Standard_V38` / `Advanced_V38` / 四支 Anima 在 `prompt_profiles.yml` 都有 `style_extra`
-⇒ `profile_extra` 必有值 ⇒ **第 479 行的 `not style_extra` 恆為 False**。
-
-`config.py:70` 的註解自己就寫過這件事（「只節制 .env 這一層，**不節制** yml 的 style_extra」），
-但那是寫給讀程式的人看的，操作面沒有任何提示。
-
-實證：使用者於 `.env` 設 `PERSONAL_STYLE_ENABLED=false` 之後產生的
-`generation_history` **#644（12:41）與 #646（12:46）**，正向仍完整帶著：
-
-```
-(flat color:1.2), (cel shading:1.2), (thick outlines:1.2)
-```
-
-⇒ **軌 S 的「拔算子」只能改 `prompt_profiles.yml`，改 `.env` 是無效操作。**
-操作單 `doc/target/SYNC-005_軌S_畫風算子AB_操作單_20260919.md` 已據此更正。
-
-**E10｜`Standard_V38_NOVE.json` 未登錄 → SYNC-001 災情原地復發（實錘）**
-
-磁碟 11 支 workflow、`prompt_profiles.yml` 登錄 15 個鍵，比對後**唯一未登錄**的是
-`Standard_V38_NOVE.json`（底模 `novaAnimeXL_ilV190.safetensors`）。
-
-實證 —— `generation_history` #647（12:50）的正向：
-
-```
-1girl, child, petite, (flat color:1.2), (cel shading:1.2), (anime coloring:1.2),
-masterpiece, best quality, amazing quality, absurdres, ...
-```
-
-逐項比對來源：
-
-| tag | 來自 | 應該來自 |
-|---|---|---|
-| `anime coloring` | `.env` 的 `PERSONAL_STYLE_EXTRA_TAGS`（`flat color, cel shading, anime coloring`） | yml 的 `style_extra`（`flat color, cel shading, thick outlines`） |
-| `amazing quality` | `styles.py` 的 illustrious **family 預設** | yml 的 `quality_prefix`（`masterpiece, best quality, absurdres`） |
-| weight `1.2` | `.env` 的 `PERSONAL_STYLE_WEIGHT=1.2` | yml 的 `style_extra_weight` |
-
-⇒ 這支落回 family + .env，**prompt 配方與其他五支不同**。
-拿它跟 `Standard_V38` 比較 ＝「底模」與「prompt 配方」雙變因，比出來的結論不可用。
-`test_all_custom_workflows_are_registered` 會擋下來，但本機測試至今沒跑（BACKLOG §A6 S4-V1 阻擋項）。
-
-**修法（零程式、一行）**：yml 加
-
-```yaml
-  Standard_V38_NOVE.json:
-    <<: *illustrious_fabricatedxl
-```
-
-**E11｜~~「用 LoRA 就逾時」沒有證據~~ → 已推翻，LoRA 有注入，使用者的因果觀察是對的（實錘）**
-
-> ⚠️ **本條原文已作廢。** 原判斷依據是 `generation_history` #644～#647 的 `params.loras=[]`，
-> 但那四筆全部早於使用者設定 LoRA 的時間點 —— `characters.updated_at = 2026-09-19 12:50:59 UTC`
-> （＝20:50:59 CST），而 #647 是 12:50:38 UTC。**只差 21 秒**。
-> 教訓與 `project_craftflow_generation_history_forensics` 同型：**DB 存 UTC、log 存 CST，
-> 差 8 小時**；拿 DB 空值當「功能沒跑」的證據前，先確認該功能當時是否已經啟用。
-
-**訂正後的事實**（`data/logs/backend.log`，CST）：
-
-```
-20:51:20,883 [wf-snapshot char-gen] node=_lora_0  LoraLoader  lora=Blue_archive_style.safetensors  str_model=0.8
-21:54:00,869 （同上）
-23:29:29,087 （同上）
-23:41:52,845 （同上）
-```
-
-⇒ **LoRA 傳遞鏈完全正常**：`character.lora_name`（`models/character.py:53`）
-→ `character_design_service.py:966-971` 組進 `lora_list`
-→ `workflow_builder._inject_loras()` 插入 `_lora_0` 節點。四次都注入成功，四次都逾時。
-
-⚠️ 使用者在 UI 選的是**角色「專屬 LoRA」**欄位（`characters.lora_name`），不是 `art_style.loras`。
-DB 實值是 `Blue_archive_style.safetensors` @0.8（Illustrious 同族，與 `novaAnimeXL_ilV190` 相容）。
-
-**E11b｜LoRA 觸發詞完全沒有注入機制（新實錘，高影響）**
-
-`grep -n "trigger\|trained_word\|trainedWords\|activation"` 於
-`workflow_builder.py` 與 `character_design_service.py` —— **零命中**。
-
-`Blue_archive_style` 的 `ss_tag_frequency` 只有**單一 tag**：`blue archive style` ＋ U+200B，出現 **270 次**
-（＝全部訓練圖都用這一句 caption）。訓練 caption 單一的畫風 LoRA，不帶觸發詞時效果會顯著衰減。
-
-⇒ **目前是最糟的組合：付出了 LoRA 的全部 VRAM 與時間代價，卻只拿到殘留強度的畫風效果。**
-修法有二，擇一：(a) `_inject_loras()` 讀同名 `.civitai.info` 的 `trainedWords` 自動補進正向；
-(b) UI 的 LoRA 選單旁顯示觸發詞，由使用者自行貼進「外貌／個性特徵」。
-⚠️ 觸發詞尾端的 **U+200B 零寬空格必須原樣保留**，手打會打不出來。
-
-**E11c｜主生成路徑的逾時沒有任何後端 log（新實錘）**
-
-`backend.log` 在 `20:51:22` 之後**直接跳到 `21:53:36`（後端重啟）**，中間 62 分鐘零輸出：
-沒有 `TimeoutError`、沒有 `_poll_history` 的「暫時逾時」WARNING、沒有任何 ERROR。
-
-對照組：`canvas-expand` 路徑同樣的逾時**有**完整記錄 ——
-`[canvas-expand] ComfyUI 執行失敗: HTTPException: 504: ComfyUI job ... timed out after 300s`。
-
-⇒ 主生成路徑的例外被上層吞掉，只回錯誤給前端，**事後完全無法查**。
-這正是本次要靠 ComfyUI 端的 log 才能還原現場的原因。修法：主路徑比照 `canvas-expand` 補 error log。
-
-**E12｜逾時的實際機制：臉部 detailer 在 1536² 上重跑了一張完整大圖（實錘）**
-
-ComfyUI log 逐行：
-
-```
-Detailer: segment upscale for ((184.79, 185.48)) | crop region (554, 556) x 2.7706 -> (1534, 1540)
-100%|...| 14/14 [06:42<00:00, 28.73s/it]
-```
-
-算式（`Advanced_V38.json` 實查）：
-
-| 環節 | 值 | 來源 |
-|---|---|---|
-| 臉 bbox | **185 px** | log（印證 T0-E1「臉部佔畫面約 6%」） |
-| `bbox_crop_factor` | ×3 → 554 | node 33 ← node 72 |
-| `guide_size` | **512**，`guide_size_for=true` | node 33 ← node 68 `PrimitiveFloat 512` |
-| 放大倍率 | 512 ÷ 185 = **2.77** | — |
-| detailer 實際工作解析度 | 554 × 2.77 = **1534 × 1540** | log |
-| `max_size` | 2048 → **沒擋住** | node 33 ← node 65 `PrimitiveFloat 2048` |
-
-⇒ **臉越小，detailer 的工作解析度越大。** 14 步跑在 1536² 上，等於再生一張完整 SDXL 圖。
-
-同時 VRAM 爆掉（log 實錘）：
-
-```
-[WARNING] [Impact Pack] The model is not moved to the 'cuda:0' due to insufficient memory. [2]
-[INFO] Using RAM pressure cache.
-[INFO] Unloaded partially: 2514.51 MB freed, 589.23 MB remains loaded, ...
-```
-
-同時常駐的模型：SDXL 4897 + ControlNet 2396 + CLIPVision 1208 + SDXLClip 1560 + SAM + VAE 159
-≈ **10.2 GB**，加上 1024×1536 的 activations 與 1536² 的 detailer latent，16 GB 不夠。
-啟動旗標是 `--highvram`（`run_amazingSP_v3.bat`），模型不主動卸載 ⇒ 只能 partial unload + RAM cache
-⇒ 每個 step 都在 PCIe 搬權重。
-
-**決定性證據**：第三次執行的同一個 detailer 是
-
-```
-14/14 [00:13<00:00, 1.04it/s]      ← 對比第一次 [06:42, 28.73s/it]，快 30 倍
-```
-
-參數一字沒改，差別只在「這次模型還在 VRAM 裡」。
-⇒ **慢的原因是記憶體壓力，不是計算量。**
-
-主 KSampler 同樣異常：`30.27 / 25.04 / 19.59 s/it`，而 #643（同 workflow、同畫布、無 detailer 觸發）
-整趟只花 **66.1 秒**。⇒ 慢了 10～13 倍。
-
-後端 timeout：`comfyui_client.py:82` `wait_for_result(timeout=300)`。
-⇒ 實際耗時 9～21 分鐘 ≫ 300 秒 ⇒ **Craftflow 必然逾時，ComfyUI 卻會跑完並存檔**，
-與使用者描述的現象完全吻合。
-
-⚠️ **連帶疑問（待驗證，不列為結論）**：#643 只花 66 秒，裝不下「28 步主圖 ＋ 14 步 1536² detailer」。
-懷疑 detailer **不是每次都觸發**（`bbox_threshold 0.4`，185px 的臉在 1024×1536 上是偵測邊緣情況）。
-若屬實，代表目前的臉部品質是**時好時壞而非穩定**，這比單純慢更該修。
-
-**E13｜IPAdapter 只看到草圖的腰部（實錘）**
-
-ComfyUI log：
-
-```
-INFO: the IPAdapter reference image is not a square, CLIPImageProcessor will resize and crop it at the center.
-```
-
-概念圖是直長條（需求書 §一 草圖 476×1098）。CLIP 的前處理會 **center crop 成正方形**
-⇒ 頭與腿全被裁掉，IPA 實際只拿到腰部那一段。
-
-⇒ 「概念圖參考」在全身直長草圖上幾乎沒有傳遞角色外觀，這解釋了 IPA 0.1 為何感覺不到作用。
-**專案內已有現成解法**：`_letterbox_to_aspect`（CN 側為了同一類問題寫的，
-見 `project_craftflow_cn_weight` 的「只生成中段」根因），餵 IPA 前補邊成 1:1 即可。
-
----
-
-##### 這些發現對原方案的影響
-
-| 原項目 | 影響 |
-|---|---|
-| 軌 S 全部 | **操作方式更正**：拔算子改 yml，不是改 .env（E9）。原本的五組設計不變 |
-| 軌 F（臉部 denoise 0.26→0.40） | **降級／可能取消**。E12 顯示問題不是 denoise 太保守，而是 detailer 工作解析度失控＋VRAM 爆。先修 E12 再談 denoise |
-| 新增 **軌 V｜耗時與 VRAM** | V1 `guide_size` 512→320（讓工作解析度落在 ~960 而非 1536）；V2 `max_size` 2048→1280 當硬上限；V3 後端 `wait_for_result` timeout 300s 是否要調、前端要不要顯示真實進度；V4 驗證 detailer 是否每次都觸發 |
-| 新增 **軌 I｜IPA 參考圖** | I1 餵 IPA 前 letterbox 補方（沿用 `_letterbox_to_aspect`） |
-| 新增 **軌 E｜登錄護欄** | E1' `Standard_V38_NOVE.json` 補登錄 yml（E10）；E2' 本機跑 `pytest tests/`（BACKLOG S4-V1，已是第三次被同一個護欄擋下卻沒跑） |
-
-> **順序建議改為**：E10 補登錄（一行）→ 軌 V（不修完，後面每一輪 A/B 都要等 20 分鐘）→ 軌 S → 軌 I → 軌 N。
-> 原本把軌 S 排第一，是在不知道「每張圖要 9～21 分鐘」的前提下訂的。
-
-#### 十、軌 S 續（2026-09-21）：Anima 側已有結論，並提 C/D/E 三項後續
-
-> 本節補在 §2.1，因為本案標題就是「拆掉全域平塗算子」，Anima 側的算子同屬軌 S 範圍。
-> 軌 S 原訂的五組 A/B 是 **Illustrious/fabricatedXL 側的「太平塗」**；本節是 **Anima 側
-> 的「太油膩」**。兩者方向相反、根因同型（同義算子疊加），不可互相套用結論。
-
-##### S-1 證據鏈（已完成，非推論）
-
-| # | 證據 | 來源 |
-|---|---|---|
-| 1 | civitai 官方參考圖二張：`Anima turbo-v1.0` ＋ `Anima Workflows V8.0`，`CFG 1 / STEPS 12 / ER_SDE_SIMPLE / 1024×1536` —— **與本專案 `AnimaStandardV8_trubo11_0919.json` 的採樣參數完全相同**，負向與本檔 anima anchor **一字不差** | 使用者 2026-09-21 提供截圖 |
-| 2 | 該二圖出圖乾淨平塗、不油，而其**正向 prompt 裡一個平塗算子都沒有**（純 danbooru tag 清單） | 同上 |
-| 3 | 在 ComfyUI 手動以同底模 `anima_turboV11` 移除三項算子後出圖，油膩感消失、平塗成立 | 使用者實跑，2026-09-21 |
-| 4 | 使用者裁定「品質有上升，就用這個做為 Craftflow 的標準」 | 2026-09-21 對話 |
-
-**根因**：底模原生就會平塗。`flat cel shaded coloring, bold clean outlines, saturated colors`
-三項同義算子疊加 **@2.0** 落在過驅動區，把畫面推向高對比 → 高光炸開＝油。
-**加算子反而破壞平塗**，直覺是反的。與 Illustrious 側 C4（SYNC-004 / T0-E2）同型，**第二次復發**。
-
-##### S-2 已執行（零程式，設定點，見 §2.6「六、」）
-
-- **A**：`backend/prompt_profiles.yml` 兩處 `style_extra` → `""`（anchor ＋ V8turbo 複本）
-- **B**：`.env PERSONAL_STYLE_EXTRA_TAGS` → 清空（**防禦性**，非必要條件，理由見 §2.6）
-
-##### S-3 提案 C/D/E（**改碼，待 §2.5 追加裁決，未執行**）
-
-| 項 | 內容 | 檔案:行 → 怎麼改 | 風險 | 為什麼需要 |
-|---|---|---|---|---|
-| **C** | LLM 輸出禁平塗算子與權重括號 | `backend/app/services/ai/prompt_engine/compiler.py` 的 `banned_tags` 增補 `flat color` / `cel shading` / `anime coloring` / `flat cel shaded coloring` / `bold clean outlines` / `saturated colors` 等同義項；並比照既有 `_WEIGHT_GROUP_RE` 展開後比對 | 中 | A+B 只保證**後端不再主動加**；人設圖 prompt 由 LLM 動態生成，**擋不住 LLM 自己吐算子或權重括號**。不做 C，標準只落地一半 |
-| **D** | 拔 fullbody suffix 的泛詞 | `character_design_service.py:430 _build_fullbody_suffix()` 的 `character illustration` / `full body portrait` 與 compile 端 `anime style` 重疊 | 中 | 該處與 anima anchor 的原註解**自承三重同義**（prompt_profiles.yml P5-8 去重段）。算子清掉後這組泛詞成為新的稀釋來源 |
-| **E** | FaceDetailer 注入 | 藍本見本檔既有 FaceDetailer 段；**前提未驗** | 高 | Anima 用 `qwen_image_vae` ＋ Qwen3 編碼器（非 SDXL），FaceDetailer 內部會做 VAEEncode→KSampler→VAEDecode，**能不能跑至今未證實**。已交付驗證器：`F:\wk\ComfyUI_portable\AnimaTurboV11_LLLite_UI_v2_workflow.json`，跑通才談落地 |
-
-**建議順序**：先由使用者本機驗收 A+B（人設圖出圖 A/B）→ 再裁決 C → D → E。
-C 之前不要動 D，否則兩個稀釋來源一起拔，無法歸因哪一個有效。
-
-##### S-4 必須先講清楚的落差（驗收時別誤判）
-
-使用者那張滿意的圖是**手寫固定 prompt ＋ 純 txt2img ＋ LLLite** 出來的；
-Craftflow 人設圖走的是 **LLM 動態 prompt ＋ pre-ref 外擴 ＋ IPA/CN 整條鏈**。
-**A+B 落地後出圖不會與那張一模一樣**，只會少掉那三項算子。
-拿「不一樣」當作修失敗，是錯誤歸因。
-
-<!-- HANDOFF: Claude DONE @ 2026-09-19（含 E9~E13 追加）；2026-09-21 追加 §2.1 十（軌 S / Anima 側） -->
-
----
 
 ### 2.2 Codex 規劃
 
 （待填）
 
----
-
 ### 2.3 Gemini 規劃
 
-針對 Claude 提出的八個問題，提出以下實證與規劃修正：
+針對 Claude 提出的問題（§2.1 八），我已透過 codebase 檢索完成驗證，回覆如下：
 
-#### 1. 語義推論完全正確，`flat color` 是元凶
-danbooru 語彙中 `flat color` 意指「缺乏明暗漸層與陰影的純色區塊」，而 `cel shading` 要求「有硬邊階梯陰影」。兩者同時使用會導致 tag 互打。當我們追求「皮膚有漸層、布料有平塗感」時，全域加上 `flat color` 必然會把皮膚的漸層一起壓平。S1 拔除 `flat color` 是正確的假設。
+**Q1：`art_style.base_style` 與 checkpoint 家族衝突時，聽誰的？**
+**答：絕對必須聽 checkpoint（維持 D1 決策）。** prompt profile 定義了該底模所特有的品質詞與負向寫法（例如 pony 需要 `score_9`、Anima 負向不需要 `nsfw` 等）。如果 `art_style` 指定 pony 但實際執行用的是 fabricatedXL，餵給它 pony 的 prompt 會導致成圖崩壞或 tag 失效。prompt 必須與「實際執行它的模型」匹配，因此 `_detect_style(workflow).value` 是唯一正確的解法。
 
-#### 2. 現行機制「不支援」單一 tag 各自權重
-`character_design_service.py:815-826` 的程式碼顯示：
-```python
-_weighted = ", ".join(f"({t.strip()}:{_style_weight})" for t in style_extra.split(",") if t.strip())
-```
-這會把 `style_extra_weight` 無差別地套用到每一個逗號分隔的 tag 上。因此「`flat color:0.9, cel shading:1.2`」這類精細操作目前無法透過 `prompt_profiles.yml` 達成。維持 Claude 的 S1~S4 對照組即可。
+**Q2：是否有其他路徑間接依賴檔名鍵 profile？**
+**答：沒有。** 全域 grep `_profile_for` 及其直接包裝函式（`_workflow_style_extra`, `_resolve_prompt_overrides`, `_prompt_profile_source`），確認外部呼叫端**僅有** `character_design_service.py` 內的那 4 處。Claude 的 E5 證據完整無誤。
 
-#### 3. N1 應改寫至 `GenProfile`，拒絕全域 `.env`
-既然 LLLite 是 Anima 家族專屬的機制，把 `LLLITE_STRENGTH_SCALE` 放進全域 `.env` 會造成架構污染。
-**修正方案**：在 `gen_profile.py` 的 `GenProfile` 類別新增 `lllite_strength_scale: float = 1.0`，並在 `GEN_PROFILE["anima"]` 內覆寫。在 `character_design_service.py` 讀取 `gen_profile` 時提取該乘數。這才是最小且最乾淨的改動。
+**Q3：`_detect_style()` 的 SDXL 退路是否該加 warn-once？**
+**答：必須加。** `_detect_style` 在解析 custom workflow 失敗時會靜默 fallback 到 SDXL。在導入家族層後，如果某支新 workflow 沒有正確內嵌 checkpoint，它會靜默落回 SDXL 配方。這與「已知 checkpoint 但漏登錄家族」是兩種不同層級的錯誤。建議在 `_detect_style` 退回 SDXL 時補上獨立的 warn-once（如：`Workflow X 無法解析 checkpoint，退回預設 sdxl 家族`），以便與 `_profile_for` 的 miss 告警區分。
 
-#### 4. N1 記錄口徑變更「不會」打到既有測試
-透過 `grep -r "lllite_strength" backend/tests/` 實查，**無任何測試斷言此欄位**。將 `generation_history.params.lllite_strength` 記錄為「實際送出值」是安全的。
+**Q4：M／R 拆兩步是否必要？**
+**答：極度必要。** 軌 M 是純粹的「結構重構」（零行為變更），可以利用現有 `snapshots.json` 進行 100% 的等價驗證；一旦 M 驗收通過，後續的任何快照差異或出圖變化，都能 100% 歸因於軌 R 的配方改動。如果混在一起做，將無法分辨測試失敗是因為「讀不到 JSON 檔案」還是「prompt 寫法改了」。
 
-#### 5. 軌 F 不需也無法做 Anima 側
-依據本案前提與既有架構（BACKLOG N1：不補 Anima 的 FaceDetailerPipe），Anima 的工作流內根本沒有 `FaceDetailer` 節點。因此 F 軌只針對 SDXL 的 `Standard_V38` 與 `Advanced_V38` 進行。
+**Q5：`test_character_design_pure.py` 的測試依賴？**
+**答：有隱患，必須改。** 我已檢查該檔，其中直接將字串 `"Standard_V37.json"` 傳給 `_resolve_style_extra` 等函式。在現行架構下，這只是單純的 dict key lookup；但改版後，`_profile_for` 會去磁碟上讀取 `"Standard_V37.json"` 以抽取 checkpoint。由於該檔已不存在（見 E2），這會導致測試靜默 fallback 到 SDXL 配方，從而讓測試驗證到錯誤的邏輯！**所有測試中的 `"Standard_V37.json"` 字串必須替換為實際存在磁碟上的 `"Standard_V38.json"`，或將 `_detect_style` mock 掉。**
 
-#### 6. node 164 `ImpactSwitch` 不是死節點
-經查 `Advanced_V38.json`，node 164 設定為 `"select": 1` 且接了 `"input1": ["33", 0]`。這代表它是一個穩定的直通節點（pass-through），確實將 `FaceDetailer` (node 33) 的輸出往後送。臉糊純粹是參數問題（denoise 太低），不是因為節點被繞過。
+**Q6：新增 `nsfw, nude` 對 fabricatedXL 的副作用？**
+**答：風險極低。** 動漫模型（基於 illustrious）對 `bare shoulders`、`cleavage`、`bikini` 等明確服裝概念的訓練非常深。標準的 `nsfw, nude` 負向通常只會壓制生殖器或直接裸露，不會蓋掉明確的正向服裝 tag。如果後續發現正常服裝被和諧，可在 `character_design_service.py` 中針對特定 `outfit` 自動將 `nsfw` 移出負向（目前無需過早優化）。
 
-#### 7. 臉部改善的其他零程式手段
-若 F1/F2 調整 `denoise` 與 `guide_size` 效果受限，我們還可透過修改 `FaceDetailer` 節點內的 `wildcard` 或 `prompt` 欄位（例如強制加上 `highly detailed face, sharp focus`），或降低 `feather` 值（目前為 16，可能導致邊緣過度羽化而顯糊）。這些皆可在不動拓樸的前提下於 JSON 內完成。
+**Q7：R1 僅一角色一 seed 實證是否足夠？**
+**答：不足。** 單一角色容易產生過擬合（例如該 seed 剛好沒有觸發 flat color）。最小補證集合為：
+1. **Lupina**（標準女性，原測試 seed）
+2. **聖真希（Maki，id 3）**（不同色彩配置與特徵，隨機 seed）
+3. 另選一個**男性角色**或**不同畫風（如 Q 版/機甲）**的角色。
+只要這三組 A/B test 都確認沒有崩壞、且畫風優於舊版，即可定案為家族預設。
 
-#### 8. safetensors metadata 驗證無其他隱患
-使用 Python 實查 `models/loras/*.safetensors` 的 `__metadata__`，Claude 在 E8 抓出的 `ag31_style_ba_v1-000016` (實際上是 `sdxl_base_v1-0` LyCORIS) 與 `Blue_archive_style` (結尾帶零寬空格) 是清單中唯二的嚴重錯誤。其餘模型如 `Hoshimachi Suisei` 與 `Kozeki_Ui` 皆正確標示為 `sdxl_base_v1-0`。執行 X1/X2 的文件修正即可。
+**總結與補充建議：**
+我完全同意 Claude 的 M → R 分段執行計畫，以及軌 T 的測試改動。唯一要補充的是，在執行 M 時，請務必處理好 Q3（`_detect_style` 加警告）與 Q5（清理所有測試對 `V37` 的依賴），避免測試假陽性。
 
-#### 9. 針對 2026-09-21 軌 S 續（Anima 側 C/D/E）的實證與修正
-
-針對 Claude 在「十、軌 S 續」提出的後續方案 C、D、E，提供以下實證修正：
-
-**關於 C（LLM 輸出禁平塗算子）：方向正確，但實作位置與機制判斷有誤。**
-1. **位置錯誤**：`banned_tags` 並非定義於 `compiler.py`，而是在 `styles.py` 中。應直接在 `styles.py` 內定義 `_ANIMA_BANNED_STYLE_TAGS`（包含 `flat color`, `cel shading`, `anime coloring`, `flat cel shaded coloring`, `bold clean outlines`, `saturated colors`），並將其加入 `PromptStyle.ANIMA` 的 `banned_tags` 設定。
-2. **冗餘邏輯**：Claude 提議「比照 `_WEIGHT_GROUP_RE` 展開後比對」，但實查 `compiler.py` 的 `_sanitize_to_list()` 第 556 行已實作了 `re.sub(r':[\d.]+$', '', t_clean.lower().strip("()")).strip()`。這條過濾器能自動把 LLM 幻覺吐出的權重寫法（如 `(flat color:1.2)`）剝離成乾淨的 `flat color` 再進行集合比對。因此**既有機制已能完美攔截帶權重的算子，不需再新增任何展開邏輯**。
-
-**關於 D（拔 fullbody suffix 泛詞）：同意執行，不必等 C 落地。**
-`character_design_service.py:430` 的 `character illustration, full body portrait` 屬於泛用描述，對於以 danbooru 標籤為主語料的動漫模型是無效稀釋。拔除後保留 `full body, front view` 即可，與 C 的算子攔截互不衝突，建議可一併執行。
-
-**關於 E（FaceDetailer 注入）：風險評估正確，維持擋下。**
-FaceDetailer（Impact Pack）內部會在裁切後的局部區域執行 `VAEEncode` → `KSampler` → `VAEDecode`。若 Anima 底模（Cosmos-Predict2 體系）的 Latent 空間分佈或 VAE 編解碼特性與標準 SD 不同，極易在局部重繪時造成接縫處色塊破裂或直接 crash。在 UI 驗證器未於本機跑通前，嚴禁寫入主線。
-
-<!-- HANDOFF: Gemini DONE @ 2026-09-21 03:12 -->
-
----
+<!-- HANDOFF: Gemini DONE @ 2026-09-23 14:11 -->
 
 ### 2.4 Claude 整合分析
 
-> Codex（§2.2）未參與本案 —— 使用者於 2026-09-20 指示直接依 Gemini 案落地。
-> 下表只比 Claude §2.1（含 E9～E13）與 Gemini §2.3。
+> 參與：Claude §2.1、Gemini §2.3。Codex §2.2 本輪未參與（同 SYNC-005 前例），不等待。
+> Gemini 的每項主張我都回到程式碼複核，結果標在「複核」欄。
 
-#### 一、比較表
+#### 一、比較表（§2.1 八 的 Q1～Q7）
 
-| 議題 | Claude §2.1 | Gemini §2.3 | 採用 | 理由 |
-|---|---|---|---|---|
-| Q1 `flat color` 是不是元凶 | 是（語義推論，標明未實測） | 同意 | **Claude 案**，仍列為假設 | 兩方都是推論。Gemini 找不到反例但也沒找到正例 → 不升級為結論，交 S 軌實測 |
-| Q2 單 tag 各自權重 | 問可不可行 | **不支援**，附 `:815-826` 程式碼 | **Gemini** | 實查程式碼，`style_extra_weight` 無差別套用到每個 tag。S1~S4 維持原設計 |
-| Q3 LLLite scale 放哪 | 全域 `.env` | **改 `gen_profile.GenProfile`**，family 級 | **Gemini** | LLLite 是 anima 家族專屬機制，放全域 `.env` 是架構污染。這條比 Claude 原案乾淨 |
-| Q4 記錄口徑會不會打到測試 | 未知，請查 | **實查無任何測試斷言** | **Gemini** | 已複核：`grep lllite_strength backend/tests/` 零命中 |
-| Q5 軌 F 要不要做 Anima | 問 | **不做**（Anima 根本沒有 FaceDetailer 節點） | **Gemini** | 與 BACKLOG N1 一致 |
-| Q6 `ImpactSwitch` 會不會繞過 detailer | 懷疑 | **不會**，`select:1` + `input1` = 穩定直通 | **Gemini** | 與 Claude E12（detailer 確實有跑、且跑在 1536²）互相印證，不衝突 |
-| Q7 臉部還有什麼零程式手段 | 問 | denoise／wildcard／feather | **部分採用** | ⚠️ 見下方「三」：Gemini 這題答在 E12 之前，前提已變 |
-| Q8 文件還有沒有其他錯 | 問 | 逐支重查，**只有 Claude E8 抓到的兩處** | **Gemini** | 直接執行 X1/X2 |
+| # | 議題 | Claude §2.1 | Gemini §2.3 | 複核 | 結論 |
+|---|---|---|---|---|---|
+| Q1 | art_style.base_style 與 checkpoint 家族衝突 | 暫採 checkpoint（D1），請表態 | **聽 checkpoint** | DB 現況：`art_styles` 只有 #1「蔚藍檔案」`base_style=illustrious`，且**沒有任何角色／專案套用**（`characters.art_style_id`、`projects.art_style_id` 全 NULL） | ✅ 採 D1。另記：`compile` 層的 `_resolve_style()` 仍跟 art_style.base_style 走，衝突情境下兩層不一致——這是**現況即存在**的問題，本案不改變也不惡化，轉 BACKLOG |
+| Q2 | 其他路徑依賴檔名鍵？ | grep 只見 `character_design_service` | 同意，僅 4 處 | 一致 | ✅ 無分歧 |
+| Q3 | `_detect_style` 退 SDXL 加 warn-once | 列入 M（風險表） | **必須加**，且要與 `_profile_for` miss 分開兩種訊息 | `_detect_style` 有兩個退路：讀檔失敗（`workflow_builder.py:456-459`）與 pattern 全不中（函式尾） | ✅ 採 Gemini 細化：兩個退路各自 warn-once，訊息不同 |
+| Q4 | M／R 拆兩步 | 拆 | **極度必要**，並稱可用 `snapshots.json` 做 100% 等價驗證 | ❌ **Gemini 的驗證手段不成立**：`tests/golden/cases.py:128-140` 把 profile negative **逐字抄成字串常數**直接餵 `compile()`，golden **不經過** `_profile_for`，驗不到 M 的結構遷移 | ✅ 拆兩步；M 的等價驗收**只能靠 §2.1 四-1 的比對腳本**，golden 只負責「compile 行為沒變」 |
+| Q5 | 測試對 V37 的依賴 | 待逐條確認 | **有隱患**：改版後 `_profile_for("Standard_V37.json")` 會去讀磁碟，檔不存在 → 靜默退 SDXL → 測試驗錯東西 | ✅ 屬實：`test_character_design_pure.py:123,143` 傳 `Standard_V37.json`、`:132` 傳 `AnimaStandardV8.json`，兩檔都不在磁碟 | ✅ 採 Gemini：機制測試一律 **mock `_detect_style`**（不依賴磁碟）；需要真檔的鎖一律改 `Standard_V38.json` |
+| Q6 | `nsfw, nude` 副作用 | 請評估 | 風險極低；不建議預先做「依服裝移除 nsfw」 | 無反證 | ✅ 保留，列入 R 驗收目視項 |
+| Q7 | R1 補證集合 | 加一角色＋隨機 seed | **三組**，第三組取男性或不同畫風 | 角色表：`源輝` id 2 **male**、15 歲；Gemini 文中「Lupina」即 `露碧娜` | ✅ 採三組：露碧娜（seed 17021106）／聖真希（隨機）／源輝（男性，隨機） |
 
-#### 二、唯一的實質分歧：臉糊的根因
+#### 二、整合中新發現（兩方都漏看）
 
-| | 主張 | 依據 |
-|---|---|---|
-| Gemini Q6/Q7 | 「臉糊**純粹**是參數問題（denoise 太低）」 | 節點沒被繞過 |
-| Claude E12 | 臉糊的**成本**來自工作解析度失控，denoise 是次要 | detailer 實際跑在 **1534×1540**（log 實證），14 步耗 6:42；VRAM 爆到 `RAM pressure cache` |
+**N1｜軌 M 不是嚴格的「零行為變更」：Checkpoint 模式會吃到家族配方**
 
-**裁定：兩者不互斥，但順序要倒過來。** Gemini 的 Q6 答案（switch 是直通）正是 E12 成立的前提 ——
-detailer 有跑，而且跑得**太貴**。在單張要 9～21 分鐘的情況下調 denoise，每個檔位都要等 20 分鐘，
-根本做不完 A/B。**先把成本壓下來，denoise 再談**（已降級為 BACKLOG S5-F1）。
+- 角色生圖的 active workflow 若是系統內建（Checkpoint 模式，`tools/Craftflow/diffusion/workflows/text_to_image.json`），
+  `_load_workflow()`（`workflow_builder.py:402-407`）會把全域 checkpoint 注入 → `_detect_style` 解析出的是**全域 checkpoint 的家族**。
+- 改前：系統 workflow 檔名從未登錄 → 永遠 miss → `STYLE_CONFIG` 內建。
+  改後：全域 checkpoint 若是 fabricatedXL／novaAnimeXL／Illustrious-XL（illustrious）→ **會吃到 `families.illustrious`**。
+- 現況影響為零：`data/runtime_state.json` 的全域 checkpoint 是 `animagineXL40_v4Opt`（→ sdxl，yml 無此家族，行為不變），且 active workflow 是 custom。
+- 判斷：這其實是**正確方向**（配方跟底模走，不該因模式不同而分岔），但必須明說，不能宣稱 M「零行為變更」。
+- 對策：§2.1 驗收「M 比對腳本」範圍擴大為 ① 磁碟 13 支 custom workflow 逐字相同（嚴格零變更）② Checkpoint 模式 × 各已知 checkpoint 列出改前／改後差異表，差異**只允許**出現在 illustrious 家族。
 
 #### 三、Claude 自己方案的修正（誠實記錄）
 
-| # | 原案 | 改成 | 為什麼 |
-|---|---|---|---|
-| **M1** | 軌 V1：`guide_size` 512 → 320 | **`bbox_crop_factor` 3.0 → 2.0，`guide_size` 不動** | 推導錯了。工作解析度 ＝ `bbox_crop_factor × guide_size`（log 實證 3.0×512＝1534，與 bbox 大小無關）。**`guide_size` 就是臉的工作像素＝品質本身**，砍它等於砍畫質；該砍的是 `crop_factor`（臉周圍的 padding）。改後 Advanced 1536²→1024²（像素 0.44×），**臉仍在 512px 渲染、品質不降** |
-| **M2** | 軌 N1：全域 `.env` 的 `LLLITE_STRENGTH_SCALE` | family 級 `GenProfile.lllite_strength_scale` | 採 Gemini Q3 |
-| **M3** | 軌 F 排在軌 S 之後 | **降級轉 BACKLOG** | 見上「二」 |
-| **M4** | （原案沒有） | 新增 **V3 VRAM 門檻** 與 **V4 逾時 log** | E12／E11c 是規劃後才查到的 |
-| **M5** | （原案沒有） | 新增 **軌 L｜LoRA 觸發詞** | E11b 是規劃後才查到的，且影響最大：付全額 VRAM 只拿殘留畫風 |
+1. §2.1 目標寫「M＝零行為變更」不精確 → 改為「custom workflow 零行為變更；Checkpoint 模式 illustrious 家族改吃 yml 配方（N1）」。
+2. §2.1 軌 T 對 `test_character_design_pure.py` 寫「待逐條確認」→ 已確認，採 Q5 處置。
+3. §2.1 四-1 已經是正確的 M 驗收手段；golden 不能取代它（Q4 複核）。
 
-#### 四、最終執行清單
+#### 四、最終執行清單（待 §2.5 核可）
 
-見 §2.6。零程式 6 項、小面積程式 5 項、測試 +10、文件 2 項。
+| 步 | 內容 | 驗收 |
+|---|---|---|
+| **M-0** | 產出「改前快照」：13 支 custom workflow ＋ Checkpoint 模式 × `checkpoint_styles.yml` 每個 pattern 的 5 欄位解析結果 → `doc/agent_sync/SYNC-007_M_before.json` | 檔案存在 |
+| **M-1** | `prompt_profiles.yml` → `families:`（illustrious＝現行 V38 值、anima＝現行 V9_aesthetic 值，逐字） | — |
+| **M-2** | `workflow_builder.py`：`_load_prompt_profiles`（讀 families、舊 `profiles:` warn-once）、`_profile_for`（style 鍵、miss warn-once）、`_prompt_profile_source`（D5）、`_detect_style` 兩個退路各自 warn-once（Q3） | — |
+| **M-3** | 測試：機制測試 mock `_detect_style`（Q5）；V37 鎖改 V38；刪 `:250`、`:789-840`；新護欄 `test_all_custom_workflows_resolve_to_configured_family`；新增 `test_new_workflow_needs_no_registration` | 沙箱可跑部分全綠 |
+| **M-4** | 重跑快照比對 | custom 13 支 diff＝空；Checkpoint 模式差異僅 illustrious（N1） |
+| **M-5** | 文件：CLAUDE.md／AGENTS.md／GEMINI.md／MODULE_MAP／CODE_NOTES（新條目＋SYNC-001 相關條目與 CN-048 訂正）／BACKLOG（checkpoint_styles 兩區重複、art_style.base_style 兩層不一致） | — |
+| **使用者本機** | `cd backend && pytest tests/`、`git add`／commit（**M 單獨一個 commit**） | 全綠 |
+| **R-1** | `families.illustrious` 換 R1（§2.1 三 軌 R 區塊，含 `nsfw, nude`）＋ yml 註解訂正 `style_extra_weight: 1.0` 的說法 | yml 免重啟 |
+| **R-2 使用者本機** | 三組實機：露碧娜 seed 17021106／聖真希 隨機／源輝 隨機，皆 `Standard_V38`、IPA 0.2、CN 0.75 | 正向尾端為 R1 畫風段、無 `flat color`、`params.prompt_profile=family: illustrious`；三張目視無崩壞且優於舊版 |
+| **R-3** | 通過 → R 單獨 commit；不通過 → 只還原 `families.illustrious` 區塊 | — |
 
-#### 五、2026-09-21 追加整合：軌 S 續（Anima 側 C/D/E）
+#### 五、請使用者在 §2.5 裁決
 
-> Codex（§2.2）本輪仍未參與。以下為 Claude §2.1「十」原案 × Gemini §2.3「9」修正的整合，
-> 每一項都先實查再下結論。
+| # | 事項 | Claude 建議 |
+|---|---|---|
+| 1 | 依「四、」清單執行（M → 本機驗收 → R） | 核可 |
+| 2 | 接受 N1：Checkpoint 模式下 illustrious 底模也吃 `families.illustrious` | 接受（配方跟底模走） |
+| 3 | R 配方負向保留 `nsfw, nude` | 保留 |
+| 4 | R 驗收三角色（含男性 `源輝`） | 採用 |
+| 5 | 本案不等 Codex §2.2 | 同意 |
 
-##### 5-1 三項爭點的裁決
-
-| 爭點 | Claude 原案（§2.1 十） | Gemini 修正（§2.3 9） | 實查結果 | 整合結論 |
-|---|---|---|---|---|
-| C 的**位置** | 改 `compiler.py` 的 `banned_tags` | 在 `styles.py` | **Gemini 對**。`styles.py:37` 是 `StyleConfig.banned_tags` 欄位定義、`:351` 是 `PromptStyle.ANIMA` 的實際 set；`compiler.py:393` 只是消費者（`banned = config.banned_tags`） | **採 Gemini**。改 `styles.py` |
-| C 的**展開邏輯** | 比照 `_WEIGHT_GROUP_RE` 展開後比對 | 冗餘，`compiler.py:556` 已處理，「**既有機制已能完美攔截**」 | **各對一半**（見 5-2 實測） | **採 Gemini 的「不新增展開邏輯」**，但「完美」不成立 → 改以**補變體字串**收尾 |
-| D 的**時序** | 等 C 落地後再做，避免雙變因 | 可一併執行，互不衝突 | **Gemini 對**。C 作用於 LLM 輸出的 sanitizer；D 作用於 service 層的固定 suffix，兩者管線不同段、無交集 | **採 Gemini**。C／D 可同輪 |
-| E | 前提未驗，擋下 | 同意擋下 | 一致 | **維持擋下** |
-
-##### 5-2 實測：sanitizer 的攔截邊界（方法見註）
-
-以 `flat color` 等六個算子為 `banned_set`，餵 13 種寫法進 `_sanitize_to_list()`：
-
-| 輸入寫法 | 結果 |
-|---|---|
-| `flat color` / `FLAT COLOR` / `flat color:1.2` | ✅ 攔下 |
-| `(flat color:1.2)` / `(flat color:1.2`（未閉合） | ✅ 攔下 |
-| `(flat color)` / `((flat color))` | ✅ 攔下 |
-| `(flat color, cel shading:1.2)`（權重群組） | ✅ 兩段都攔下 |
-| `(saturated colors:2.0), (bold clean outlines:2.0)` | ✅ 攔下 |
-| 混在句中：`1girl, solo, flat color, cel shading, brown hair` | ✅ 只留 `1girl, solo, brown hair` |
-| **`((flat color:0.5):1.2)`（巢狀權重）** | ❌ **漏**。`.strip("()")` 剝掉頭尾所有括號後得 `flat color:0.5):1.2`，`re.sub(r':[\d.]+$')` 只去尾段 ⇒ 正規化成 `flat color:0.5)`，不命中 set |
-| **`flat colors`（複數變體）** | ❌ **漏**。`banned_set` 是**精確字串比對**（`compiler.py:561` `normalized in banned_set`），任何變體都要逐一列舉 |
-
-**結論**：Gemini 說「不需再新增展開邏輯」**正確** —— 單層權重、權重群組、大小寫全攔得住，
-Claude 原案那條是冗餘。但「完美攔截」**不成立**，缺口有二：
-
-1. **巢狀權重** —— 實務風險低（那是我們自己在 `prompt_profiles.yml` 繞 per-tag 權重用的寫法，LLM 不會自發吐出），但**它正是 Illustrious 側現行 `style_extra` 的寫法**，日後若有人把該寫法複製進 LLM 模板或 art_style，就會靜默穿過。
-2. **同義／複數變體** —— **實務風險高**，LLM 吐 `flat colors` / `flat coloring` / `cel shaded` / `flat shading` 都很自然。這是真正要補的。
-
-##### 5-3 執行建議（待 §2.5 追加裁決）
-
-| 項 | 動作 | 檔案:行 → 怎麼改 | 備註 |
-|---|---|---|---|
-| **C1** | 定義算子清單 | `styles.py` 新增 `_FLAT_STYLE_OPERATOR_TAGS = {...}`，含六個本體 ＋ 變體：`flat colors`, `flat coloring`, `flat shading`, `cel shaded`, `cel-shading`, `celshading`, `anime colouring`, `bold outlines`, `clean outlines`, `saturated color` | 精確比對 ⇒ 變體必須逐一列舉 |
-| **C2** | 掛進 ANIMA | `styles.py:351` `banned_tags=_QUALITY_TAGS_GENERIC \| _QUALITY_TAGS_SCORE \| _SUBJECT_COUNT_TAGS \| _FLAT_STYLE_OPERATOR_TAGS` | **只掛 ANIMA**。Illustrious 側軌 S 的五組 A/B 還沒判讀，掛上去會污染對照 |
-| **D1** | 拔泛詞 | `character_design_service.py:432` `", character illustration, full body portrait, full body, front view"` → `", full body, front view"` | `solo, single character` **不得動**（CN-035：那是 2026-07-26 出雙人的防線） |
-| **E** | — | 不執行 | 等 `AnimaTurboV11_LLLite_UI_v2_workflow.json` 在本機跑通 |
-
-**補強 D1 的一項額外證據（Gemini 未提）**：`image_ops.py:27` 的 CN-070 已判定
-「移除 close-up/**portrait**：它們壓低臉部佔比，與『臉部像素不足』訴求相反」，
-但那次只改了**負向**；正向這裡的 `full body portrait` 仍帶著同一個 `portrait`。
-D1 順手把它拔掉，與 CN-070 的既有結論一致，不是新假設。
-
-##### 5-4 新發現（順手記，與本案無關但會製造垃圾 tag）
-
-`_sanitize_to_list("((flat color))")` 的存活輸出是 **`[')']`** —— 一個單獨的右括號 tag。
-成因：`_ALT_PAREN_RE`（`compiler.py:485`，`\s*\([^):]{7,}\)`）先吃掉 `(flat color)`，
-殘下的 `)` 不為空、長度未超限、不含 CJK ⇒ 一路通過所有守門進到最終 prompt。
-影響小（單一括號對出圖近乎無感）但確實是缺陷。**本輪不修**，建議寫進 `doc/BACKLOG.md`。
-
-> **註（方法）**：沙箱缺 fastapi／pydantic 等套件，無法直接 import `compiler`。
-> 改以 `ast` 從 `styles.py` / `compiler.py` 原始碼**抽出 module-level 正則常數與
-> `_sanitize_to_list` 函式本體後 exec**，零手抄、行為與線上一致。
-> 這不是整條 `compile()` 的端到端測試 —— C1/C2 落地後仍須補 `backend/tests/` 的單元測試。
-
-<!-- HANDOFF: Claude DONE @ 2026-09-20；2026-09-21 追加 §2.4 五（軌 S 續 C/D/E 整合） -->
-
----
+<!-- HANDOFF: Claude DONE @ 2026-09-23 14:25 -->
 
 ### 2.5 使用者裁決
 
-- [x] **核可，一次做完**（使用者 2026-09-20 於對話中：「gemini已經提出交流 請根據對話跟md進行開發 一次做完並告訴我預期成效」，由 Claude 代為記錄）
-- [ ] 核可，但修改如下：
-- [ ] 退回重新規劃，理由：
+> 2026-09-23，使用者對話回覆「3. 所有有關 nsfw 到 SIT 驗測後再處理，其餘核可」，由 Claude 代錄。
 
-**附帶裁決（Claude 依對話推定，若與原意不符請劃掉重填）**
-
-| 項 | 決定 | 依據 |
+| # | 事項 | 裁決 |
 |---|---|---|
-| 畫風路線 | **維持 D1 純 prompt**，先跑算子 A/B，LoRA 之後再說 | 2026-09-19 對話裁決 |
-| Anima 對照線 | **不封存，要修到可用** | 同上（使用者原話「沒有封存的選項 只有弄到好」） |
-| 軌 V 的 workflow 改動 | **就地改 widget，不另產對照檔** | 與 SYNC-004 軌 A 不同：那是要比較的品質 A/B，這是效能修復。原值已完整寫進 §2.6 可一行還原 |
-| 軌 S（五組畫風 A/B） | **本輪不代跑**，交操作單 | 需 GPU 判讀，Claude 無法代替使用者判斷「皮膚有沒有階層」 |
-
-**簽核日期**：2026-09-20
-
----
-
-#### 追加裁決（2026-09-21，軌 S 續 C/D/E）
-
-- [x] **核可 C1 / C2 / D1，開始執行**（使用者 2026-09-21：「我會根據你改後進行測試 一個一個微調提示詞 開始吧」，由 Claude 代為記錄）
-- [x] **E 維持擋下**（Claude §2.1 十、Gemini §2.3-9 一致，使用者未異議）
-
-| 項 | 決定 | 依據 |
-|---|---|---|
-| C 的實作位置 | **採 Gemini：改 `styles.py`**，非 `compiler.py` | §2.4 5-1 實查：`styles.py:37/351` 是定義，`compiler.py:393` 只是消費者 |
-| C 的展開邏輯 | **採 Gemini：不新增**；改以補變體字串收尾 | §2.4 5-2 實測：單層權重／權重群組／大小寫已被攔下，Claude 原案冗餘；但「完美攔截」不成立，變體會漏 |
-| C 的作用範圍 | **只掛 ANIMA** | Illustrious 側軌 S 五組 A/B 未判讀，掛上去污染對照 |
-| D 的時序 | **採 Gemini：與 C 同輪** | 兩者作用於不同管線段，無交集 |
-| 後續驗證方式 | 使用者本機**一次微調一項提示詞**逐步驗收 | 2026-09-21 使用者原話 |
-
-**簽核日期**：2026-09-21
-
----
-
-#### 追加裁決（2026-09-21 第二輪，範例洩漏與泛用風格詞）
-
-- [x] **核可項目 2（換 `_ANIMA_TEMPLATE` EXAMPLES）與項目 3（泛用風格詞）**（使用者：「不動1 其餘都動」）
-- [x] **項目 1（角色年齡 12 → 16）使用者明示不動** —— `child` tag 為資料正確反映（`_age_body_tags(12)`），非程式缺陷，維持現狀
-
-| 項 | 決定 | 備註 |
-|---|---|---|
-| 角色年齡 | **不動**（維持 12） | 與 2026-09-20「人設圖只限定年輕女性、不走幼態」的既定需求相衝突，使用者知情並選擇維持 |
-| `_ILLUSTRIOUS_TEMPLATE` 的同源污染 | **本輪不動** | 該模板有**完全相同**的被污染範例（同一異色瞳角色、同一 `tactical vest`）。軌 S 的 Illustrious 五組 A/B 尚未判讀，改範例會變動該線 prompt、污染對照 → 待軌 S 判讀後再修 |
-
-**簽核日期**：2026-09-21（第二輪）
-
----
+| 1 | 依 §2.4「四、」清單執行（M → 本機驗收 → R） | ✅ 核可 |
+| 2 | 接受 N1：Checkpoint 模式下 illustrious 底模也吃 `families.illustrious` | ✅ 核可 |
+| 3 | R 配方負向加 `nsfw, nude` | ⏸ **延後**：所有 nsfw 相關處理待 SIT 驗測後再議。R 配方**不含** `nsfw, nude`（＝ComfyUI R1 原樣） |
+| 4 | R 驗收三角色（露碧娜 seed 17021106／聖真希／源輝） | ✅ 核可 |
+| 5 | 本案不等 Codex §2.2 | ✅ 核可 |
+| 6 | 軌 R＋軌 P（§2.1-P）一併執行，不等 Codex／Gemini（2026-09-23 使用者原話「軌 R＋P 核可，不等 Codex／Gemini」） | ✅ 核可。R 在前、P 在後，各自驗證；§2.1-P 七 的 Q-P1～Q-P6 由 Claude 依 §2.1-P 預設處理（疊加於 art_style／權重跟家族／art_generate 轉 BACKLOG／非 anima 含 `@` warn-once／conftest 只清新鍵／順序 R→P） |
 
 ### 2.6 執行紀錄（Claude 填）
 
-> §2.5 於 2026-09-20 核可（「一次做完」）後執行。全程沙箱，**未跑 git 寫入**。
+#### 一、軌 M（結構遷移）—— 已完成，待使用者本機 commit
 
-#### 一、變更紀錄
-
-| # | 軌 | 動作 | 檔案 | 原值 → 新值 | 結果 |
-|---|---|---|---|---|---|
-| **E1'** | E | `Standard_V38_NOVE.json` 補登錄（`<<: *illustrious_fabricatedxl`） | `backend/prompt_profiles.yml` | 未登錄 → 登錄 | ✅ |
-| **V1** | V | `bbox_crop_factor` 下修（**不動 `guide_size`**） | `Standard_V38.json` node 31 / `Advanced_V38.json` node 72 | 2.5 → **2.0** / 3.0 → **2.0** | ✅ |
-| **V2** | V | `max_size` 硬上限 | `Standard_V38.json` node 19 / `Advanced_V38.json` node 65 | 1536 → **1280** / 2048 → **1280** | ✅ |
-| **V3a** | V | `COMFYUI_REQUIRED_VRAM_GB` | `backend/app/core/config.py` | 8 → **11** | ✅ |
-| **V3b** | V | `COMFYUI_RESIDENT_MIN_FREE_GB` | 同上 | 6 → **10** | ✅ |
-| **V3c** | V | 新增 `COMFYUI_JOB_TIMEOUT_SEC`（原寫死 300） | 同上 ＋ `workflow_builder._run()` | — → **1200** | ✅ |
-| **V4** | V | 主生成路徑逾時補 `logger.error`（原本**一行 log 都沒有**） | `workflow_builder._run()` | — | ✅ |
-| **L1** | L | 新增 `lora_trigger_words()`：讀同名 `.civitai.info` 的 `trainedWords` | `workflow_builder.py` | — | ✅ |
-| **L2** | L | 觸發詞前置進正向（`_inject_loras` 之後、`_inject_prompts` 之前） | `character_design_service.py` | — | ✅ |
-| **I1** | I | IPA 參考圖 `_letterbox_to_aspect(..., 1, 1)` 補方 | `character_design_service.py` | — | ✅ |
-| **I2** | I | `_letterbox_to_aspect` 加具名參數 `label`（預設 `"cn-letterbox"`＝原字串） | `image_ops.py` | — | ✅ |
-| **N1a** | N | `GenProfile.lllite_strength_scale`（family 級，非全域 `.env`；採 Gemini Q3） | `gen_profile.py` | — → **1.0**（零回歸） | ✅ |
-| **N1b** | N | LLLite strength ＝ 滑桿 × scale；log 印出三個數 | `character_design_service.py` | 直接餵滑桿 → 乘 scale | ✅ |
-| **N1c** | N | `params.lllite_strength` 改記**實際送出值** | 同上 | 滑桿值 → 實際值 | ✅ |
-| **X1** | X | `ComfyUI_portable\CLAUDE.md` LoRA 表訂正（架構／觸發詞／同族關係） | 該檔 | — | ✅ |
-| **X2** | X | 同檔補「架構欄位以 metadata＋civitai.info 為準」的維護規則與查法 | 同上 | — | ✅ |
-| **T** | 測試 | 新增 10 項、改 5 處為符號化 | `tests/test_lora_arch.py`／`test_gen_profile.py`／`test_image_ops.py`／`test_vram_coexist.py` | — | ✅ |
-| **S** | S | 畫風算子 A/B（S0～S4） | — | — | 🔲 **本輪不代跑**（需 GPU 判讀） |
-
-#### 二、執行中發現並修正的兩件事（規劃階段沒看到的）
-
-**N12（高）§2.1 軌 V1 的「`guide_size` 512→320」是錯的，已不採用。**
-
-Impact Pack 的 `enhance_detail` 是
-`工作解析度 = crop_region × (guide_size / bbox)`，而 `crop_region = bbox × crop_factor`，
-兩個 bbox 相消 ⇒ **工作解析度 ＝ `bbox_crop_factor × guide_size`，與臉多大無關**。
-log 實證：`554 × 2.7706 = 1534`，且 `554/185 = 3.0 = crop_factor`。
-
-於是 **`guide_size` 就是臉被渲染時的像素數 ＝ 畫質本身**，砍它等於砍畫質。
-真正該砍的是 `bbox_crop_factor`（臉周圍的 padding，3.0 偏大）。改後：
-
-| | crop_factor × guide_size | 工作解析度 | 相對像素 | 臉的渲染像素 |
-|---|---|---|---|---|
-| `Advanced_V38` 改前 | 3.0 × 512 | 1536² | 1.00 | 512 |
-| `Advanced_V38` 改後 | **2.0 × 512** | **1024²** | **0.44** | **512（不變）** |
-| `Standard_V38` 改前 | 2.5 × 512 | 1280² | 1.00 | 512 |
-| `Standard_V38` 改後 | **2.0 × 512** | **1024²** | **0.64** | **512（不變）** |
-
-**成本砍一半以上，臉的畫質不動。** 這是本輪最划算的一項。
-
-**N13（中）`tests/test_vram_coexist.py` 的決策表寫死了舊門檻算出來的常數。**
-
-`free_g=9.0`（照舊門檻 8 手算）與 `free_g=6.5`（照舊 resident 門檻 6 手算）兩筆，
-門檻一改就會紅。**但那不是「改動污染定版路徑」，是測試鎖錯對象**——
-它鎖的是「門檻等於某個值」，而門檻本來就該隨實測調整。
-
-已改為從 `config` 推導（`_ABOVE_REQ` / `_ABOVE_RESIDENT` / `_BELOW_RESIDENT`），
-測的是**決策邏輯照不照門檻走**。同 SYNC-001「測試鎖錯對象 → 改成列舉真實來源反向驗證」的教訓。
-
-⚠️ 上面那組「2026-07-26 實測 log 逐筆固化」**刻意不符號化** —— 它們是歷史誤判樣本，
-鎖的是「這些具體情境永遠不可放行」，門檻調高只會讓它們更該被拒。
-
-#### 三、驗證
-
-**沙箱可做的（已做）**
-
-| 項 | 方法 | 結果 |
+| 步 | 檔 | 變更 |
 |---|---|---|
-| 五支 `.py` 未截斷 | `ast.parse` ＋ 比對預期函式／類別名（`py_compile` 抓不到截斷，CLAUDE.md 沙箱陷阱） | ✅ 全數命中 |
-| 兩支 `.yml` / 兩支 `.json` | `yaml.safe_load` / `json.load` | ✅ |
-| 登錄反向護欄 | 列舉磁碟 11 支 × 比對 yml 16 鍵 | ✅ **未登錄＝0**（改動前有 1 支） |
-| NOVE 配方同源 | `profiles['Standard_V38_NOVE.json'] == profiles['Advanced_V38.json']` | ✅ 逐字相同 |
-| workflow 參數反查 | 從 `FaceDetailerPipe` 反查 `bbox_crop_factor`／`max_size` 的來源節點 | ✅ 2.0 / 1280（兩支） |
-| 無字面值污染 | 掃全檔確認沒有 `KSampler` 把 `steps` 寫成字面值（CLAUDE.md 編程檢查點 2） | ✅ `strays=[]` |
-| `lora_trigger_words` **實際執行** | 真的建檔、真的讀檔，5 組情境 | ✅ 零寬空格保留／一般空白 strip／跨 LoRA 去重／7 種壞輸入回 `[]`／壞 JSON 不炸 |
-| `lllite_strength_scale` | import `gen_profile` 讀實值 | ✅ 全 family ＝ 1.0（零回歸）；0.6×{1.0,1.7,2.2}＝{0.600,1.020,1.320} |
-| IPA 補方 | import `image_ops` 真的跑圖 | ✅ 476×1098→1098²、303×691→691²、1024²原樣回傳；CN 既有呼叫 303×691→461×691 不變 |
-| VRAM 決策表 | 純函式模擬 13 種情境（含 5 筆歷史誤判樣本 ＋ **09-19 逾時當下的兩筆實況**） | ✅ 全數符合期望；兩筆實況由「放行」轉為「拒絕」 |
+| M-0 | `doc/agent_sync/SYNC-007_M_before.json` | 改前快照：13 支 custom workflow ＋ Checkpoint 模式 × 24 個 checkpoint pattern 的 style／overrides／style_extra／source（**用真實程式碼解析**，非重寫邏輯） |
+| M-1 | `backend/prompt_profiles.yml` | 395 行 → `families:` 兩條（illustrious＝舊 `Standard_V38.json` 解析值、anima＝舊 `AnimaStandardV9_aesthetic.json` 解析值，寫檔前以 `yaml.safe_load` 比對**逐字相等**才落檔）。舊檔含全部沿革註解存 `doc/agent_sync/SYNC-007_prompt_profiles_before.yml` |
+| M-2 | `backend/app/services/ai/workflow_builder.py` | `_load_prompt_profiles` 改讀 `families`、舊 `profiles:` warn-once；新增 `_profile_for_style()`；`_profile_for()` 改經 `_detect_style()` 取家族；`_prompt_profile_source()` 改標 `family: <家族>`／`family fallback (STYLE_CONFIG: <家族>)`；`_detect_style()` 兩個 SDXL 退路各自 warn-once（`_warn_style_fallback`，Q3）。函式簽章與呼叫端零改動 |
+| M-3 | `backend/tests/test_workflow_builder.py` | 機制測試 14 條加 `_as_family()` 固定家族（不依賴磁碟）＋鍵名改家族；實檔配方鎖改鎖 `families.*`；檔名登錄護欄 → `test_all_custom_workflows_resolve_to_known_family`（反向列舉磁碟）；新增 `test_new_workflow_needs_no_registration`、`test_load_prompt_profiles_ignores_legacy_profiles_key`、`test_profile_for_warns_once_per_family_on_miss`、`test_detect_style_fallback_warns_once_per_cause`；刪除 A/B 對照組與 anchor 一致性等已無對象的測試 |
+| M-3 | `backend/tests/test_anima_family.py` | V37 鎖 4 條改載 `Standard_V38.json` 並更名 `illustrious_path_*`；刪 `test_v37_profile_registered_and_anima_not`、G-1／G-2 V37 配方鎖 2 條；V8 檔名鎖 3 條 → anima 家族鎖 2 條（官方 score_* 約束） |
+| M-3 | `backend/tests/test_character_design_pure.py` | 範例檔名 V37→V38、V8→V9_aesthetic（這幾條 mock 了 `_workflow_style_extra`，不受家族解析影響）；不 mock 的零回歸測試改為固定 `_detect_style→sdxl`，避免隨本機全域 checkpoint 漂移 |
+| M-5 | `CLAUDE.md`、`AGENTS.md`、`doc/MODULE_MAP.md` | 設定點表、編程檢查點 4／5：V37 鎖 → illustrious 家族路徑鎖（`GEMINI.md` 無相關敘述，未動） |
+| M-5 | `doc/reference/CODE_NOTES.md` | 新增 CN-114；CN-048、CN-066 各加「訂正（2026-09-23）」，不刪舊條目 |
+| M-5 | `doc/BACKLOG.md` §A9 | 補 3 列：art_style.base_style 兩層不一致（Q1）、AnimaStandardV7 同型靜默 skip、基線既有 6 條失敗 |
 
-**沙箱做不到，需使用者本機執行**
+#### 二、驗證
 
-1. **`cd backend && pytest tests/`** —— 沙箱無 `pytest`（CLAUDE.md 已載明）。本輪**沒跑過測試**。
-   重點看 `test_vram_coexist.py`（N13 改動）、`test_lora_arch.py`（+5）、
-   `test_gen_profile.py`（+2）、`test_image_ops.py`（+3）、
-   以及 `test_all_custom_workflows_are_registered`（E1'）。
-   ⚠️ 這是**第三輪**被同一個護欄擋下卻沒跑，見 BACKLOG §A6 S4-V1。
-2. **必須重啟後端** —— `config.py` 是模組常數，`gen_profile` / `image_ops` / `workflow_builder`
-   / `character_design_service` 都是 Python 模組。（`prompt_profiles.yml` 不用，不快取。）
-3. **workflow JSON 改動不需重啟**（每次生成重讀）。
-4. 前端未動，不需 `npm run build`。
-5. **沙箱不跑 git 寫入** —— 改動目前未進 git。
+**M-4 快照比對**（`SYNC-007_M_before.json` vs `SYNC-007_M_after.json`）：
+- custom 13 支：style／overrides／style_extra **0 差異**（只有 source 標註字串改為 `family: …`，符合 D5）。
+- Checkpoint 模式：差異**只出現在** illustrious（fabricatedXL／novaAnimeXL／IllustriousXL／illustrious-xl／illustriousXL）與 anima 三個 pattern ⇒ 與 §2.4 N1 預期一致。anima 在 Checkpoint 模式屬理論值（系統 workflow 是 CheckpointLoaderSimple，Anima 為 UNET，實際跑不起來）。
 
-#### 四、交給使用者的測試順序
+**pytest（使用者本機 VM 以 venv 補套件實跑，非 Windows 環境）**：
 
-> 每一項固定 seed、沿用 prompt。**先重啟後端。**
+| | tests | failures | skipped |
+|---|---|---|---|
+| 改動前基線 | 449 | 14 | 15 |
+| 改動後 | 428 | **6** | 9 |
 
-| 順 | 測什麼 | 怎麼測 | 預期 | 失敗徵兆與回滾 |
-|---|---|---|---|---|
-| 1 | **V1＋V2＋V3**（成本） | `Advanced_V38` 出 1 張，**不掛 LoRA、不勾概念圖參考**，與 #643（66.1s）比 | 仍在 1 分鐘量級；log 出現 `Detailer: ... -> (1024, ...)` 而非 1534 | 若臉部出現接縫／邊緣突兀 ＝ crop_factor 2.0 太緊 → node 72／31 改回 3.0／2.5 |
-| 2 | **L1＋L2**（LoRA 觸發詞） | 掛 `Blue_archive_style` @0.8 再出 1 張。看 log 有沒有 `LoRA 觸發詞已補入正向：Blue archive style​` | BA 畫風明顯強於 2026-09-19 那幾張（那幾張沒有觸發詞） | 畫風過頭／角色被拉走 → LoRA 權重降到 0.5~0.6 |
-| 3 | **V3 的代價** | 同上觀察 log 的 `VRAM:` 行 | 應看到「卸載另一方」而非「enough memory — keeping ollama loaded」；Ollama 重載約 10~30s | 若覺得卸太兇 → `.env` 設 `COMFYUI_RESIDENT_MIN_FREE_GB=8` |
-| 4 | **I1**（IPA 補方） | 勾回「概念圖參考」出 1 張 | log 出現 `[ipa-letterbox] 476x1098 → 1098x1098`；ComfyUI 端**不再印** `not a square ... crop it at the center` | — |
-| 5 | **軌 S**（畫風五組） | 照 `doc/target/SYNC-005_軌S_畫風算子AB_操作單_20260919.md` | 見該操作單 | — |
+- 新增失敗 **0**。剩 6 條全為基線既有、與本案無關（見 BACKLOG §A9）。
+- 基線 14 條中有 8 條是 profile 實檔鎖**早已失效**（09-20／21 改 yml 未同步測試），隨本案改寫而消失。
+- skipped 15→9：原本因 V37 不在磁碟而**靜默跳過**的 illustrious 路徑鎖，現在真的在跑（E2 修復實證）。
 
-> **順序理由**：1 先確認成本壓下來（不然後面每輪要等 20 分鐘）；2 才是畫風；
-> 4 排在 2 之後是因為 IPA 會多吃 1208MB CLIPVision，先讓 2 在最寬鬆的條件下跑。
+**負向對照**：複製 V38 並把 checkpoint 改成 `mysteryXL_v1.safetensors` 放進臨時目錄 → `test_all_custom_workflows_resolve_to_known_family` 紅燈，訊息指名該檔與 checkpoint；原 V38 副本通過。證明新護欄不是「鎖錯對象」。
 
-#### 五、落地後首輪實測（#648～#651）與 L3 修正
+#### 三、整合時的更正（誠實記錄）
 
-後端已於 00:25:58 重啟，改動**有**生效 —— `[ipa-letterbox] 303x691 → 691x691` 實證軌 I 成功。
-但軌 L 全程空轉：
+- Gemini §2.3 Q5 稱 `test_character_design_pure.py` 會因讀磁碟而「靜默 fallback SDXL 驗錯」—— 實查該檔那幾條 **mock 的是 `_workflow_style_extra` 本身**，不會讀磁碟；真正會漂移的是**不 mock** 的那條零回歸測試（依本機全域 checkpoint），已修。結論（要處理）正確，指認的位置不精確。
 
-**L3（高）`COMFYUI_LORAS_DIR` 指向不存在的目錄。**
-`config.py:43` 預設 `C:\ComfyUI\models\loras`，`.env` 那行被註解掉，實際在 `F:\wk\ComfyUI_portable\...`。
-兩個吃這個常數的功能都**安靜降級**：`lora_trigger_words()` 回 `[]`（軌 L 等於沒做）、
-`_lora_arch()` 回 `None`（架構健檢從 2026-06-21 起一直在空轉，既有缺陷今天才暴露）。
+#### 四、待使用者本機
 
-| # | 修正 | 檔案 |
+1. 重啟後端（`workflow_builder.py` 有改；yml 本身免重啟）。
+2. Windows 環境 `cd backend && pytest tests/`，預期與上表一致（6 條既有失敗）。
+3. 角色頁隨便生一張（任一 V38／Anima workflow），DEBUG prompt 來源應顯示 `family: illustrious`／`family: anima`，prompt 內容與昨天相同。
+4. **`git add` ＋ commit（軌 M 單獨一個 commit）**；`backend/data/vision_cache.json` 是執行期產物、非本案改動，自行決定是否納入。
+5. 回報後進軌 R（`families.illustrious` 換 R1，**不含 nsfw/nude**，依 §2.5 #3）。
+
+<!-- HANDOFF: Claude 軌 M DONE @ 2026-09-23 14:28 -->
+
+#### 五、軌 R＋軌 P —— 已完成（§2.5 #6），待使用者本機驗收＋commit
+
+改前快照：`doc/agent_sync/SYNC-007_RP_before/`（8 檔原樣複本，回滾用）。
+
+| 步 | 檔 | 變更 |
 |---|---|---|
-| L3a | 補 `COMFYUI_LORAS_DIR=F:\wk\ComfyUI_portable\ComfyUI\models\loras` | 專案根 `.env` |
-| L3b | `_lora_dir_ok()`：目錄不存在 warn-once，兩個函式都先問一次（沿用 `_PROFILE_MISS_WARNED` 慣例） | `workflow_builder.py` |
-| L3c | 測試 +2（安全降級且只吵一次／目錄存在不吵） | `tests/test_lora_arch.py` |
+| R-1 | `backend/prompt_profiles.yml` | `families.illustrious` → R1：quality `masterpiece, best quality, amazing quality, absurdres`；style_extra 7 tag、weight **1.0**（不加權接尾端）；negative＝ComfyUI R1 原樣（**不含** nsfw/nude，§2.5 #3）。寫檔前 `yaml.safe_load` 比對：illustrious 逐字等於 R1、**anima 與改前逐字相同** |
+| R-2 | `backend/tests/test_workflow_builder.py` | 實檔鎖 weight 1.2→1.0＋「不得回流 flat color」；`_BANNED_SUBSTRINGS` 移除 `lineart`/`line art`（理由見 CN-115）；`_MAX_STYLE_TAGS` 依位置分流（加權前置 5／尾端 8） |
+| P-1 | `backend/app/core/config.py` | `PERSONAL_KIND_STYLE/NEGATIVE`、`PERSONAL_FAMILY_KEY_PREFIXES`、`personal_family_extra(kind, family)`（呼叫時才讀 env） |
+| P-2 | `backend/app/services/ai/workflow_builder.py` | `_personal_extra(kind, workflow)`（家族經 `_detect_style`；非 anima 含 `@` → warn-once）；`_prompt_profile_source` 命中附加 ` +personal(.env)` |
+| P-3 | `backend/app/services/ai/character_design_service.py` | `_resolve_style_extra` 末段疊加個人畫風；新增 `_with_personal_negative()`，於 `final_negative` 去重前疊加。簽章與呼叫端不變 |
+| P-5 | `backend/tests/conftest.py`（新） | autouse 清除分家族鍵，隔離使用者真實 `.env` |
+| P-5 | `test_workflow_builder.py` +5、`test_character_design_pure.py` +8 | 零回歸、疊加、anima 吃家族權重、跨家族不外洩（正負向各一）、疊加於 art_style／舊 fallback、來源標註、`@` warn-once |
+| P-6 | `.env.example`、`CLAUDE.md`、`AGENTS.md`、`GEMINI.md`、`CODE_NOTES`（CN-115）、`BACKLOG` §A9 | 設定點與範例（範例用佔位字，不含個人標籤）；BACKLOG 補 art_generate 範圍、Anima 權重待判讀、`[wf-load]` +2 |
+| — | 專案根 `.env`（不進 git） | 使用者要求代改：過渡期舊鍵關回（`ENABLED=false`、`EXTRA_TAGS` 清空）；新鍵 `PERSONAL_STYLE_EXTRA_ANIMA`／`_ILLUSTRIOUS`、`PERSONAL_NEGATIVE_EXTRA_ANIMA=(halo:1.5)`／`_ILLUSTRIOUS=halo` |
 
-> **Claude 的疏失**：沙箱測 `lora_trigger_words` 時手動傳了正確路徑，沒驗證該常數在使用者機器上指到哪。
-> 同型教訓：「分析前先用 runtime log 確認實際載入的檔／設定」—— 該驗的不只是邏輯，還有它吃的設定值。
+**驗證（使用者本機 VM venv，非 Windows）**
 
-**三張回饋圖都不是軌 S 的對照組**，且 LoRA 只有殘留效果
-⇒ 目前沒有任何一張圖能判斷 D1（純 prompt）的上限。順序因此修正：
-
-```
-0. 重啟後端（.env 改了）
-1. Advanced_V38 ＋ LoRA 0.8 → 確認 log 出現「LoRA 觸發詞已補入正向」
-       └─ 一張圖回答「BA LoRA 行不行」＝ D1 該不該重開
-2. 有效 → 重開 D1；無效 → 才跑軌 S 五組
-3. Anima：掃 lllite_strength_scale 1.7 / 2.2
-```
-
-⚠️ 改用 `Advanced_V38.json`；`Standard_V38.json` 的背景洗白（N10）未解，會多一個變因。
-
-<!-- HANDOFF: Claude DONE @ 2026-09-20 -->
-
-#### 六、2026-09-21 追加（軌 S｜Anima 側平塗算子）
-
-> 零程式，只動設定點（CLAUDE.md「零程式碼的設定點優先用這些，別改碼」）。
-> 全程沙箱，**未跑 git 寫入**。`_load_prompt_profiles()` 不快取 ⇒ **改完免重啟即生效**。
-
-| # | 動作 | 檔案 | 原值 → 新值 | 結果 |
-|---|---|---|---|---|
-| **S-A1** | anima anchor 清空平塗算子 | `backend/prompt_profiles.yml`（`AnimaStandardV8.json` anchor） | `"flat cel shaded coloring, bold clean outlines, saturated colors"` → `""` | ✅ |
-| **S-A2** | 同值複本一併清空 | 同檔 `AnimaStandardV8turbo.json` | 同上 → `""` | ✅ |
-| **S-B1** | 全域 fallback 清空（防禦性） | `.env` | `PERSONAL_STYLE_EXTRA_TAGS=flat color, cel shading, anime coloring` → 空 | ✅ |
-
-**驗證**
-- `yaml.safe_load` 通過，16 個 profile 全數解析。
-- 四支 Anima profile（`AnimaStandardV8` / `V8turbo` / `_trubo11_0919` / `_Aesthetic_0919`）
-  `style_extra` 皆為 `''`；**Illustrious 側（`Standard_V37` / `V38`）維持
-  `'(flat color:0.7), cel shading, thick outlines'` 不變** —— 軌 S 的 Illustrious A/B 未受污染。
-- 兩檔換行符維持 CRLF，stray-LF = 0（沿用原檔換行符，避免 git status 全檔假 modified）。
-
-**兩個刻意保留的東西**
-- `style_extra_weight: 2.0` 未動。`style_extra` 為空時該值不被使用
-  （`character_design_service.py:772` 的 `if style_extra:` 保護），留著讓回滾只需改一行。
-- `.env PERSONAL_STYLE_ENABLED=false` 未動。
-
-**一則自我訂正**：初稿註解寫「兩處必須同時清空，改單邊無效」是**錯的** ——
-`_resolve_style_extra()`（`character_design_service.py:467`）是
-`PERSONAL_STYLE_ENABLED and PERSONAL_STYLE_EXTRA_TAGS` 的且條件，而 `ENABLED=false`，
-該 fallback 本來就不生效。S-B1 因此是**防禦性**而非必要條件。註解已於同日修正。
-
-**待使用者本機**
-1. 跑一張人設圖，確認 `generation_history.params` 的正向**不再出現** `(flat cel shaded coloring:2.0)` 等三項
-2. 與修改前的圖目視 A/B（看油膩感是否下降）
-3. `cd backend && pytest tests/`
-4. `git add` / commit（沙箱不跑 git 寫入）
-
----
-
-#### 七、2026-09-21 執行（軌 S 續 C1/C2/D1）
-
-> §2.5 追加裁決核可後執行。全程沙箱，**未跑 git 寫入**。E 未執行。
-
-| # | 動作 | 檔案 | 內容 | 結果 |
-|---|---|---|---|---|
-| **C1** | 新增平塗算子清單 | `styles.py`（`_SD_SYNTAX_TAGS` 之前） | `_FLAT_STYLE_OPERATOR_TAGS`，**26 項**：六個本體 ＋ 複數／同義／英式拼寫變體 | ✅ |
-| **C2** | 掛進 ANIMA | `styles.py` `PromptStyle.ANIMA` | `banned_tags=… \| _FLAT_STYLE_OPERATOR_TAGS` | ✅ |
-| **D1** | 拔 fullbody 泛詞 | `character_design_service.py` `_build_fullbody_suffix()` | `", character illustration, full body portrait, full body, front view"` → `", full body, front view"`；標 `[CN-097]` | ✅ |
-| **T1** | 更新既有斷言 | `tests/test_anima_family.py::test_fullbody_suffix_is_single_illustration` | `assert "character illustration" in low` → `not in`；新增 `assert "portrait" not in low` | ✅ |
-| **T2** | 新增測試 ×3 | 同檔 | `..._banned_for_anima_only` / `..._actually_stripped_from_llm_output` / `test_nested_weight_syntax_is_known_leak` | ✅ |
-
-**掛載範圍驗證**（AST 解析 `STYLE_CONFIG`，不執行程式）：
-
-```
-PromptStyle.ANIMA        [..., _FLAT_STYLE_OPERATOR_TAGS]   <== 只有這一個
-PromptStyle.ILLUSTRIOUS  [_QUALITY_TAGS_GENERIC, _QUALITY_TAGS_ILLUSTRIOUS, ...]
-PromptStyle.SDXL / PONY / FLUX / NOOBAI / ANYTHINGXL        未掛
-```
-
-**行為驗證**（`ast` 抽出 `_sanitize_to_list` ＋ 各 `*_TAGS` 常數後 exec，零手抄）：13 例全數符合預期 ——
-混合句、五種權重寫法、六種變體全攔；巢狀權重如預期漏（已寫成 `test_nested_weight_syntax_is_known_leak` 固定現況）。
-
-**一個差點上線的測試錯誤（自我揭露）**
-初版三支新測試用 `1girl, {variant}, solo` 當樣本、斷言存活 `["1girl", "solo"]`。
-實查發現 `_SUBJECT_COUNT_TAGS`（`styles.py`）**本身就含 `1girl` 與 `solo`**，兩者一樣會被剝除 ⇒
-該斷言必紅。已全數改用 `brown hair` / `short hair` 當存活標記，並在測試內留下警示註解。
-**這正是 CLAUDE.md 編程檢查點 1 的情境** —— 只看清單不跑函式就會漏掉。
-
-**`thick outlines` 的一個交叉確認**
-該 tag 同時出現在 Illustrious 側現行 `style_extra`。因 C2 **只掛 ANIMA**，且 `style_extra`
-走 service 層 `_resolve_style_extra()`、**不經 compile**，Illustrious 路徑不受影響（已 AST 驗證）。
-
-**待使用者本機**
-1. `cd backend && pytest tests/` —— 沙箱缺 fastapi／pydantic，**本輪測試未實跑**，只做了抽取式行為驗證
-2. 跑人設圖，確認 `generation_history.params` 正向不再出現平塗算子，且 suffix 不再有 `character illustration` / `full body portrait`
-3. 依使用者計畫「一次微調一項提示詞」逐步驗收
-4. `git add` / commit（沙箱不跑 git 寫入）
-
-**未執行**：E（FaceDetailer 注入）—— 等 `AnimaTurboV11_LLLite_UI_v2_workflow.json` 在本機跑通。
-
----
-
-#### 八、2026-09-21 執行（軌 S 續 項目 2／3）
-
-> §2.5 第二輪裁決後執行。全程沙箱，**未跑 git 寫入**。
-
-##### 8-1 根因：規則說一套，範例示範另一套
-
-`_DANBOORU_COMMON_RULES` 明寫：
-
-```
-- STRICT: Do NOT add clothing, accessories, or background details that are NOT mentioned in the input.
-```
-
-而 `_ANIMA_TEMPLATE` 的三個 EXAMPLES **全部違反它**：
-
-| 範例 | Input 未提及 | Output 卻有 |
-|---|---|---|
-| 例1 | 閉嘴、看鏡頭 | `closed mouth, looking at viewer` |
-| 例2 | 戰術背心 | `tactical vest` |
-| 例3 | 長袍、嚴肅表情 | `robe, serious expression` |
-
-**LLM 學範例不學規則** —— `tactical vest` 不是幻覺，是範例教出來的。
-
-**實錘**（`generation_history` #750 ＋ UI 截圖）：角色「外貌／個性特徵」欄位全文是
-「（左眼為紅色，右眼為綠色的異色瞳）、短褐色頭髮,白皙皮膚」——**零服裝描述**，
-而輸出含 `grey combat suit, tactical vest`，逐字等於舊例2 的 Output。
-上一輪只能判「強烈嫌疑」，本輪輸入端零服裝 ⇒ 確證。
-
-##### 8-2 變更紀錄
-
-| # | 動作 | 檔案 | 內容 | 結果 |
-|---|---|---|---|---|
-| **S-C3** | 重寫 EXAMPLES | `styles.py` `_ANIMA_TEMPLATE` | 三例全部改為「每個 Output tag 可逐項對回 Input」，並避開專案角色特徵（異色瞳／褐髮／戰鬥服） | ✅ |
-| **S-C4** | 補 TRACEABILITY 規則 | 同上 `[CRITICAL RULES]` | 肯定語氣（「每個 tag 必須對回 INPUT 的某個詞組」），**不列舉禁用詞**（列舉會誘發該 token） | ✅ |
-| **S-C5** | 新增 `_GENERIC_STYLE_TAGS`（10 項） | `styles.py` | `anime style` / `character illustration` / `digital art` / `illustration` … | ✅ |
-| **S-C6** | 掛進 ANIMA | `styles.py` | `… \| _FLAT_STYLE_OPERATOR_TAGS \| _GENERIC_STYLE_TAGS` | ✅ |
-| **T3** | 新增測試 ×3 | `tests/test_anima_family.py` | `..._examples_are_traceable` / `..._still_renders` / `..._generic_style_tags_banned_for_anima_only` | ✅ |
-
-新 EXAMPLES：
-
-```
-Input: 藍色長髮雙馬尾，藍色眼睛的少女，微笑
-Output: 1girl, solo, blue hair, long hair, twintails, blue eyes, smile
-
-Input: 金色短髮、琥珀色眼睛的女學生，穿著水手服
-Output: 1girl, solo, blonde hair, short hair, amber eyes, serafuku
-
-Input: 銀髮紫瞳的魔法師少年，戴著尖頂帽
-Output: 1boy, solo, silver hair, purple eyes, mage, wizard hat
-```
-
-##### 8-3 驗證
-
-- **f-string 健檢**（CLAUDE.md 檢查點 1，歷史事故：雙層大括號上線即 500）：模板內大括號僅
-  `{_SKIN_SCOPE_RULES}` / `{_DANBOORU_COMMON_RULES}`（f-string 插值）與 `{{prompt}}`（逃脫給
-  `.format()`）。**實際執行 `.format(prompt=...)` 成功**，渲染長度 2858、佔位符無殘留。
-- 既有相依未破壞：`HETEROCHROMIA` 規則、`STRICT` 規則、`_SKIN_SCOPE_RULES` 皆仍在模板內
-  （移除舊例2 後，異色瞳的處理改由 COMMON_RULES 的 HETEROCHROMIA 規則承擔，該規則本身附有例子）。
-- 掛載範圍：`_GENERIC_STYLE_TAGS` 只在 `PromptStyle.ANIMA`，Illustrious／SDXL 未掛。
-- 新測試三支的斷言已以 AST 抽取法預跑，預期失敗數 0。
-
-##### 8-4 本輪刻意未動（要記得）
-
-| 項 | 原因 |
+| 項目 | 結果 |
 |---|---|
-| 角色年齡 12（`child` tag） | 使用者明示不動。**非程式缺陷** —— `_age_body_tags(12)` 就是回 `child`，`petite` 來自身高 152（`<160`） |
-| `_ILLUSTRIOUS_TEMPLATE` | 有**完全相同**的被污染範例（同一異色瞳角色、同一 `tactical vest`、同樣的 `robe, serious expression`）。軌 S 的 Illustrious 五組 A/B 未判讀，改動會污染對照組。**切回 Illustrious 線時這個洩漏仍在** |
-| E（FaceDetailer 注入） | 前提未驗 |
+| 全量 pytest | **426 passed / 6 failed / 9 skipped**；6 條＝§2.6「二、」既有失敗清單逐條相同，新增失敗 0（測試數 +13） |
+| golden `python -m tests.golden.run_diff` | 13 筆全數一致 |
+| 負向對照 | 暫移 `conftest.py` → 10 條既有測試因讀到真實 `.env` 紅燈；放回全綠 ⇒ 隔離確實必要且有效 |
+| 真實設定解析（真 `.env`＋真 yml＋磁碟 workflow） | `Standard_V38` → `family: illustrious +personal(.env)`，正向尾端 `…, high detail, blue archive, kozaki yuusuke`、負向 `…, halo`（＝ComfyUI K2）；`AnimaStandardV9_miaomiaoHarem` → `family: anima +personal(.env)`，前置 `(blue archive:2.0), (@kozaki yuusuke:2.0)`、負向 `…, (halo:1.5)` |
 
-##### 8-5 待使用者本機
+**待使用者本機**
 
-1. `cd backend && pytest tests/` —— 沙箱缺 fastapi／pydantic，**測試未實跑**
-2. 跑人設圖，確認正向**不再出現** `tactical vest` / `grey combat suit`（外貌欄位沒寫服裝就不該有）與 `anime style`
-3. `git add` / commit
+1. 重啟後端（`.env`、`config.py` 有改）。
+2. Windows `cd backend && pytest tests/`，預期 6 條既有失敗。
+3. R 驗收：露碧娜 × `Standard_V38` × seed 17021106 → DEBUG 來源 `family: illustrious +personal(.env)`、正向無 `flat color`；目視接近 ComfyUI K2。加跑聖真希、源輝（§2.5 #4）。
+4. P 驗收（Anima）：露碧娜 × `AnimaStandardV9_miaomiaoHarem` → 對照 ComfyUI A 系列；光環／角色漂移明顯 → 裁決 `families.anima.style_extra_weight` 是否改 1.0。
+5. commit（`git add -p` 可拆 M／R／P；或單一 commit 註明三軌）。`backend/data/vision_cache.json` 為執行期產物。
+
+<!-- HANDOFF: Claude 軌 R＋P DONE @ 2026-09-23 16:05 -->
 
 ---
 
@@ -1130,3 +577,4 @@ Output: 1boy, solo, silver hair, purple eyes, mage, wizard hat
 | 2026-09-16 | `SYNC-002` | 角色管理出圖品質第二刀：Anima 結構控制、FabricatedXL 皮膚平塗、Anima FaceDetailer | A1b（LLLite 退避快取）＋B4'／B5'（皮膚規則共用、眼色反向判定）落地，372 測試通過；實機驗收 A1b／B5' 通過，T1-A／T1-B／T2／T3 未完成；**因 SYNC-003 提前歸檔**，遺留項轉 `doc/BACKLOG.md` §A4 | `doc/agent_sync/2026-09-16_SYNC-002_Anima結構控制-皮膚平塗-FaceDetailer.md` |
 | 2026-09-19 | `SYNC-003` | 模型家族誤判：`animagineXL` 被當成 Anima → LLLite 對 SDXL 空轉、IPA/CN 被錯誤閘掉 | A1（yml 兩區補登錄）＋A2（載入節點一致性護欄 `family_conflict`）＋A3（+6 測試，含磁碟反向驗證）＋B1~B4 文件落地，400 passed / 15 skipped；**本機驗收未跑**，因開新議題 SYNC-004 提前歸檔 | `doc/agent_sync/2026-09-19_SYNC-003_模型家族誤判-載入節點一致性護欄.md` |
 | 2026-09-19 | `SYNC-004` | 出圖品質對標官方範例：釐清「設定 vs 顯卡」歸因，修採樣參數／畫布／臉部／prompt 四層落差 | **T0 PASS（環境與顯卡無罪）**；軌 A（四支 `_0919` 對照檔＋登錄）、B1/B2/B3、C1、C4 落地並沙箱驗證；A4／C6／C7 裁決不做轉 BACKLOG；**C2/C3/C5、本機 pytest、git add 未完成**。因使用者回報「太平塗／Anima CN 不如 SDXL」推翻 D1/D2 前提，開 SYNC-005 並提前歸檔 | `doc/agent_sync/2026-09-19_SYNC-004_出圖品質對標官方範例.md` |
+| 2026-09-23 | `SYNC-005` | 畫風「太平塗」與 Anima 條件控制失效 | 軌 E／V／L／I／N／X 落地並沙箱驗證（測試 +10）；軌 S 五組 A/B 由 09-23 ComfyUI R1 實測取代（配方轉 SYNC-007 軌 R）；**本機 pytest、§2.6「四、」測試、git add 未完成**，因開 SYNC-007 提前歸檔，遺留轉 `doc/BACKLOG.md` §A9 | `doc/agent_sync/2026-09-23_SYNC-005_畫風太平塗-Anima條件控制.md` |

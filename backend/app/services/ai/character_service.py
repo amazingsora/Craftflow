@@ -6,10 +6,9 @@ Character AI services:
 """
 from __future__ import annotations
 
-import json
-import re
 
 from app.services.ai import ollama_client
+from app.services.ai.llm_json import extract_json
 from app.services.ai.prompt_loader import load_prompt
 
 
@@ -90,30 +89,5 @@ def describe_portrait(
     return ollama_client.analyze_image(image_path, prompt, model=model)
 
 
-def describe_portrait_bytes(
-    image_bytes: bytes,
-    character_name: str,
-    model: str = ollama_client.DEFAULT_VISION_MODEL,
-) -> str:
-    prompt = load_prompt("character/describe_portrait", character_name=character_name)
-
-    return ollama_client.analyze_image_bytes(image_bytes, prompt, model=model)
-
-
 def _parse_json_object(raw: str) -> dict | None:
-    if not raw:
-        return None
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
-    try:
-        data = json.loads(cleaned)
-        return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"\{[\s\S]*\}", cleaned)
-    if not m:
-        return None
-    try:
-        data = json.loads(m.group(0))
-        return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
-        return None
+    return extract_json(raw, dict)

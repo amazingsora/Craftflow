@@ -88,13 +88,6 @@ def describe_illustration(
     return ollama_client.analyze_image(image_path, prompt, model=model)
 
 
-def describe_illustration_bytes(
-    image_bytes: bytes,
-    model: str = ollama_client.DEFAULT_VISION_MODEL,
-) -> str:
-    prompt = load_prompt("art/describe_illustration")
-    return ollama_client.analyze_image_bytes(image_bytes, prompt, model=model)
-
 # 舊接口相容轉接層 (Backward Compatibility)
 
 @dataclass

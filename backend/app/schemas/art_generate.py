@@ -24,6 +24,7 @@ class GenerateRequest(BaseModel):
     steps: int = 20
     seed: int = -1
     art_style_id: Optional[int] = None
+    character_id: Optional[int] = None  # 「以此角色生圖」帶入時有值 → 未成年護欄依角色年齡判定
 
 
 class GenerateAsyncRequest(GenerateRequest):

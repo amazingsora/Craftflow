@@ -9,12 +9,11 @@ Ported from tools/Craftflow/core/consistency_analyzer.py.
 """
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass, field
 from typing import Optional
 
 from app.services.ai import ollama_client
+from app.services.ai.llm_json import extract_json
 from app.services.ai.prompt_loader import load_prompt
 
 
@@ -162,19 +161,4 @@ def _semantic_scan_paragraph(
 
 
 def _parse_json(raw: str) -> Optional[list]:
-    if not raw:
-        return None
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
-    try:
-        data = json.loads(cleaned)
-        return data if isinstance(data, list) else None
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"\[[\s\S]*\]", cleaned)
-    if not m:
-        return None
-    try:
-        data = json.loads(m.group(0))
-        return data if isinstance(data, list) else None
-    except json.JSONDecodeError:
-        return None
+    return extract_json(raw, list)

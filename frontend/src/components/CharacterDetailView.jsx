@@ -59,7 +59,7 @@ function _initVariant(v = {}, charId = null, slot = null) {
     pendingQueue: [], generating: false, savingGen: false, savingFields: false,
     summarizing: false, uploadingConcept: false,
     deletingConceptIdx: null, deletingAiIdx: null,
-    lastDebugPrompt: null, lastRawDesc: null, lastFlatDraft: null, lastTimings: null, lastAiPromptCompiled: null, lastIpaUsed: null, showDebugPrompt: false,
+    lastDebugPrompt: null, lastRawDesc: null, lastLlmInput: null, lastFlatDraft: null, lastTimings: null, lastAiPromptCompiled: null, lastIpaUsed: null, showDebugPrompt: false,
     // A3 P0-1/P0-2/P0-5：變體版同主角色一樣需要 seed 欄位（可重現實驗台）。
     seed: -1, lastSeed: null, reusePrompt: false,
   }
@@ -111,6 +111,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [uploadingConcept, setUploadingConcept] = useState(false)
   const [conceptImages, setConceptImages] = useState(initChar.concept_images || [])
   const [generating, setGenerating] = useState(false)
+  const [sendingToGen, setSendingToGen] = useState(false)
   const [pendingQueue, setPendingQueue] = useState([])
   const [savingGen, setSavingGen] = useState(false)
   const [aiImages, setAiImages] = useState(initChar.ai_generated_images || [])
@@ -155,6 +156,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [showDebugPrompt, setShowDebugPrompt] = useState(false)
   const [lastDebugPrompt, setLastDebugPrompt] = useState(null)
   const [lastRawDesc, setLastRawDesc] = useState(null)
+  const [lastLlmInput, setLastLlmInput] = useState(null)  // [CN-117] 個人詞庫替換後送進 LLM 的文字
   const [lastFlatDraft, setLastFlatDraft] = useState(null)
   const [lastAiPromptCompiled, setLastAiPromptCompiled] = useState(null)
   const [lastIpaUsed, setLastIpaUsed] = useState(null)
@@ -293,6 +295,10 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         try { setLastRawDesc(decodeURIComponent(escape(atob(b64RawDesc)))) }
         catch (e) { /* silent */ }
       }
+      let llmInput = null
+      const b64LlmInput = resp.headers.get('X-LLM-Input')
+      if (b64LlmInput) { try { llmInput = decodeURIComponent(escape(atob(b64LlmInput))) } catch (e) { /* silent */ } }
+      setLastLlmInput(llmInput)
       setLastFlatDraft(resp.headers.get('X-Flat-Draft') === '1')
 
       if (debugPrompt) setLastDebugPrompt(debugPrompt)
@@ -516,6 +522,9 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       let rawDesc = null
       const b64RawDesc = resp.headers.get('X-Raw-Desc')
       if (b64RawDesc) { try { rawDesc = decodeURIComponent(escape(atob(b64RawDesc))) } catch (e) { /* silent */ } }
+      let llmInput = null
+      const b64LlmInput = resp.headers.get('X-LLM-Input')
+      if (b64LlmInput) { try { llmInput = decodeURIComponent(escape(atob(b64LlmInput))) } catch (e) { /* silent */ } }
       const flatDraft = resp.headers.get('X-Flat-Draft') === '1'
       let timings = null
       const b64Timings = resp.headers.get('X-Timings')
@@ -536,6 +545,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         generating: false,
         lastDebugPrompt: debugPrompt,
         lastRawDesc: rawDesc,
+        lastLlmInput: llmInput,
         lastFlatDraft: flatDraft,
         lastTimings: timings,
         lastAiPromptCompiled: aiPromptCompiled,
@@ -599,15 +609,21 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         </div>
         {onSendToGenerate && (
           <button
-            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer', fontWeight: 600 }}
-            onClick={() => {
-              const parts = [char.name]
-              if (char.core_traits) parts.push(char.core_traits)
-              if (char.outfit) parts.push(`服裝：${char.outfit}`)
-              onSendToGenerate(parts.join('，'))
+            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: sendingToGen ? 'wait' : 'pointer', fontWeight: 600, opacity: sendingToGen ? 0.6 : 1 }}
+            disabled={sendingToGen}
+            onClick={async () => {
+              // 2026-09-24：改帶後端即時編譯的英文識別段（不含名字、不取歷史）；
+              // Ollama 失敗時後端回 fallback＝不含名字的中文，放回中文描述欄。
+              setSendingToGen(true); setError(null)
+              try {
+                const d = await (await request(`/characters/${char.id}/identity-prompt`)).json()
+                onSendToGenerate(d.source === 'compiled'
+                  ? { en: d.positive, negative: d.negative, zh: '', characterId: char.id }
+                  : { en: '', zh: d.zh, characterId: char.id })
+              } catch (e) { setError(e.message) } finally { setSendingToGen(false) }
             }}
-            title="將角色特徵帶入文字→生圖 Tab"
-          >→ 以此角色生圖</button>
+            title="將角色識別段（英文 tag）帶入文字→生圖 Tab"
+          >{sendingToGen ? '編譯角色提示詞中…' : '→ 以此角色生圖'}</button>
         )}
       </div>
 
@@ -1161,6 +1177,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                     <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {lastRawDesc ?? '—'}
                     </div>
+                    {lastLlmInput && (
+                      <>
+                        <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>送進 LLM 的文字（個人詞庫替換後）</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface-2)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--border-strong)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                          {lastLlmInput}
+                        </div>
+                      </>
+                    )}
                     {lastAiPromptCompiled !== null && (
                       <>
                         <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
@@ -1555,6 +1579,14 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                     <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {vState.lastRawDesc ?? '—'}
                     </div>
+                    {vState.lastLlmInput && (
+                      <>
+                        <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>送進 LLM 的文字（個人詞庫替換後）</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface-2)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--border-strong)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                          {vState.lastLlmInput}
+                        </div>
+                      </>
+                    )}
                     {vState.lastAiPromptCompiled !== null && (
                       <>
                         <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,

@@ -11,15 +11,14 @@ Faction API:
 """
 from __future__ import annotations
 
-import shutil
-import uuid
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.api._upload_utils import (
+    ensure_image_type, file_response_or_404, remove_file_if_exists, save_upload,
+)
 from app.core.config import UPLOAD_DIR
 from app.core.database import get_db
 from app.models.character import Character
@@ -31,7 +30,21 @@ router = APIRouter(tags=["factions"])
 DbDep = Annotated[Session, Depends(get_db)]
 
 _THUMB_DIR = UPLOAD_DIR / "faction_thumbnails"
-_ALLOWED = {"image/jpeg", "image/png", "image/webp"}
+
+
+def _get_faction_or_404(db: Session, faction_id: int) -> Faction:
+    faction = db.get(Faction, faction_id)
+    if not faction:
+        raise HTTPException(status_code=404, detail="Faction not found")
+    return faction
+
+
+def _get_faction_and_character(db: Session, faction_id: int, character_id: int) -> tuple[Faction, Character]:
+    faction = _get_faction_or_404(db, faction_id)
+    character = db.get(Character, character_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+    return faction, character
 
 
 @router.get("/projects/{project_id}/factions", response_model=list[FactionResponse])
@@ -54,9 +67,7 @@ def create_faction(project_id: int, data: FactionCreate, db: DbDep):
 
 @router.put("/factions/{faction_id}", response_model=FactionResponse)
 def update_faction(faction_id: int, data: FactionUpdate, db: DbDep):
-    faction = db.get(Faction, faction_id)
-    if not faction:
-        raise HTTPException(status_code=404, detail="Faction not found")
+    faction = _get_faction_or_404(db, faction_id)
     if data.name:
         faction.name = data.name.strip()
     db.commit()
@@ -66,33 +77,17 @@ def update_faction(faction_id: int, data: FactionUpdate, db: DbDep):
 
 @router.delete("/factions/{faction_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_faction(faction_id: int, db: DbDep):
-    faction = db.get(Faction, faction_id)
-    if not faction:
-        raise HTTPException(status_code=404, detail="Faction not found")
+    faction = _get_faction_or_404(db, faction_id)
     db.delete(faction)
     db.commit()
 
 
 @router.post("/factions/{faction_id}/thumbnail", response_model=FactionResponse)
 async def upload_thumbnail(faction_id: int, file: Annotated[UploadFile, File(...)], db: DbDep):
-    faction = db.get(Faction, faction_id)
-    if not faction:
-        raise HTTPException(status_code=404, detail="Faction not found")
-    if file.content_type not in _ALLOWED:
-        raise HTTPException(status_code=400, detail=f"Unsupported type: {file.content_type}")
-
-    _THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename).suffix if file.filename else ".png"
-    filename = f"{faction_id}_{uuid.uuid4().hex}{suffix}"
-    dest = _THUMB_DIR / filename
-    with dest.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    if faction.thumbnail_path:
-        old = _THUMB_DIR / faction.thumbnail_path
-        if old.exists():
-            old.unlink(missing_ok=True)
-
+    faction = _get_faction_or_404(db, faction_id)
+    ensure_image_type(file)
+    filename = save_upload(file, _THUMB_DIR, f"{faction_id}_")
+    remove_file_if_exists(_THUMB_DIR, faction.thumbnail_path)
     faction.thumbnail_path = filename
     db.commit()
     db.refresh(faction)
@@ -104,20 +99,12 @@ def get_thumbnail(faction_id: int, db: DbDep):
     faction = db.get(Faction, faction_id)
     if not faction or not faction.thumbnail_path:
         raise HTTPException(status_code=404, detail="Thumbnail not found")
-    path = _THUMB_DIR / faction.thumbnail_path
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Thumbnail file missing")
-    return FileResponse(str(path))
+    return file_response_or_404(_THUMB_DIR / faction.thumbnail_path, "Thumbnail file missing")
 
 
 @router.post("/factions/{faction_id}/members/{character_id}", status_code=status.HTTP_204_NO_CONTENT)
 def add_member(faction_id: int, character_id: int, db: DbDep):
-    faction = db.get(Faction, faction_id)
-    if not faction:
-        raise HTTPException(status_code=404, detail="Faction not found")
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+    faction, character = _get_faction_and_character(db, faction_id, character_id)
     if character not in faction.characters:
         faction.characters.append(character)
         db.commit()
@@ -125,12 +112,7 @@ def add_member(faction_id: int, character_id: int, db: DbDep):
 
 @router.delete("/factions/{faction_id}/members/{character_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_member(faction_id: int, character_id: int, db: DbDep):
-    faction = db.get(Faction, faction_id)
-    if not faction:
-        raise HTTPException(status_code=404, detail="Faction not found")
-    character = db.get(Character, character_id)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
+    faction, character = _get_faction_and_character(db, faction_id, character_id)
     if character in faction.characters:
         faction.characters.remove(character)
         db.commit()

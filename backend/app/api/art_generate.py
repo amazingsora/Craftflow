@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import random
 import time
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -42,7 +43,7 @@ from app.schemas.art_generate import (
 from app.services.ai.workflow_builder import (
     _build_txt2img,
     _style_prompts,
-    _compile_overrides,
+    _resolve_prompt_overrides,
     _detect_style,
     _extra_tags,
     _inject_loras,
@@ -108,7 +109,10 @@ async def compile_prompt_endpoint(req: CompilePromptRequest, db: Session = Depen
     style = _resolve_style(art_style)
     await guardian.request_focus("ollama")
     try:
-        positive, negative = compile_prompt(req.prompt, style=style, model=req.model or state.get_text_model(), **_compile_overrides(art_style))
+        positive, negative = compile_prompt(
+            req.prompt, style=style, model=req.model or state.get_text_model(),
+            keep_subject=True, **_resolve_prompt_overrides(art_style, state.get_workflow()),
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=f"Ollama 文字模型失敗：{e}")
     extra = _extra_tags(art_style)
@@ -120,12 +124,6 @@ async def compile_prompt_endpoint(req: CompilePromptRequest, db: Session = Depen
         "style": style.value,
         "art_style_id": req.art_style_id,
     }
-
-
-# Keep old endpoint as alias for backward compatibility
-@router.post("/art/optimize-prompt", summary="[deprecated] 請改用 /art/compile-prompt")
-async def optimize_prompt_compat(req: CompilePromptRequest):
-    return await compile_prompt_endpoint(req)
 
 
 @router.post("/art/lineart", summary="草稿→線稿 (ComfyUI ControlNet)")
@@ -184,7 +182,8 @@ async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
 async def generate_async(req: GenerateAsyncRequest, db: Session = Depends(get_db)):
     """
     立即回傳 job_id，背景執行生成（避免 two-pass / 高解析度 / 批次撞 HTTP 逾時）。
-    輪詢 GET /art/jobs/{job_id}，完成後 GET /art/jobs/{job_id}/result?index=N 取圖。
+    進度：SSE GET /art/jobs/{job_id}/progress（或輪詢 GET /art/jobs/{job_id}），
+    完成後 GET /art/jobs/{job_id}/result?index=N 取圖。
     """
     batch_size = max(1, min(8, req.batch_size))
     wf, seed, style, prompt, negative, lora_list = _build_txt2img(req, db, batch_size=batch_size)
@@ -249,6 +248,27 @@ def get_generation_job_result(job_id: str, index: int = 0):
         },
     )
 
+
+
+@router.get("/art/jobs/{job_id}/progress", summary="生圖 job 進度（SSE）")
+async def stream_generation_job_progress(job_id: str):
+    """
+    前端 GenerateTab.streamJobProgress 訂閱此端點；事件 event ∈ snapshot|progress|node|done|error，
+    另有 {"heartbeat": true} 保活。收到 done/error 後串流結束。
+    """
+    job = generation_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found（可能已逾時淘汰）")
+
+    async def event_stream():
+        async for ev in generation_jobs.stream_job_events(job):
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/art/inpaint", summary="局部重繪（白色遮罩區 = 重繪區）")
@@ -477,6 +497,12 @@ async def compose(
 
 
 # ── Character Design Sheet Generation(主流程已下沉 character_design_service,A1 Step 3)──
+
+@router.get("/characters/{character_id}/identity-prompt", summary="角色識別段英文 prompt（以此角色生圖）")
+async def get_character_identity_prompt(character_id: int, db: Session = Depends(get_db)):
+    """依角色目前欄位即時編譯（不取歷史）；Ollama 失敗回 source=fallback＋不含名字的中文。"""
+    return await character_design_service.build_identity_prompt(character_id, db)
+
 
 @router.post("/characters/{character_id}/generate-design", summary="角色人設圖生成(ComfyUI)")
 async def generate_character_design(

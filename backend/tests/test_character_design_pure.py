@@ -120,7 +120,7 @@ def test_resolve_style_extra_profile_beats_env(_no_env_style, monkeypatch):
     monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", True)
     monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "blue archive")
     monkeypatch.setattr(cds, "PERSONAL_STYLE_WEIGHT", 9.9)
-    tag, weight = _resolve_style_extra(None, "Standard_V37.json")
+    tag, weight = _resolve_style_extra(None, "Standard_V38.json")
     assert tag == "flat color, thick outlines"
     assert weight == 1.2  # profile weight 也贏過 .env
 
@@ -129,7 +129,7 @@ def test_resolve_style_extra_profile_weight_absent_falls_back_to_env(_no_env_sty
     """profile 只登錄 style_extra、未登錄 weight → weight 落回 .env（tag 與 weight 各自獨立判斷）。"""
     monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("flat color", None))
     monkeypatch.setattr(cds, "PERSONAL_STYLE_WEIGHT", 2.0)
-    tag, weight = _resolve_style_extra(None, "AnimaStandardV8.json")
+    tag, weight = _resolve_style_extra(None, "AnimaStandardV9_aesthetic.json")
     assert tag == "flat color"
     assert weight == 2.0
 
@@ -140,7 +140,7 @@ def test_resolve_style_extra_db_beats_everything(_no_env_style, monkeypatch):
     monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", True)
     monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "blue archive")
     st = ArtStyle(name="s", extra_tags=" vibrant colors, cel shading ")
-    tag, weight = _resolve_style_extra(st, "Standard_V37.json")
+    tag, weight = _resolve_style_extra(st, "Standard_V38.json")
     assert tag == "vibrant colors, cel shading"
     # DB 只決定 tag，不決定 weight —— weight 仍照 profile > .env 判斷（此處 profile 有登錄）。
     assert weight == 1.2
@@ -148,6 +148,11 @@ def test_resolve_style_extra_db_beats_everything(_no_env_style, monkeypatch):
 
 def test_resolve_style_extra_unregistered_workflow_zero_regression(_no_env_style, monkeypatch):
     """未登錄 workflow → _workflow_style_extra 真實回傳 ("", None)（不 mock），確認端到端零回歸。"""
+    # SYNC-007：profile 以家族為鍵，系統 workflow 的家族取決於全域 checkpoint（runtime_state）。
+    # 固定為未設定配方的 sdxl，避免測試結果隨使用者本機 checkpoint 漂移。
+    from app.services.ai import workflow_builder as _wb
+    from app.services.ai.prompt_engine import PromptStyle as _PS
+    monkeypatch.setattr(_wb, "_detect_style", lambda _w: _PS.SDXL)
     monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", True)
     monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "blue archive")
     monkeypatch.setattr(cds, "PERSONAL_STYLE_WEIGHT", 1.2)
@@ -208,3 +213,77 @@ def test_wf_checkpoint_falls_back_to_global_when_not_embedded(monkeypatch):
     """system workflow 未內嵌模型名 → 退回全域（零回歸：等同改動前行為）。"""
     monkeypatch.setattr(cds.state, "get_checkpoint", lambda: "global.safetensors")
     assert cds._wf_checkpoint({"3": {"class_type": "KSampler", "inputs": {}}}) == "global.safetensors"
+
+
+# ── [CN-115] SYNC-007 軌 P：.env 分家族個人標籤（疊加語義）──────────────────────
+# tests/conftest.py 已清掉使用者真實 .env 的分家族鍵；以下各自 setenv。
+
+from app.services.ai import workflow_builder as _wb
+from app.services.ai.character_design_service import _with_personal_negative
+from app.services.ai.prompt_engine import PromptStyle
+
+
+def _family(monkeypatch, style):
+    monkeypatch.setattr(_wb, "_detect_style", lambda _w: style)
+
+
+def test_personal_style_absent_is_zero_regression(_no_env_style, monkeypatch):
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("soft shading", 1.0))
+    assert _resolve_style_extra(None, "Standard_V38.json") == ("soft shading", 1.0)
+
+
+def test_personal_style_appends_after_family_style(_no_env_style, monkeypatch):
+    """illustrious（R1 weight 1.0）：個人標籤接在家族畫風段之後 → 組裝時落在正向尾端（＝ComfyUI K2）。"""
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("soft shading", 1.0))
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ILLUSTRIOUS", "some series, some artist")
+    assert _resolve_style_extra(None, "Standard_V38.json") == ("soft shading, some series, some artist", 1.0)
+
+
+def test_personal_style_anima_uses_family_weight(_no_env_style, monkeypatch):
+    """anima 家族 style_extra 為空：個人標籤成為整段畫風，權重沿用家族值（不另設旋鈕，§2.1-P P-D3）。"""
+    _family(monkeypatch, PromptStyle.ANIMA)
+    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("", 2.0))
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "some series, @some artist")
+    assert _resolve_style_extra(None, "AnimaStandardV9_miaomiaoHarem.json") == ("some series, @some artist", 2.0)
+
+
+def test_personal_style_does_not_leak_across_families(_no_env_style, monkeypatch):
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("soft shading", 1.0))
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "@some artist")
+    assert _resolve_style_extra(None, "Standard_V38.json") == ("soft shading", 1.0)
+
+
+def test_personal_style_stacks_on_art_style(_no_env_style, monkeypatch):
+    """P-D2：art_style.extra_tags 取代家族段，但個人標籤仍疊加。"""
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("soft shading", 1.0))
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ILLUSTRIOUS", "some artist")
+    st = ArtStyle(name="s", extra_tags="vibrant colors")
+    assert _resolve_style_extra(st, "Standard_V38.json")[0] == "vibrant colors, some artist"
+
+
+def test_personal_style_stacks_on_legacy_global_fallback(_no_env_style, monkeypatch):
+    """P-D5：舊全域鍵語義不變（家族段空才生效）；新分家族鍵接在其後。"""
+    _family(monkeypatch, PromptStyle.ANIMA)
+    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("", 2.0))
+    monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", True)
+    monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "some series")
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "@some artist")
+    assert _resolve_style_extra(None, "AnimaStandardV9_miaomiaoHarem.json")[0] == "some series, @some artist"
+
+
+def test_personal_negative_appends_to_any_base(monkeypatch):
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    assert _with_personal_negative("worst quality", "Standard_V38.json") == "worst quality"
+    monkeypatch.setenv("PERSONAL_NEGATIVE_EXTRA_ILLUSTRIOUS", "halo")
+    assert _with_personal_negative("worst quality", "Standard_V38.json") == "worst quality, halo"
+    assert _with_personal_negative("", "Standard_V38.json") == "halo"
+
+
+def test_personal_negative_does_not_leak_across_families(monkeypatch):
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setenv("PERSONAL_NEGATIVE_EXTRA_ANIMA", "(halo:1.5)")
+    assert _with_personal_negative("worst quality", "Standard_V38.json") == "worst quality"

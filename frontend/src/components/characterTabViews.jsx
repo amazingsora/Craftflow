@@ -8,6 +8,33 @@ import { Spinner, StatusBadge, GenderPicker, DeleteConfirm } from './characterTa
 import { GENRES, STATUSES, apiFetch } from './characterTabShared.js'
 
 
+// 角色卡：CharacterListView（未分組）與 FactionView（成員）共用；children＝卡片底部的額外內容。
+// 2026-09-24 重複碼整合：原為 CharacterListView 內部元件＋FactionView 內聯複本（15 行逐字相同）。
+function CharCard({ c, onSelect, children }) {
+  return (
+    <div
+      style={S.charCard}
+      onClick={() => onSelect(c)}
+      onMouseEnter={e => e.currentTarget.style.borderColor = c.color || 'var(--accent)'}
+      onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
+    >
+      <div style={S.portrait}>
+        {(c.concept_images?.[0])
+          ? <img src={apiUrl(`/characters/${c.id}/concept-images/0`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+          : c.portrait_path
+            ? <img src={apiUrl(`/characters/${c.id}/portrait`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+            : '無概念圖'
+        }
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {c.color && <span style={{ ...S.colorDot, background: c.color }} />}
+        <span style={S.charName}>{c.name}</span>
+      </div>
+      {children}
+    </div>
+  )
+}
+
 export function ProjectsView({ onSelect, onCreateClick, onEdit }) {
   const [projects, setProjects] = useState([])
   const [charCounts, setCharCounts] = useState({})
@@ -245,30 +272,6 @@ export function CharacterListView({ project: initProject, onSelectChar, onCreate
   const allFactionCharIds = new Set(factions.flatMap(f => f.characters.map(c => c.id)))
   const ungrouped = characters.filter(c => !allFactionCharIds.has(c.id))
 
-  const CharCard = ({ c }) => (
-    <div
-      style={S.charCard}
-      onClick={() => onSelectChar(c)}
-      onMouseEnter={e => e.currentTarget.style.borderColor = c.color || 'var(--accent)'}
-      onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
-    >
-      <div style={S.portrait}>
-        {(c.concept_images?.[0])
-          ? <img src={apiUrl(`/characters/${c.id}/concept-images/0`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-          : c.portrait_path
-            ? <img src={apiUrl(`/characters/${c.id}/portrait`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-            : '無概念圖'
-        }
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        {c.color && <span style={{ ...S.colorDot, background: c.color }} />}
-        <span style={S.charName}>{c.name}</span>
-      </div>
-      {c.core_traits && (
-        <div style={S.charTraits}>{c.core_traits.slice(0, 45)}{c.core_traits.length > 45 ? '...' : ''}</div>
-      )}
-    </div>
-  )
 
   const FactionCard = ({ f }) => (
     <div
@@ -382,7 +385,13 @@ export function CharacterListView({ project: initProject, onSelectChar, onCreate
       {!loading && (
         <div style={S.charGrid}>
           {factions.map(f => <FactionCard key={`faction-${f.id}`} f={f} />)}
-          {ungrouped.map(c => <CharCard key={`char-${c.id}`} c={c} />)}
+          {ungrouped.map(c => (
+            <CharCard key={`char-${c.id}`} c={c} onSelect={onSelectChar}>
+              {c.core_traits && (
+                <div style={S.charTraits}>{c.core_traits.slice(0, 45)}{c.core_traits.length > 45 ? '...' : ''}</div>
+              )}
+            </CharCard>
+          ))}
           {factions.length === 0 && ungrouped.length === 0 && (
             <p style={S.muted}>尚無角色或勢力。點擊右上角按鈕開始建立。</p>
           )}
@@ -518,29 +527,12 @@ export function FactionView({ faction: initFaction, project, allChars, onBack, o
             ? <p style={S.muted}>尚無成員，點擊「+ 加入角色」添加。</p>
             : <div style={S.charGrid}>
                 {members.map(c => (
-                  <div
-                    key={c.id} style={S.charCard}
-                    onClick={() => onSelectChar(c)}
-                    onMouseEnter={e => e.currentTarget.style.borderColor = c.color || 'var(--accent)'}
-                    onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
-                  >
-                    <div style={S.portrait}>
-                      {(c.concept_images?.[0])
-                        ? <img src={apiUrl(`/characters/${c.id}/concept-images/0`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-                        : c.portrait_path
-                          ? <img src={apiUrl(`/characters/${c.id}/portrait`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-                          : '無概念圖'
-                      }
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {c.color && <span style={{ ...S.colorDot, background: c.color }} />}
-                      <span style={S.charName}>{c.name}</span>
-                    </div>
+                  <CharCard key={c.id} c={c} onSelect={onSelectChar}>
                     <button
                       style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px', marginTop: 'auto' }}
                       onClick={e => { e.stopPropagation(); removeMember(c.id) }}
                     >移出勢力</button>
-                  </div>
+                  </CharCard>
                 ))}
               </div>
           }

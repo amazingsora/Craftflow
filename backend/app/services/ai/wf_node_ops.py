@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import logging
 
+from app.services.ai.prompt_engine.content_guard import apply_content_guard
+
+
 logger = logging.getLogger(__name__)
 
 _IPA_NODE_TYPES = {"IPAdapterAdvanced", "IPAdapter"}
@@ -713,7 +716,7 @@ def _sync_saver_prompt_metadata(wf: dict, positive: str, negative: str) -> int:
     return synced
 
 
-def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
+def _inject_prompts(wf: dict, positive: str, negative: str, age: int | None = None) -> None:
     """Inject positive/negative prompts into CLIPTextEncode nodes.
 
     Strategy (in order, stops as soon as both are resolved):
@@ -723,7 +726,11 @@ def _inject_prompts(wf: dict, positive: str, negative: str) -> None:
       3. First two CLIPTextEncode nodes by node-id order (last resort)
 
     The original text content of CLIPTextEncode nodes is never read — only overwritten.
+
+    [CN-118] 送進 ComfyUI 前的最後一道 NSFW／未成年閘（所有生圖路徑都經過這裡）。
+    age＝已知角色年齡（無則只靠正向標記判斷未成年情境）。
     """
+    positive, negative = apply_content_guard(positive, negative, age=age, layer="inject")
     clips = {
         nid: node for nid, node in wf.items()
         if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode"

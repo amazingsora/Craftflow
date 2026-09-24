@@ -93,7 +93,13 @@ def test_resolve_style_priority(monkeypatch):
     assert wb._resolve_style(None) == PromptStyle.SDXL
 
 
-# ── P1: prompt_profiles.yml（workflow 級 override）─────────────────────────────
+# ── P1: prompt_profiles.yml（SYNC-007 起以底模家族為鍵，[CN-114]）───────────────
+# 機制測試一律用 _as_family() 固定家族：profile 查詢會經 _detect_style() 讀 workflow 取
+# checkpoint，不 mock 就會依賴磁碟上有哪些檔（Gemini §2.3 Q5 指出的假陽性來源）。
+
+def _as_family(monkeypatch, style=PromptStyle.ILLUSTRIOUS):
+    monkeypatch.setattr(wb, "_detect_style", lambda _w: style)
+
 
 def test_load_prompt_profiles_missing_file_returns_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(wb, "_PROMPT_PROFILES_YML", tmp_path / "nope.yml")
@@ -103,27 +109,46 @@ def test_load_prompt_profiles_missing_file_returns_empty(tmp_path, monkeypatch):
 def test_load_prompt_profiles_reads_yaml(tmp_path, monkeypatch):
     yml = tmp_path / "prompt_profiles.yml"
     yml.write_text(
-        "profiles:\n"
-        "  Standard_V37.json:\n"
+        "families:\n"
+        "  illustrious:\n"
         "    quality_prefix: \"masterpiece, best quality, absurdres\"\n"
         "    negative: \"worst quality, low quality\"\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(wb, "_PROMPT_PROFILES_YML", yml)
     profiles = wb._load_prompt_profiles()
-    assert profiles["Standard_V37.json"]["quality_prefix"] == "masterpiece, best quality, absurdres"
+    assert profiles["illustrious"]["quality_prefix"] == "masterpiece, best quality, absurdres"
+
+
+def test_load_prompt_profiles_ignores_legacy_profiles_key(tmp_path, monkeypatch, caplog):
+    """SYNC-007：舊格式 `profiles:`（檔名為鍵）不再讀取，且要告警一次。"""
+    yml = tmp_path / "prompt_profiles.yml"
+    yml.write_text(
+        "profiles:\n  Standard_V38.json:\n    negative: \"old\"\n"
+        "families:\n  illustrious:\n    negative: \"new\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(wb, "_PROMPT_PROFILES_YML", yml)
+    monkeypatch.setattr(wb, "_LEGACY_PROFILES_WARNED", False)
+    with caplog.at_level("WARNING"):
+        assert wb._load_prompt_profiles() == {"illustrious": {"negative": "new"}}
+        assert wb._load_prompt_profiles() == {"illustrious": {"negative": "new"}}
+    hits = [r for r in caplog.records if "profiles:" in r.getMessage()]
+    assert len(hits) == 1
 
 
 def test_workflow_profile_overrides_unregistered_workflow_is_noop(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.SDXL)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
     assert wb._workflow_profile_overrides("text_to_image.json") == {}
 
 
 def test_workflow_profile_overrides_only_includes_set_fields(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"quality_prefix": "masterpiece, absurdres", "negative": "worst quality"},
+        "illustrious": {"quality_prefix": "masterpiece, absurdres", "negative": "worst quality"},
     })
-    out = wb._workflow_profile_overrides("Standard_V37.json")
+    out = wb._workflow_profile_overrides("Standard_V38.json")
     assert out == {
         "quality_prefix_override": "masterpiece, absurdres",
         "negative_override": "worst quality",
@@ -134,44 +159,49 @@ def test_workflow_profile_overrides_only_includes_set_fields(monkeypatch):
 
 def test_workflow_profile_overrides_includes_negative_extra(monkeypatch):
     """R4：negative（取代）與 negative_extra（補充）可同時登錄，各自映射到獨立 override key。"""
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"negative": "worst quality", "negative_extra": "extra neg"},
+        "illustrious": {"negative": "worst quality", "negative_extra": "extra neg"},
     })
-    out = wb._workflow_profile_overrides("Standard_V37.json")
+    out = wb._workflow_profile_overrides("Standard_V38.json")
     assert out["negative_override"] == "worst quality"
     assert out["negative_extra_override"] == "extra neg"
 
 
 def test_workflow_profile_overrides_negative_extra_alone(monkeypatch):
     """只登錄 negative_extra（無 negative 取代）→ 只放 negative_extra_override，不佔 negative_override。"""
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"negative_extra": "just extra"},
+        "illustrious": {"negative_extra": "just extra"},
     })
-    out = wb._workflow_profile_overrides("Standard_V37.json")
+    out = wb._workflow_profile_overrides("Standard_V38.json")
     assert out == {"negative_extra_override": "just extra"}
 
 
 def test_resolve_prompt_overrides_priority_art_style_over_workflow(monkeypatch):
     """art_style 有值時必須贏過 workflow profile（即便 workflow profile 也有登錄該欄位）。"""
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"quality_prefix": "wf-prefix", "negative": "wf-negative"},
+        "illustrious": {"quality_prefix": "wf-prefix", "negative": "wf-negative"},
     })
     st = ArtStyle(name="s", quality_prefix="style-prefix", negative="")
-    out = wb._resolve_prompt_overrides(st, "Standard_V37.json")
+    out = wb._resolve_prompt_overrides(st, "Standard_V38.json")
     assert out["quality_prefix_override"] == "style-prefix"  # art_style 贏
     assert out["negative_override"] == "wf-negative"          # art_style 該欄位留白 → workflow 生效
 
 
 def test_resolve_prompt_overrides_no_art_style_uses_workflow_profile(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"quality_prefix": "wf-prefix", "negative": "wf-negative"},
+        "illustrious": {"quality_prefix": "wf-prefix", "negative": "wf-negative"},
     })
-    out = wb._resolve_prompt_overrides(None, "Standard_V37.json")
+    out = wb._resolve_prompt_overrides(None, "Standard_V38.json")
     assert out == {"quality_prefix_override": "wf-prefix", "negative_override": "wf-negative"}
 
 
 def test_resolve_prompt_overrides_unregistered_workflow_zero_regression(monkeypatch):
     """未登錄 workflow：無 art_style → 空 dict，與改動前 _compile_overrides(None) 行為一致。"""
+    _as_family(monkeypatch, PromptStyle.SDXL)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
     assert wb._resolve_prompt_overrides(None, "text_to_image.json") == {}
 
@@ -179,57 +209,64 @@ def test_resolve_prompt_overrides_unregistered_workflow_zero_regression(monkeypa
 # ── P4: _prompt_profile_source（debug 來源標註）────────────────────────────────
 
 def test_prompt_profile_source_registered_workflow(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"quality_prefix": "x"},
+        "illustrious": {"quality_prefix": "x"},
     })
-    assert wb._prompt_profile_source(None, "Standard_V37.json") == "profile: Standard_V37.json"
+    assert wb._prompt_profile_source(None, "Standard_V38.json") == "family: illustrious"
 
 
 def test_prompt_profile_source_unregistered_is_family_fallback(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.SDXL)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
-    assert wb._prompt_profile_source(None, "text_to_image.json") == "family fallback"
+    assert wb._prompt_profile_source(None, "text_to_image.json") == "family fallback (STYLE_CONFIG: sdxl)"
 
 
 def test_prompt_profile_source_art_style_overlay(monkeypatch):
     """art_style 有覆寫欄位時附加 +art_style# 標註（疊加於 profile 或 family fallback）。"""
+    _as_family(monkeypatch, PromptStyle.SDXL)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
     st = ArtStyle(name="s", quality_prefix="style-prefix", negative="")
     st.id = 7
-    assert wb._prompt_profile_source(st, "text_to_image.json") == "family fallback +art_style#7"
+    assert wb._prompt_profile_source(st, "text_to_image.json") == "family fallback (STYLE_CONFIG: sdxl) +art_style#7"
 
 
 # ── P5-5: _workflow_style_extra（畫風 tag／權重 profile 層）────────────────────
 
 def test_workflow_style_extra_unregistered_workflow_is_noop(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.SDXL)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {})
     assert wb._workflow_style_extra("text_to_image.json") == ("", None)
 
 
 def test_workflow_style_extra_registered_workflow_reads_both_fields(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"style_extra": "flat color, thick outlines", "style_extra_weight": 1.2},
+        "illustrious": {"style_extra": "flat color, thick outlines", "style_extra_weight": 1.2},
     })
-    extra, weight = wb._workflow_style_extra("Standard_V37.json")
+    extra, weight = wb._workflow_style_extra("Standard_V38.json")
     assert extra == "flat color, thick outlines"
     assert weight == 1.2
 
 
 def test_workflow_style_extra_weight_absent_returns_none(monkeypatch):
     """只登錄 style_extra、不登錄 weight → weight 回 None，呼叫端落回 .env PERSONAL_STYLE_WEIGHT。"""
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"style_extra": "flat color"},
+        "illustrious": {"style_extra": "flat color"},
     })
-    extra, weight = wb._workflow_style_extra("Standard_V37.json")
+    extra, weight = wb._workflow_style_extra("Standard_V38.json")
     assert extra == "flat color"
     assert weight is None
 
 
 def test_workflow_style_extra_registered_but_fields_blank_is_noop(monkeypatch):
     """workflow 有登錄但兩欄位皆留白／未填（只登錄其他欄位如 quality_prefix）→ 視同未登錄，零介入。"""
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {
-        "Standard_V37.json": {"quality_prefix": "x"},
+        "illustrious": {"quality_prefix": "x"},
     })
-    assert wb._workflow_style_extra("Standard_V37.json") == ("", None)
+    assert wb._workflow_style_extra("Standard_V38.json") == ("", None)
 
 
 # ── _load_workflow ────────────────────────────────────────────────────────────
@@ -352,179 +389,194 @@ def test_is_custom_workflow(tmp_path, monkeypatch):
     assert wb._is_custom_workflow("text_to_image.json") is False    # 不在 → checkpoint 模式（系統）
 
 
-# ── P5-6/7/8: 實檔配方鎖（backend/prompt_profiles.yml 真實登錄值）────────────
-# 上面四組 _workflow_style_extra 測試都 monkeypatch 掉 _load_prompt_profiles，
-# 驗的是**機制**；這一組刻意**不 mock**，直接讀專案內的 prompt_profiles.yml，
-# 驗的是**配方本身**。理由：style_extra 是名單制設定，機制正確但漏登錄某支
-# workflow 時，該 workflow 會靜默落回 .env（本專案反覆踩過的「零介入＝零訊號」）。
+# ── 實檔配方鎖（SYNC-007 起以家族為鍵，[CN-114]）──────────────────────────────
+# 上面的機制測試都 mock 掉 _load_prompt_profiles／_detect_style；這一組刻意**不 mock**，
+# 直接讀 backend/prompt_profiles.yml 與磁碟 workflow，鎖的是配方本身與家族解析。
 
-# SYNC-001（2026-09-15）：補上**現役**檔名。原本這兩個 tuple 只有歷史檔名，於是
-# 「六個現役 workflow 全部未登錄」這件事，整組 real-profile 測試一條都沒擋到——
-# 測試鎖的是已經不在磁碟上的檔，鎖得再嚴也沒用。新檔名透過 prompt_profiles.yml 的
-# YAML anchor 沿用同一份配方，所以下面的參數化測試對新舊檔名期望值完全相同。
-_ILLUSTRIOUS_PROFILES = (
-    "Standard_V37.json", "Standard_V35.json",       # 歷史（anchor 來源）
-    "Standard_V38.json", "Advanced_V38.json",       # 現役
-)
-_ANIMA_PROFILES = (
-    "AnimaStandardV8.json", "AnimaStandardV8turbo.json",                # 歷史（anchor 來源）
-    "AnimaStandardV8_Aesthetic.json", "AnimaStandardV8_trubo11.json",   # 現役
-    "AnimaAdvancedV8_Aesthetic.json", "AnimaAdvancedV8_trubo11.json",   # 現役
-)
-# 設計約束（規劃書 §4.1）：版權詞、score_*（Aesthetic/Turbo 官方明令）、
-# 與 quality_prefix 重複的品質詞、以及會被 styles._LINEART_ARTIFACT_RE 命中的字樣。
+# 設計約束（畫風強化規劃 §4.1）：版權詞、score_*、與 quality_prefix 重複的品質詞。
+# SYNC-007 軌 R（2026-09-23）放寬兩項，理由見 CODE_NOTES CN-115：
+#   ① 移除 "lineart"/"line art"：style_extra 在 compile 之後才組裝，不經 _LINEART_ARTIFACT_RE；
+#      R1 的 `clean lineart` 已於 ComfyUI 驗證（避免的是「線稿感」，不是 lineart 這個字）。
+#   ② tag 上限依位置分流：加權前置（weight != 1.0）會與 identity 爭注意力 → 維持 5；
+#      不加權接尾端（weight == 1.0）→ 8（R1 為 7 個）。
+#   版權詞（blue archive 等）仍禁止進 yml——個人畫風標籤改走 .env 分家族鍵（軌 P）。
 _BANNED_SUBSTRINGS = (
-    "blue archive", "score_", "lineart", "line art",
+    "blue archive", "score_",
     "masterpiece", "best quality", "absurdres",
 )
-_MAX_STYLE_TAGS = 5
+_MAX_STYLE_TAGS_WEIGHTED = 5
+_MAX_STYLE_TAGS_TAIL = 8
 
 
-@pytest.mark.parametrize("workflow,expected_weight", [
-    *[(w, 1.2) for w in _ILLUSTRIOUS_PROFILES],
-    *[(w, 2.0) for w in _ANIMA_PROFILES],
-])
-def test_real_profiles_register_style_extra(workflow, expected_weight):
-    """四支主力 workflow 都必須登錄 style_extra ＋ 對應量級的 weight。"""
-    extra, weight = wb._workflow_style_extra(workflow)
-    assert extra, f"{workflow} 未登錄 style_extra → 會靜默落回 .env"
-    assert weight == expected_weight, f"{workflow} weight={weight}，期望 {expected_weight}"
+def _real_family(style: str) -> dict:
+    return wb._load_prompt_profiles().get(style) or {}
 
 
-@pytest.mark.parametrize("workflow", _ILLUSTRIOUS_PROFILES + _ANIMA_PROFILES)
-def test_real_style_extra_obeys_design_constraints(workflow):
-    extra, _ = wb._workflow_style_extra(workflow)
+def test_real_yml_uses_families_key_only():
+    import yaml
+    data = yaml.safe_load(wb._PROMPT_PROFILES_YML.read_text(encoding="utf-8"))
+    assert "families" in data
+    assert "profiles" not in data, "舊格式 profiles:（檔名為鍵）已於 SYNC-007 停用"
+
+
+def test_real_illustrious_family_recipe():
+    fam = _real_family("illustrious")
+    assert fam.get("quality_prefix"), "illustrious 未設定 quality_prefix"
+    assert fam.get("negative"), "illustrious 未設定 negative"
+    assert fam.get("style_extra"), "illustrious 未設定 style_extra → 會靜默落回 .env"
+    assert fam.get("style_extra_weight") == 1.0, "R1：畫風段不加權、接尾端（軌 R）"
+    assert "flat color" not in fam["style_extra"].lower(), "舊平塗算子不得回流（SYNC-005）"
+
+
+def test_real_anima_family_recipe():
+    """官方：Aesthetic／Turbo 正負向皆不得含 score_*。style_extra 刻意留空（09-21 軌 S 續 C1）。"""
+    fam = _real_family("anima")
+    assert fam.get("quality_prefix") and fam.get("negative")
+    for field in ("quality_prefix", "negative"):
+        assert "score_" not in fam[field].lower(), f"anima {field} 含 score_*（官方明令禁用）"
+    assert fam.get("style_extra") == ""
+
+
+def test_real_style_extra_obeys_design_constraints():
+    extra = _real_family("illustrious").get("style_extra", "")
     lowered = extra.lower()
     for banned in _BANNED_SUBSTRINGS:
-        assert banned not in lowered, f"{workflow} 的 style_extra 含禁用詞 {banned!r}"
+        assert banned not in lowered, f"illustrious 的 style_extra 含禁用詞 {banned!r}"
     tags = [t.strip() for t in extra.split(",") if t.strip()]
-    assert len(tags) <= _MAX_STYLE_TAGS, f"{workflow} 有 {len(tags)} 個 tag，超過上限會排擠角色 identity"
+    weight = _real_family("illustrious").get("style_extra_weight", 1.0)
+    cap = _MAX_STYLE_TAGS_TAIL if weight == 1.0 else _MAX_STYLE_TAGS_WEIGHTED
+    assert len(tags) <= cap, f"illustrious 有 {len(tags)} 個 tag（weight={weight}），超過上限 {cap} 會排擠角色 identity"
 
 
 def test_real_style_extra_survives_sheet_tag_strip():
-    """規劃書 §5「必查的呼叫端」：final_positive 會過 _strip_sheet_tags，
-    新配方（含 "anime style illustration"）不得被 _SHEET_TAG_RE 誤傷。"""
+    """final_positive 會過 _strip_sheet_tags，畫風段不得被 _SHEET_TAG_RE 誤傷。"""
     from app.services.ai.image_ops import _strip_sheet_tags
-    for workflow in _ILLUSTRIOUS_PROFILES + _ANIMA_PROFILES:
-        extra, _ = wb._workflow_style_extra(workflow)
-        assert _strip_sheet_tags(extra).strip(" ,") == extra, f"{workflow} 的 style_extra 被 sheet 過濾誤傷"
+    for style, fam in wb._load_prompt_profiles().items():
+        extra = fam.get("style_extra") or ""
+        assert _strip_sheet_tags(extra).strip(" ,") == extra, f"{style} 的 style_extra 被 sheet 過濾誤傷"
 
 
-def test_real_ab_pairs_share_identical_style_extra():
-    """V35/V37 是 P4-3 的架構級對照組、V8/V8turbo 是採樣檔位對照組——
-    兩組內部的 prompt 配方必須逐字相同，否則 A/B 多一個變因（P4-4 同款理由）。"""
-    assert wb._workflow_style_extra("Standard_V37.json") == wb._workflow_style_extra("Standard_V35.json")
-    assert wb._workflow_style_extra("AnimaStandardV8.json") == wb._workflow_style_extra("AnimaStandardV8turbo.json")
+# ── SYNC-007 反向護欄：列舉磁碟，要求每支 workflow 的家族都「解析得到」───────────
+# 檔名不再是鍵，靜默降級點移到「checkpoint 沒登錄 checkpoint_styles.yml → 退 sdxl」。
+# 同 SYNC-001「測試鎖錯對象 → 列舉真實來源反向驗證」。
 
-
-def test_real_anima_v7_intentionally_unregistered():
-    """AnimaStandardV7.json 刻意不登錄（AC-3 決策，落回 family）→ 零介入。
-    這條同時是「未登錄＝落回 .env」零回歸路徑的實檔證明。"""
-    assert wb._workflow_style_extra("AnimaStandardV7.json") == ("", None)
-
-
-def test_real_anima_profiles_share_identical_quality_prefix():
-    """P5-9（2026-08-26）：V8/V8turbo 登錄 quality_prefix 拿掉 ultra detailed / high contrast。
-
-    刻意**不鎖死**那兩個詞的有無 —— 它們是 P5-9 A/B 的變因，鎖死會讓對照組（回滾成
-    family 原值）跑不了測試。這裡只鎖兩個不變量：
-      1. 兩支 Anima profile 的 quality_prefix 必須一致（否則採樣檔位 A/B 多一個變因）。
-      2. 不得含 score_*（Aesthetic/Turbo 官方明令，正負向皆禁——這條不是變因、不可回滾）。
-    """
-    v8 = wb._workflow_profile_overrides("AnimaStandardV8.json").get("quality_prefix_override")
-    turbo = wb._workflow_profile_overrides("AnimaStandardV8turbo.json").get("quality_prefix_override")
-    assert v8 == turbo, "V8 / V8turbo 的 quality_prefix 不一致 → A/B 多變因"
-    for value in (v8, turbo):
-        if value:  # 未登錄（落回 family）時本條不適用
-            assert "score_" not in value.lower(), "Aesthetic/Turbo 官方明令禁用 score_* tag"
-
-
-# ── SYNC-001（2026-09-15）：檔名脫鉤護欄 ──────────────────────────────────────
-# 上面那組「實檔配方鎖」只驗**被點名的檔名**配方對不對，驗不到「磁碟上多出一支沒人
-# 點名的 workflow」。2026-09-15 六支現役 workflow 全部未登錄、三輪調校成果 100% 失效，
-# 就是從這個缺口漏過去的（同型缺陷第三次：07-25 novaAnimeXL、08-22 V8turbo、本次改名）。
-# 這條改成**反向**驗證：列舉磁碟，逐一要求登錄——新增或改名 workflow 時會直接紅燈。
-
-def test_all_custom_workflows_are_registered():
-    """data/custom_workflows/*.json 每一支都必須在 prompt_profiles.yml 登錄。
-
-    未登錄＝靜默落回 checkpoint family + .env（`_profile_for` 只記一行 WARNING，
-    出圖照跑），事後只能靠比對 prompt 字串才查得出來。這裡把它變成 CI 紅燈。
-
-    新增 workflow 的正確做法：在 prompt_profiles.yml 用 `<<: *anchor` 沿用同底模的
-    既有配方；真的需要不同配方才另外寫一份。`history/` 子目錄不列入（已退役）。
-    """
+def test_all_custom_workflows_resolve_to_known_family():
+    from pathlib import Path
+    from app.services.ai.capability import extract_checkpoint_from_wf
     wf_dir = wb.CUSTOM_WORKFLOWS_DIR
     if not wf_dir.exists():
         pytest.skip(f"custom workflow 目錄不存在：{wf_dir}")
     on_disk = sorted(p.name for p in wf_dir.glob("*.json"))
     if not on_disk:
         pytest.skip("custom workflow 目錄內無 .json")
-    registered = wb._load_prompt_profiles()
-    missing = [name for name in on_disk if name not in registered]
-    assert not missing, (
-        f"這些 workflow 未登錄 prompt_profiles.yml → prompt 配方會靜默落回 "
-        f".env/family：{missing}"
-    )
+    patterns = [str(p).lower() for p in wb._load_checkpoint_styles()]
+    problems = []
+    for name in on_disk:
+        ckpt = extract_checkpoint_from_wf(wb._load_workflow(name))
+        if not ckpt:
+            problems.append(f"{name}: 抽不到 checkpoint")
+        elif not any(p in Path(ckpt).stem.lower() for p in patterns):
+            problems.append(f"{name}: checkpoint {ckpt} 未登錄 checkpoint_styles.yml checkpoints: 區")
+    assert not problems, "這些 workflow 的家族會靜默退回 sdxl：\n" + "\n".join(problems)
 
 
-def test_profile_for_warns_once_on_miss(caplog, monkeypatch):
-    """miss 要告警，且同一檔名只告警一次（每張圖會查三次，不去重會洗版 log）。"""
-    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {"known.json": {"negative": "x"}})
+def test_live_workflows_resolve_expected_family():
+    """現役 workflow 的來源標註必須是有設定配方的家族（不是 STYLE_CONFIG fallback）。"""
+    expected = {
+        "Standard_V38.json": "illustrious", "Advanced_V38.json": "illustrious",
+        "Standard_V38_NOVE.json": "illustrious",
+        "AnimaStandardV9_aesthetic.json": "anima", "AnimaStandardV9_turbo.json": "anima",
+    }
+    for name, style in expected.items():
+        if not (wb.CUSTOM_WORKFLOWS_DIR / name).exists():
+            continue
+        assert wb._prompt_profile_source(None, name) == f"family: {style}", name
+
+
+def test_new_workflow_needs_no_registration(tmp_path, monkeypatch):
+    """SYNC-007 目標①：複製一支 V38 改名成 V41，不動 yml 就吃到同一份家族配方。"""
+    src = wb.CUSTOM_WORKFLOWS_DIR / "Standard_V38.json"
+    if not src.exists():
+        pytest.skip("Standard_V38.json 不在磁碟")
+    (tmp_path / "Standard_V41_test.json").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(wb, "CUSTOM_WORKFLOWS_DIR", tmp_path)
+    assert wb._profile_for("Standard_V41_test.json") == wb._load_prompt_profiles()["illustrious"]
+    assert wb._prompt_profile_source(None, "Standard_V41_test.json") == "family: illustrious"
+
+
+def test_profile_for_warns_once_per_family_on_miss(caplog, monkeypatch):
+    """miss 要告警，且同一家族只告警一次（每張圖會查三次，不去重會洗版 log）。"""
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {"illustrious": {"negative": "x"}})
     monkeypatch.setattr(wb, "_PROFILE_MISS_WARNED", set())
+    styles = {"a.json": PromptStyle.PONY, "b.json": PromptStyle.PONY, "c.json": PromptStyle.ILLUSTRIOUS}
+    monkeypatch.setattr(wb, "_detect_style", lambda w: styles[w])
     with caplog.at_level("WARNING"):
-        assert wb._profile_for("ghost.json") == {}
-        assert wb._profile_for("ghost.json") == {}
-        assert wb._profile_for("known.json") == {"negative": "x"}
+        assert wb._profile_for("a.json") == {}
+        assert wb._profile_for("b.json") == {}
+        assert wb._profile_for("c.json") == {"negative": "x"}
     hits = [r for r in caplog.records if "prompt-profile" in r.getMessage()]
     assert len(hits) == 1, f"期望剛好一次 miss 告警，實得 {len(hits)}"
-    assert "ghost.json" in hits[0].getMessage()
+    assert "pony" in hits[0].getMessage()
 
 
-def test_live_workflows_resolve_expected_recipe():
-    """現役六支的實際解析結果鎖定（anchor 展開後的值，不是抄一份期望字串）。
-
-    鎖三個不變量，對應 2026-09-15 文件二四張圖暴露的三個症狀：
-      1. Illustrious 側 quality_prefix 不得含 `amazing quality`（那是 family 預設，
-         代表 profile 沒吃到）。
-      2. Anima 側 quality_prefix 不得含 `ultra detailed` / `high contrast`
-         （P5-9 已判定對 Aesthetic/Turbo 是解藥變毒藥）。
-      3. Anima 側 negative 不得含 `score_*`（官方明令，非變因、不可回滾）。
-    """
-    live_illustrious = ("Standard_V38.json", "Advanced_V38.json")
-    live_anima = (
-        "AnimaStandardV8_Aesthetic.json", "AnimaStandardV8_trubo11.json",
-        "AnimaAdvancedV8_Aesthetic.json", "AnimaAdvancedV8_trubo11.json",
-    )
-    for wf_name in live_illustrious:
-        qp = wb._workflow_profile_overrides(wf_name).get("quality_prefix_override", "")
-        assert qp, f"{wf_name} 未登錄 quality_prefix"
-        assert "amazing quality" not in qp.lower(), (
-            f"{wf_name} 吃到 illustrious family 預設 → profile 未生效")
-    for wf_name in live_anima:
-        overrides = wb._workflow_profile_overrides(wf_name)
-        qp = overrides.get("quality_prefix_override", "").lower()
-        neg = overrides.get("negative_override", "").lower()
-        assert qp, f"{wf_name} 未登錄 quality_prefix"
-        assert "ultra detailed" not in qp and "high contrast" not in qp, (
-            f"{wf_name} 吃到 anima family 預設 → profile 未生效")
-        assert neg, f"{wf_name} 未登錄 negative"
-        assert "score_" not in neg, f"{wf_name} negative 含 score_*（官方明令禁用）"
+def test_detect_style_fallback_warns_once_per_cause(caplog, monkeypatch, tmp_path):
+    """Gemini §2.3 Q3：退 sdxl 的兩個成因（讀檔失敗／checkpoint 未登錄）各自 warn-once、訊息不同。"""
+    monkeypatch.setattr(wb, "_STYLE_FALLBACK_WARNED", set())
+    monkeypatch.setattr(wb, "CUSTOM_WORKFLOWS_DIR", tmp_path)
+    (tmp_path / "unknown_ckpt.json").write_text(
+        json.dumps(_api_wf("mystery_model_v1.safetensors")), encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        for _ in range(2):
+            assert wb._detect_style("missing_wf.json") is PromptStyle.SDXL
+            assert wb._detect_style("unknown_ckpt.json") is PromptStyle.SDXL
+    msgs = [r.getMessage() for r in caplog.records
+            if r.levelname == "WARNING" and "[prompt-style]" in r.getMessage()]
+    assert len(msgs) == 2, msgs
+    assert any("讀不到" in m for m in msgs)
+    assert any("checkpoint_styles.yml" in m for m in msgs)
 
 
-def test_live_and_anchor_workflows_share_identical_recipe():
-    """現役檔名與其 anchor 來源必須逐字相同——否則 YAML anchor 被人拆開抄成兩份，
-    本次修復的核心（單一真相）就失效了。"""
-    pairs = (
-        ("Standard_V38.json", "Standard_V37.json"),
-        ("Advanced_V38.json", "Standard_V37.json"),
-        ("AnimaStandardV8_Aesthetic.json", "AnimaStandardV8.json"),
-        ("AnimaStandardV8_trubo11.json", "AnimaStandardV8.json"),
-        ("AnimaAdvancedV8_Aesthetic.json", "AnimaStandardV8.json"),
-        ("AnimaAdvancedV8_trubo11.json", "AnimaStandardV8.json"),
-    )
-    for live, anchor in pairs:
-        assert wb._workflow_profile_overrides(live) == wb._workflow_profile_overrides(anchor), (
-            f"{live} 與 anchor 來源 {anchor} 的 prompt override 不一致")
-        assert wb._workflow_style_extra(live) == wb._workflow_style_extra(anchor), (
-            f"{live} 與 anchor 來源 {anchor} 的 style_extra 不一致")
+# ── [CN-115] SYNC-007 軌 P：.env 分家族個人標籤（wb 端：來源標註、@ 警告）────────
+# tests/conftest.py 已在每個測試前清掉使用者真實 .env 的 PERSONAL_*_EXTRA_<家族>。
+
+def test_prompt_profile_source_marks_personal_env(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {"illustrious": {"quality_prefix": "x"}})
+    monkeypatch.setenv("PERSONAL_NEGATIVE_EXTRA_ILLUSTRIOUS", "halo")
+    assert wb._prompt_profile_source(None, "Standard_V38.json") == "family: illustrious +personal(.env)"
+
+
+def test_prompt_profile_source_ignores_other_family_personal_env(monkeypatch):
+    """ANIMA 的個人鍵不得讓 illustrious 的來源標註誤標 +personal。"""
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {"illustrious": {"quality_prefix": "x"}})
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "@some artist")
+    assert wb._prompt_profile_source(None, "Standard_V38.json") == "family: illustrious"
+
+
+def test_personal_extra_reads_detected_family_key(monkeypatch):
+    _as_family(monkeypatch, PromptStyle.ANIMA)
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "  some series, @some artist  ")
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ILLUSTRIOUS", "some artist")
+    assert wb._personal_extra("STYLE", "AnimaStandardV9_miaomiaoHarem.json") == "some series, @some artist"
+    assert wb._personal_extra("NEGATIVE", "AnimaStandardV9_miaomiaoHarem.json") == ""
+
+
+def test_personal_extra_warns_once_on_at_prefix_outside_anima(monkeypatch, caplog):
+    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setattr(wb, "_PERSONAL_AT_WARNED", set())
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ILLUSTRIOUS", "@some artist")
+    with caplog.at_level("WARNING"):
+        for _ in range(3):
+            assert wb._personal_extra("STYLE", "Standard_V38.json") == "@some artist"
+    hits = [r for r in caplog.records if "[personal]" in r.getMessage()]
+    assert len(hits) == 1
+
+
+def test_personal_extra_at_prefix_is_silent_for_anima(monkeypatch, caplog):
+    _as_family(monkeypatch, PromptStyle.ANIMA)
+    monkeypatch.setattr(wb, "_PERSONAL_AT_WARNED", set())
+    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "@some artist")
+    with caplog.at_level("WARNING"):
+        wb._personal_extra("STYLE", "AnimaStandardV9_miaomiaoHarem.json")
+    assert not [r for r in caplog.records if "[personal]" in r.getMessage()]

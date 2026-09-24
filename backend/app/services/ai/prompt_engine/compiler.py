@@ -20,7 +20,6 @@ import logging
 import re
 import threading
 import time
-from typing import List, Set
 
 from app.core.config import (
     PROMPT_UPSAMPLE_ENABLED,
@@ -35,8 +34,10 @@ from app.services.ai.prompt_engine.styles import (
     UPSAMPLE_SYSTEM_PROMPT,
     _WEIGHT_GROUP_RE,
     _LINEART_ARTIFACT_RE,
+    _SUBJECT_COUNT_TAGS,
 )
 from app.services.ai.prompt_engine import lexicon
+from app.services.ai.prompt_engine.content_guard import is_explicit_tag, nsfw_guard_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -202,10 +203,17 @@ def _recall_dropped_outfit_terms(tags: list[str], source_text: str) -> list[str]
     to_append: list[str] = []
     for term in lexicon.personal_term_map_tags():
         term_lower = term.lower().strip()
-        if term_lower and term_lower in src_lower and term_lower not in tag_lowers:
+        if term_lower and term_lower in src_lower and not _term_in_tags(term_lower, tag_lowers):
             to_append.append(term)
             tag_lowers.add(term_lower)
     return tags + to_append if to_append else tags
+
+
+def _term_in_tags(term_lower: str, tag_lowers: set[str]) -> bool:
+    """[CN-117] 詞庫 tag 以「整詞」出現在任一輸出 tag 內即算已翻出：修飾語併入後 LLM 會吐
+    `black pencil skirt`，只比完全相等會再補一個重複的 `pencil skirt`。"""
+    pat = re.compile(rf"(?<![a-z]){re.escape(term_lower)}(?![a-z])")
+    return any(pat.search(t) for t in tag_lowers)
 
 
 def _clean_clothing_hallucinations(tags: list[str], text_to_check: str) -> list[str]:
@@ -330,7 +338,6 @@ def _upsample_tags(
     G1-2 擴寫 stage2：把稀疏 tags 擴寫成更密的 danbooru tags（V37 booru upsampler 規則）。
 
     - additive 合併：base_tags 為 identity 錨，一律保留在前、不可被覆蓋，只補新增的 tag。
-    - 輸出經同一 _sanitize_to_list + banned_tags 守門，與主流程共用護欄。
     - resilient：擴寫呼叫失敗（Ollama error）直接回原 tags，不讓生圖流程 crash。
     """
     if not base_tags:
@@ -379,13 +386,23 @@ def _compile_impl(
     negative_override: str | None = None,
     quality_suffix_override: str | None = None,
     negative_extra_override: str | None = None,
+    keep_subject: bool = False,
 ) -> tuple[str, str]:
     """
     Main entrypoint to compile Chinese creative text into fine-tuned SD prompts.
+
+    keep_subject（2026-09-24）：保留 LLM 產出的主體數量 tag（1girl, solo …）並移到 body 最前。
+    預設 False＝維持原行為（剝除）：人設圖路徑由 character_design_service 的 gender_prefix 補主體，
+    保留會重複。文字→生圖（/art/compile-prompt）沒有後續補主體的步驟，必須傳 True，
+    否則最終 prompt 完全沒有 1girl/solo。
     """
     # 0. (P3) 個人詞庫：LLM 翻譯前對原始中文做確定性替換，降低特定詞彙誤譯/幻覺機率
     # （如「蔚藍檔案」→ "blue archive"）。未登錄詞彙不受影響，text 原樣通過（零回歸）。
-    text = lexicon.apply_personal_term_map(text)
+    _mapped = lexicon.apply_personal_term_map(text)
+    if _mapped != text:
+        # [CN-117] UI 的「中文描述」是替換前；這行才是實際送進 LLM 的文字（診斷詞庫切字問題用）
+        logger.info("[prompt-log] term-map 後送 LLM: %s", _mapped)
+    text = _mapped
 
     config = STYLE_CONFIG[style]
 
@@ -395,6 +412,8 @@ def _compile_impl(
     if _ov:
         _expanded = _WEIGHT_GROUP_RE.sub(r"\1", _ov)
         banned = banned | {t.strip().lower() for t in _expanded.split(",") if t.strip()}
+    if keep_subject:
+        banned = banned - _SUBJECT_COUNT_TAGS
 
     # 1. 構建 Prompt 並呼叫 LLM
     prompt = config.llm_template.format(prompt=text)
@@ -441,6 +460,12 @@ def _compile_impl(
         # 白皙系膚色統一詞（2026-09-21）：pale skin / fair skin → porcelain skin。
         # 放在 tag 清理管線最末，確保 LLM 輸出與召回補回的 tag 都被收斂。
         cleaned_tags = _canonicalize_fair_skin(cleaned_tags, style)
+
+        # keep_subject：主體放 body 最前（Anima 官方順序 quality/safety → 主體 → 其餘；
+        # 異色瞳注入會把眼色 prepend 到最前，不重排主體就會被擠到後面）。
+        if keep_subject:
+            _subj = [t for t in cleaned_tags if t.lower() in _SUBJECT_COUNT_TAGS]
+            cleaned_tags = _subj + [t for t in cleaned_tags if t.lower() not in _SUBJECT_COUNT_TAGS]
 
         # [CN-018] [停用] Group B Anchor 系統（抽色→清衝突→重排加權）——還原碼見 CODE_NOTES
 
@@ -499,12 +524,7 @@ _AGE_PHRASE_RE = re.compile(r'\b\d+\s+years?\s+old\b', re.IGNORECASE)
 _CJK_RE = re.compile(r'[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]')
 
 
-_NSFW_BANNED = frozenset({
-    "nude", "naked", "nudity", "topless", "bottomless", "nsfw", "explicit",
-    "nipples", "nipple", "areola", "areolae", "pubic hair", "pussy", "vagina",
-    "penis", "genitalia", "genitals", "cameltoe", "sex", "cum", "nude body",
-    "bare breasts", "exposed breasts", "naked body",
-})
+# S9 NSFW 硬護欄（2026-07-13）；ca2267f 移除 → 2026-09-24 整合至 prompt_engine/content_guard.py（CN-118）。
 
 
 def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
@@ -555,7 +575,12 @@ def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
         # （如 "(highres:0.8)" → "highres"）；比對鍵同步剝除，避免權重殘留造成誤判漏放行。
         normalized = re.sub(r':[\d.]+$', '', t_clean.lower().strip("()")).strip()
 
-        if _LINEART_ARTIFACT_RE.search(t_clean):            
+        if _LINEART_ARTIFACT_RE.search(t_clean):
+            continue
+
+        # [CN-118] S9 NSFW：LLM 輸出層先剝露骨 tag（受 NSFW_GUARD_ENABLED 控制）；
+        # 此層不知道角色年齡，未成年情境由 content_guard.apply_content_guard 在注入前強制處理。
+        if nsfw_guard_enabled() and is_explicit_tag(t_clean):
             continue
 
         if normalized in banned_set or normalized in seen:

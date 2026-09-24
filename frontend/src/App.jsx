@@ -22,11 +22,6 @@ const _STATUS_POLL_MS = 20000  // 系統狀態輪詢間隔
 
 // header 服務狀態燈：顯示 Ollama / ComfyUI 是否在線，離線時 hover 顯示提示
 function ServiceStatus({ status }) {
-  const dot = (label, ok) => ({
-    label,
-    ok,
-    color: ok ? 'var(--success)' : 'var(--danger)',
-  })
   // status 為 null（尚未取得 / 後端離線）時，兩者皆視為未知（灰）
   const known = !!status
   const ollamaOk = known && status.services?.ollama?.available
