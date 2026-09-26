@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { notifyDone } from '../notify.js'
+import { FitImage } from './ImageViewer'
 
-const BASE_STYLES = ['sdxl', 'pony', 'flux', 'noobai', 'illustrious', 'anythingxl']
+// 與後端 PromptStyle enum 同步（styles.py）
+const BASE_STYLES = ['sdxl', 'pony', 'flux', 'noobai', 'illustrious', 'anythingxl', 'anima']
 
 const S = {
   root: { display: 'flex', flexDirection: 'column', gap: 20 },
@@ -208,7 +210,7 @@ export default function ArtStyleTab() {
       const style = genRes.headers.get('X-Style') ?? compiled.style
       const blob = await genRes.blob()
       const url = URL.createObjectURL(blob)
-      setTestResult({ url, prompt: compiled.positive, style, seed })
+      setTestResult({ url, prompt: compiled.positive, negative: compiled.negative ?? '', style, seed })
       notifyDone('生成完成', '畫風測試圖')
       setTimeout(() => testImgRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50)
     } catch (e) {
@@ -486,11 +488,12 @@ export default function ArtStyleTab() {
               )}
               {testResult ? (
                 <div ref={testImgRef} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <img src={testResult.url} alt="test result" style={S.testImg} />
+                  <FitImage src={testResult.url} alt="test result" maxHeight="min(60vh, 520px)" style={{ border: '1px solid var(--border)', borderRadius: 10 }} />
                   <div style={S.testMeta}>
-                    style: {testResult.style} · seed: {testResult.seed}
+                    style: {testResult.style} · seed: {testResult.seed} · 點圖看原尺寸
                   </div>
-                  <div style={{ ...S.testMeta, opacity: 0.7 }}>{testResult.prompt}</div>
+                  <div style={{ ...S.testMeta, opacity: 0.7 }}><strong>正向：</strong>{testResult.prompt}</div>
+                  <div style={{ ...S.testMeta, opacity: 0.7 }}><strong>負向（實際送出）：</strong>{testResult.negative || '（空）'}</div>
                 </div>
               ) : !testGenerating && (
                 <div style={S.testPlaceholder}>輸入描述後點擊「測試生成」</div>

@@ -52,7 +52,7 @@ CASES: list[GoldenCase] = [
         style=PromptStyle.SDXL,
         text="十歲的小女孩，圓臉",
         mock_raw="1girl, solo, 10 years old, round face, child, youthful",
-        note="兒童：LLM 洩漏數字年齡短語（由 _age_body_tags 確定性處理，此處應被 _AGE_PHRASE_RE 濾除）",
+        note="兒童：LLM 洩漏數字年齡短語（年齡不進生圖，此處應被 _AGE_PHRASE_RE 濾除）",
     ),
     GoldenCase(
         name="tall_casual_vest",

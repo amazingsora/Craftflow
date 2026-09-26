@@ -4,9 +4,6 @@ import { EP } from '../api/endpoints'
 import { useAsync } from '../api/useAsync'
 import { UI } from './sharedStyles'
 
-const DEFAULT_NEGATIVE =
-  'low quality, blurry, watermark, text, signature, bad anatomy, extra limbs, deformed, ugly, duplicate, worst quality'
-
 const S = {
   root: { display: 'flex', gap: 24, alignItems: 'flex-start' },
   form: { flex: 1, display: 'flex', flexDirection: 'column', gap: 14 },
@@ -108,12 +105,14 @@ function dedupeTags(s) {
   }).join(', ')
 }
 
-export default function GenerateTab({ onAddHistory, artStyleId = '', pendingPrompt = '', onPromptConsumed }) {
+export default function GenerateTab({ onAddHistory, artStyleId = '', pendingPrompt = '', onPromptConsumed, capability = { ipa_supported: true, cn_supported: true } }) {
+  const ipaSupported = capability.ipa_supported !== false
+  const cnNative = capability.cn_supported !== false
   const [promptZh, setPromptZh] = useState(() => sessionStorage.getItem('gen_promptZh') ?? '')
   const [promptEn, setPromptEn] = useState(() => sessionStorage.getItem('gen_promptEn') ?? '')
   const [optimizedEn, setOptimizedEn] = useState(() => sessionStorage.getItem('gen_optimizedEn') ?? '')
   const [detectedStyle, setDetectedStyle] = useState(null)
-  const [negPrompt, setNegPrompt] = useState(() => sessionStorage.getItem('gen_negPrompt') ?? DEFAULT_NEGATIVE)
+  const [negPrompt, setNegPrompt] = useState(() => sessionStorage.getItem('gen_negPrompt') ?? '')
   // 「以此角色生圖」帶入的角色 id：送出時一併帶給後端，未成年護欄依角色年齡判定
   const [sourceCharId, setSourceCharId] = useState(() => Number(sessionStorage.getItem('gen_charId')) || null)
   const [steps, setSteps] = useState(20)
@@ -161,6 +160,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
   const [refMode, setRefMode] = useState('i2i')  // 'i2i' | 'controlnet' | 'ipadapter'
   const [denoise, setDenoise] = useState(0.35)
   const [ipaWeight, setIpaWeight] = useState(0.6)
+  const [cnWeight, setCnWeight] = useState(0.85)
   const [refDragging, setRefDragging] = useState(false)
   const refInputRef = useRef()
 
@@ -177,6 +177,19 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
   const setNegPromptP = (v) => { setNegPrompt(v); sessionStorage.setItem('gen_negPrompt', v) }
 
   const randomSeed = () => setSeed(Math.floor(Math.random() * 2 ** 31))
+
+  // R-04：全部清空（中文描述、手動 tag、預覽、負向、參考圖、連結角色）
+  const onReset = () => {
+    if (loading || optimizing) return
+    setPromptZhP(''); setPromptEnP(''); setOptimizedEnP(''); setNegPromptP('')
+    setSourceCharP(null); setDetectedStyle(null)
+    setRefEnabled(false); setRefFile(null); setRefPreview(null)
+    setError(null)
+  }
+
+  useEffect(() => {
+    if (!ipaSupported && refMode === 'ipadapter') setRefMode('i2i')
+  }, [ipaSupported, refMode])
 
   const handleRefFile = useCallback((f) => {
     if (!f || !f.type.startsWith('image/')) return
@@ -203,7 +216,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
       }))
       if (data.positive) {
         setOptimizedEnP(data.positive.trim())
-        setNegPromptP(data.negative || DEFAULT_NEGATIVE)
+        setNegPromptP(data.negative || '')
         setDetectedStyle(data.style || null)
       }
     } finally {
@@ -264,7 +277,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
         const fd = new FormData()
         fd.append('file', refFile)
         fd.append('prompt', finalPrompt.trim())
-        fd.append('negative_prompt', negPrompt.trim() || DEFAULT_NEGATIVE)
+        fd.append('negative_prompt', negPrompt.trim())
         fd.append('weight', String(ipaWeight))
         fd.append('width', String(size.split('x')[0]))
         fd.append('height', String(size.split('x')[1]))
@@ -276,9 +289,12 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
         const fd = new FormData()
         fd.append('file', refFile)
         fd.append('prompt', finalPrompt.trim())
-        fd.append('negative_prompt', negPrompt.trim() || DEFAULT_NEGATIVE)
+        fd.append('negative_prompt', negPrompt.trim())
         fd.append('mode', refMode)
         fd.append('denoise', String(denoise))
+        fd.append('cn_weight', String(cnWeight))
+        fd.append('width', String(width))
+        fd.append('height', String(height))
         fd.append('steps', String(steps))
         fd.append('seed', String(actualSeed))
         if (artStyleId) fd.append('art_style_id', artStyleId)
@@ -291,7 +307,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               prompt: finalPrompt.trim(),
-              negative_prompt: negPrompt.trim() || DEFAULT_NEGATIVE,
+              negative_prompt: negPrompt.trim(),
               width,
               height,
               steps,
@@ -424,13 +440,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
             color: 'var(--code-fg)',
             lineHeight: 1.6
           }}>
-            {promptEn || optimizedEn ? (
-              <>
-                {promptEn}
-                {promptEn && optimizedEn ? '\n\n' : ''}
-                {optimizedEn}
-              </>
-            ) : (
+            {finalPrompt ? finalPrompt : (
               <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>等待輸入或優化...</span>
             )}
           </div>
@@ -440,6 +450,7 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
           <label style={S.label}>負向 Prompt</label>
           <textarea
             style={{ ...S.textarea, minHeight: 50 }}
+            placeholder="留空＝依底模家族／畫風的預設負向"
             value={negPrompt}
             onChange={(e) => setNegPromptP(e.target.value)}
           />
@@ -462,13 +473,14 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
               <div style={S.modeBtns}>
                 {[
                   { key: 'i2i', label: 'Image2Image', desc: '保留原圖結構' },
-                  { key: 'controlnet', label: 'ControlNet', desc: '約束構圖/姿勢' },
-                  { key: 'ipadapter', label: 'IP-Adapter', desc: '外觀/角色參考' },
+                  { key: 'controlnet', label: cnNative ? 'ControlNet' : '結構引導', desc: cnNative ? '約束構圖/姿勢' : `此模型無 CN，改走 ${capability.cn_fallback || 'img2img'}` },
+                  { key: 'ipadapter', label: 'IP-Adapter', desc: ipaSupported ? '外觀/角色參考' : '此模型不支援', disabled: !ipaSupported },
                 ].map(m => (
                   <button
                     key={m.key}
-                    style={{ ...S.modeBtn, ...(refMode === m.key ? S.modeBtnActive : {}) }}
-                    onClick={() => setRefMode(m.key)}
+                    disabled={m.disabled}
+                    style={{ ...S.modeBtn, ...(refMode === m.key ? S.modeBtnActive : {}), ...(m.disabled ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
+                    onClick={() => !m.disabled && setRefMode(m.key)}
                     title={m.desc}
                   >
                     {m.label}
@@ -509,6 +521,26 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
                       value={ipaWeight}
                       style={{ flex: 1, accentColor: 'var(--accent)' }}
                       onChange={e => setIpaWeight(Number(e.target.value))}
+                    />
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
+                  </div>
+                </div>
+              )}
+
+              {/* 結構引導強度（controlnet 模式；無原生 CN 時映射到 LLLite 強度或 img2img denoise） */}
+              {refMode === 'controlnet' && (
+                <div>
+                  <label style={S.label}>
+                    引導強度：{cnWeight.toFixed(2)}
+                    <span style={{ marginLeft: 6, opacity: 0.6 }}>（越高越貼近參考圖構圖）</span>
+                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
+                    <input
+                      type="range" min={0.1} max={1.5} step={0.05}
+                      value={cnWeight}
+                      style={{ flex: 1, accentColor: 'var(--accent)' }}
+                      onChange={e => setCnWeight(Number(e.target.value))}
                     />
                     <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
                   </div>
@@ -575,13 +607,21 @@ export default function GenerateTab({ onAddHistory, artStyleId = '', pendingProm
           </div>
         </div>
 
-        <button
-          style={{ ...S.btn, ...(canGenerate ? {} : S.btnDisabled) }}
-          disabled={!canGenerate}
-          onClick={onGenerate}
-        >
-          {loading ? '生成中...' : '生成圖片'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            style={{ ...S.btn, flex: 1, ...(canGenerate ? {} : S.btnDisabled) }}
+            disabled={!canGenerate}
+            onClick={onGenerate}
+          >
+            {loading ? '生成中...' : '生成圖片'}
+          </button>
+          <button
+            style={{ ...S.btnSecondary, whiteSpace: 'nowrap' }}
+            disabled={loading || optimizing}
+            onClick={onReset}
+            title="清空中文描述、手動標籤、預覽、負向與參考圖"
+          >↺ 全部清空</button>
+        </div>
         {error && <p style={S.error}>{error}</p>}
       </div>
 

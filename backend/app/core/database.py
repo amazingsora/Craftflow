@@ -51,6 +51,7 @@ def _migrate() -> None:
         ("outfit", "TEXT"),
         ("lora_name", "VARCHAR(200)"),
         ("lora_weight", "FLOAT"),
+        ("appearance_age", "VARCHAR(30)"),
     ])
     _add_columns("chapters", [
         ("volume_id", "INTEGER"),

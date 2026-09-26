@@ -75,7 +75,7 @@ def _dedup_tags(prompt: str) -> str:
 # [CN-116] 官方 tag 順序；確定性身體 tag 不被家族負向抵消
 _SUBJECT_TAGS = frozenset({
     "1girl", "1boy", "1woman", "1man", "androgynous", "solo",
-    "mature female", "mature male",
+    "mature female", "mature male", "male focus",
 })
 
 
@@ -131,13 +131,8 @@ def _env_wh(key: str, w: int, h: int) -> tuple[int, int]:
         return w, h
 
 
-# [CN-073] 三檔畫布短邊統一 1024；⚠️只有 STD 有作者範例背書，SHORT/TALL 是等比推的
-_FULLBODY_CANVAS_TALL = _env_wh("FULLBODY_CANVAS_TALL", 1024, 1664)    # 身高 ≥170：高挑/長腿
-_FULLBODY_CANVAS_STD = _env_wh("FULLBODY_CANVAS_STD", 1024, 1536)      # 標準（預設，與官方範例同尺寸）
-_FULLBODY_CANVAS_SHORT = _env_wh("FULLBODY_CANVAS_SHORT", 1024, 1408)  # 身高 <150 或幼態：矮/Q版
-# 身高分界（cm）
-_FULLBODY_TALL_CM = 170
-_FULLBODY_SHORT_CM = 150
+# [CN-073] 全身畫布（與官方範例同尺寸）；[CN-128] 身高不再決定畫布，TALL/SHORT 兩檔已移除
+_FULLBODY_CANVAS_STD = _env_wh("FULLBODY_CANVAS_STD", 1024, 1536)
 _FULLBODY_WIDTH, _FULLBODY_HEIGHT = _FULLBODY_CANVAS_STD
 
 # 半身→全身外擴的畫布幾何：概念圖佔畫布高度比例。可由 env 覆寫做 A/B(預設＝定版值，行為不變)。
@@ -343,21 +338,6 @@ def _image_dimensions(image_bytes: bytes) -> tuple[int, int]:
     except Exception:
         pass
     return 1024, 1024
-
-
-def _fullbody_canvas(height) -> tuple[int, int]:
-    """依角色身高自動選全身畫布比例；身高未知或無法解析則用標準比例。"""
-    try:
-        h = float(height) if height not in (None, "") else None
-    except (TypeError, ValueError):
-        h = None
-    if h is None:
-        return _FULLBODY_CANVAS_STD
-    if h >= _FULLBODY_TALL_CM:
-        return _FULLBODY_CANVAS_TALL
-    if h < _FULLBODY_SHORT_CM:
-        return _FULLBODY_CANVAS_SHORT
-    return _FULLBODY_CANVAS_STD
 
 
 def _is_flat_color_draft(image_bytes: bytes) -> bool:

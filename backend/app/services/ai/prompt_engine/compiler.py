@@ -24,8 +24,7 @@ from app.services.ai.prompt_engine.styles import (
     _SUBJECT_COUNT_TAGS,
 )
 from app.services.ai.prompt_engine import lexicon
-from app.services.ai.prompt_engine.content_guard import is_explicit_tag, nsfw_guard_enabled
-
+from app.services.ai.prompt_engine.content_guard import  nsfw_guard_enabled
 logger = logging.getLogger(__name__)
 
 
@@ -422,7 +421,12 @@ def _compile_impl(
     if _extra_neg:
         negative = f"{negative}, {_extra_neg}" if negative else _extra_neg
 
-    return positive.strip(", "), negative
+    # [CN-127] 設定檔 prefix／suffix 可能自帶尾逗號 → 拼接出空 tag `, ,`
+    return _tidy_tags(positive), _tidy_tags(negative)
+
+
+def _tidy_tags(text: str) -> str:
+    return re.sub(r"(?:\s*,)+\s*", ", ", text or "").strip(", ")
 
 
 def _extract_output(raw: str) -> str:
@@ -447,7 +451,7 @@ _INLINE_DASH_RE = re.compile(r'\s+-\s+.+$')
 # Meta-label：以 `:` 結尾（e.g. "Conflict Resolution:", "Note:"）→ 丟棄整個 tag
 _META_LABEL_RE = re.compile(r':\s*$')
 
-# 數字年齡短語（"10 year old", "5 years old"）= 由 _age_body_tags 確定性處理；
+# 數字年齡短語（"10 year old", "5 years old"）不進生圖（CN-128：年齡只當背景敘述）；
 # LLM 翻譯版本會與 body_prefix 衝突，且可能產生不適當的外觀描述
 _AGE_PHRASE_RE = re.compile(r'\b\d+\s+years?\s+old\b', re.IGNORECASE)
 
@@ -498,7 +502,7 @@ def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
         if _META_LABEL_RE.search(t_clean):
             continue
 
-        # 數字年齡短語 → 由 _age_body_tags 確定性處理，LLM 版本一律丟棄
+        # 數字年齡短語 → 年齡不進生圖（CN-128），LLM 版本一律丟棄
         if _AGE_PHRASE_RE.search(t_clean):
             continue
 
@@ -506,10 +510,6 @@ def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
         normalized = re.sub(r':[\d.]+$', '', t_clean.lower().strip("()")).strip()
 
         if _LINEART_ARTIFACT_RE.search(t_clean):
-            continue
-
-        # [CN-118] 露骨 tag（受 NSFW_GUARD_ENABLED 控制）；未成年情境在注入前另行強制
-        if nsfw_guard_enabled() and is_explicit_tag(t_clean):
             continue
 
         if normalized in banned_set or normalized in seen:

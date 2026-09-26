@@ -26,8 +26,11 @@ from app.services.ai.vram_manager import guardian
 from app.services.ai.generation_recorder import record_generation
 from app.services.ai import generation_jobs
 from app.services.ai import character_design_service
+from app.services.ai.custom_tags import load_custom_tags
+from app.services.ai.appearance_cards import list_cards
 from app.services.ai import image_edit_service
 from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
+from app.services.ai.gen_profile import resolve_profile_for_workflow
 from app.schemas.art_generate import (
     CompilePromptRequest,
     GenerateRequest,
@@ -35,6 +38,7 @@ from app.schemas.art_generate import (
 )
 from app.services.ai.workflow_builder import (
     _build_txt2img,
+    _collect_loras,
     _style_prompts,
     _resolve_prompt_overrides,
     _detect_style,
@@ -47,6 +51,7 @@ from app.services.ai.workflow_builder import (
 )
 from app.services.ai.image_ops import (
     _clamp_dim,
+    _fit_to_canvas,
     _image_dimensions,
     _letterbox_to_aspect,
 )
@@ -54,9 +59,12 @@ from app.services.ai.wf_node_ops import (
     _CN_APPLY_TYPES,
     _bypass_controlnet_nodes,
     _bypass_ipa_nodes,
-    _inject_controlnet_compose,
     _inject_controlnet_image,
+    _inject_img2img,
     _inject_ipa_cn_nodes,
+    _inject_lllite,
+    _find_main_ksampler_id,
+    _set_node_input,
     _inject_ipa_image,
     _inject_prompts,
     _wf_has_controlnet,
@@ -324,6 +332,11 @@ async def upscale(
     )
 
 
+_COMPOSE_BODY_TAGS = "full body, complete character, all limbs visible"
+_COMPOSE_LINEART_TAGS = "white background, monochrome, greyscale, lineart, clean lines"
+_COMPOSE_LINEART_NEG = "shading, color, complex background"
+
+
 @router.post("/art/compose", summary="草圖問答 → 構圖意見 + 參考圖")
 async def compose(
     file: Annotated[UploadFile, File(description="草稿圖片")],
@@ -340,7 +353,8 @@ async def compose(
     if not _cap["ipa_supported"]:
         use_sketch_as_ref = False
         character_ref = None
-    if not _cap["cn_supported"]:
+    # [CN-125] 無原生 CN 但有替代鏈（LLLite／img2img）時仍保留，交給 _apply_cn_guide
+    if not _cap["cn_supported"] and not _cap.get("cn_fallback"):
         use_cn = False
 
     image_bytes = await file.read()
@@ -357,6 +371,7 @@ async def compose(
     active_wf = state.get_workflow()
     style = _detect_style(active_wf)
     negative = STYLE_CONFIG[style].negative
+    mechanism = None
 
     # Cap generation to 1024px max (preserve aspect ratio from original sketch)
     _MAX_COMPOSE_DIM = 1024
@@ -372,13 +387,15 @@ async def compose(
 
     await guardian.request_focus("comfyui")
 
-    # CN：草圖 letterbox 後上傳作為 ControlNet hint
     uploaded_cn: str | None = None
-    if use_cn:
-        sketch_lb = _letterbox_to_aspect(image_bytes, gen_w, gen_h)
-        uploaded_cn = comfyui_client.upload_image_bytes(sketch_lb, "compose_cn_ref.png")
-
     if use_sketch_as_ref or character_ref is not None:
+        # IPA 只在 SDXL 家族可用，CN 走原生節點：草圖 letterbox 後上傳作為 ControlNet hint
+        if use_cn and _cap["cn_supported"]:
+            sketch_lb = _letterbox_to_aspect(image_bytes, gen_w, gen_h)
+            uploaded_cn = comfyui_client.upload_image_bytes(sketch_lb, "compose_cn_ref.png")
+            mechanism = "controlnet"
+        else:
+            use_cn = False
         # IP-Adapter 模式：以草圖（或外部參考圖）作為外觀基準
         if character_ref is not None:
             ref_bytes = await character_ref.read()
@@ -387,7 +404,7 @@ async def compose(
             ref_bytes = image_bytes
             ref_filename = "sketch_ref.png"
         uploaded_ref = comfyui_client.upload_image_bytes(ref_bytes, ref_filename)
-        final_prompt = sdxl_prompt.rstrip(", ") + ", full body, complete character, all limbs visible"
+        final_prompt = art_service.sanitize_tags(sdxl_prompt + ", " + _COMPOSE_BODY_TAGS)
         wf = _load_workflow("ipadapter_txt2img.json")
 
         # CN 注入 / bypass
@@ -414,30 +431,23 @@ async def compose(
         _inject_ipa_image(wf, uploaded_ref)
     else:
         # txt2img / CN-only 模式
-        final_prompt = sdxl_prompt.rstrip(", ") + ", full body, complete character, all limbs visible, white background, monochrome, lineart, clean lines, no shading, no color"
+        # [CN-126] 否定詞放負向：tag 模型把 no shading 讀成 shading 的正向訊號
+        final_prompt = art_service.sanitize_tags(
+            sdxl_prompt + ", " + _COMPOSE_BODY_TAGS + ", " + _COMPOSE_LINEART_TAGS)
+        negative = art_service.sanitize_tags(negative + ", " + _COMPOSE_LINEART_NEG, drop_negations=False)
         wf = _load_workflow(active_wf)
 
         # IPA bypass（若 workflow 有殘留 IPA 節點）
         if _wf_has_ipa(wf):
             _bypass_ipa_nodes(wf)
-
-        # CN 注入 / bypass
-        if use_cn and not _wf_has_controlnet(wf):
-            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True, models=_cap["models"])
-        elif not use_cn and _wf_has_controlnet(wf):
+        if _wf_has_controlnet(wf) and not (use_cn and _cap["cn_supported"]):
             _bypass_controlnet_nodes(wf)
 
         _inject_prompts(wf, final_prompt, negative)
-        for node in wf.values():
-            if not isinstance(node, dict):
-                continue
-            ct = node.get("class_type")
-            inputs = node.get("inputs", {})
-            if ct == "EmptyLatentImage":
-                inputs["width"] = gen_w
-                inputs["height"] = gen_h
-            elif ct == "KSampler":
-                inputs["seed"] = seed
+        _set_main_sampler(wf, seed=seed, width=gen_w, height=gen_h)
+        if use_cn:
+            profile, _fam = resolve_profile_for_workflow(active_wf)
+            mechanism, _ = _apply_cn_guide(wf, _cap, profile, image_bytes, gen_w, gen_h, cn_weight, "compose")
 
     # CN 圖片注入 + 強度設定
     if use_cn and uploaded_cn and _wf_has_controlnet(wf):
@@ -453,9 +463,11 @@ async def compose(
     return {
         "advice": advice,
         "suggested_prompt": final_prompt,
+        "negative_prompt": negative,
         "image": encoded_image,
         "seed": seed,
         "style": style.value,
+        "mechanism": mechanism,
     }
 
 
@@ -488,6 +500,9 @@ async def generate_character_design(
     cn_weight: float = 0.85,
     seed: int = -1,  # -1＝隨機；>=0 固定 seed
     reuse_prompt: bool = False,  # 沿用上次 prompt，不重新編譯
+    face_detailer: bool = True,  # 增強臉部輪廓（FaceDetailer，家族 profile 有開才生效）
+    face_detailer_denoise: Optional[float] = None,  # 修臉強度；None＝家族預設，後端夾 0.2~0.7
+    custom_tags: str = "",       # 客製化標籤（作品／繪師）
     db: Session = Depends(get_db),
 ):
     """主流程見 services/ai/character_design_service.py。"""
@@ -497,7 +512,8 @@ async def generate_character_design(
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight, seed=seed,
-        reuse_prompt=reuse_prompt, db=db,
+        reuse_prompt=reuse_prompt, use_face_detailer=face_detailer,
+        face_detailer_denoise=face_detailer_denoise, custom_tags=custom_tags, db=db,
     )
 
 
@@ -516,6 +532,9 @@ async def generate_variant_design(
     cn_weight: float = 0.85,
     seed: int = -1,  # -1＝隨機；>=0 固定 seed
     reuse_prompt: bool = False,  # 沿用上次 prompt，不重新編譯
+    face_detailer: bool = True,  # 增強臉部輪廓（FaceDetailer，家族 profile 有開才生效）
+    face_detailer_denoise: Optional[float] = None,  # 修臉強度；None＝家族預設，後端夾 0.2~0.7
+    custom_tags: str = "",       # 客製化標籤（作品／繪師）
     db: Session = Depends(get_db),
 ):
     """主流程見 services/ai/character_design_service.py。"""
@@ -525,14 +544,27 @@ async def generate_variant_design(
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight, seed=seed,
-        reuse_prompt=reuse_prompt, db=db,
+        reuse_prompt=reuse_prompt, use_face_detailer=face_detailer,
+        face_detailer_denoise=face_detailer_denoise, custom_tags=custom_tags, db=db,
     )
+
+
+@router.get("/art/custom-tags", summary="客製化標籤清單（作品／繪師，本機 JSON）")
+def get_custom_tags():
+    """[CN-122] 清單只存 CUSTOM_TAGS_FILE；檔案不存在回空清單。"""
+    return load_custom_tags()
 
 
 
 # ── Image-Guided Generation ───────────────────────────────────────────────────
 
 # ── WD14 Tag Extraction ───────────────────────────────────────────────────────
+
+@router.get("/art/appearance-cards", summary="角色外觀年齡卡片清單（backend/appearance_cards.yml）")
+def get_appearance_cards():
+    """[CN-129] 卡片定義與各性別對應 tag；免重啟。"""
+    return {"cards": list_cards()}
+
 
 @router.post("/art/wd14-tags", summary="WD14 圖像反推 Danbooru 標籤")
 async def wd14_tags(
@@ -602,6 +634,54 @@ async def wd14_tags(
 _IMG_GUIDE_MODES = ("i2i", "controlnet")
 
 
+def _set_main_sampler(wf: dict, *, seed: int, steps: int | None = None,
+                      width: int | None = None, height: int | None = None) -> None:
+    """主 KSampler 的 seed/steps 與 EmptyLatentImage 尺寸；參數節點參照寫回上游，metadata 才會一致。"""
+    ks_id = _find_main_ksampler_id(wf)
+    if ks_id is not None:
+        _set_node_input(wf, ks_id, "seed", seed)
+        if steps is not None:
+            _set_node_input(wf, ks_id, "steps", steps)
+    if width and height:
+        for nid, node in wf.items():
+            if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage":
+                _set_node_input(wf, nid, "width", width)
+                _set_node_input(wf, nid, "height", height)
+
+
+def _apply_cn_guide(wf: dict, cap: dict, profile, image_bytes: bytes, width: int, height: int,
+                    cn_weight: float, label: str) -> tuple[str, dict]:
+    """結構引導：家族支援 CN 走 ControlNet，否則依候選鏈退 LLLite → img2img [CN-125]"""
+    if cap.get("cn_supported"):
+        if not _wf_has_controlnet(wf):
+            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True, models=cap.get("models"))
+        if _wf_has_controlnet(wf):
+            name = comfyui_client.upload_image_bytes(
+                _letterbox_to_aspect(image_bytes, width, height), f"{label}_cn_ref.png")
+            _inject_controlnet_image(wf, name)
+            for node in wf.values():
+                if isinstance(node, dict) and node.get("class_type") in _CN_APPLY_TYPES:
+                    node.get("inputs", {})["strength"] = round(cn_weight, 2)
+            return "controlnet", {"cn_weight": round(cn_weight, 2)}
+
+    fitted = _fit_to_canvas(image_bytes, width, height)
+    if cap.get("cn_fallback") == "lllite" and cap.get("lllite_weight"):
+        name = comfyui_client.upload_image_bytes(fitted, f"{label}_lllite_ref.png")
+        strength = round(cn_weight * profile.lllite_strength_scale, 3)
+        end_pct = profile.coverage_cn_end_pct.get("full", 1.0)
+        if _inject_lllite(wf, name, cap["lllite_weight"], strength, end_percent=end_pct,
+                          node_class=cap.get("lllite_node_class")):
+            return "lllite", {"lllite_strength": strength}
+        logger.warning("[%s] LLLite 注入失敗 → 退 img2img", label)
+
+    denoise = profile.img2img_denoise(cn_weight)
+    name = comfyui_client.upload_image_bytes(fitted, f"{label}_i2i_ref.png")
+    if _inject_img2img(wf, name, denoise):
+        return "img2img", {"denoise": denoise}
+    logger.warning("[%s] img2img 注入失敗（缺 KSampler 或 VAE）→ 純 txt2img", label)
+    return "txt2img", {}
+
+
 @router.post("/art/img-guide", summary="參考圖引導生成 (i2i / controlnet)")
 async def img_guide(
     file: Annotated[UploadFile, File(description="參考圖片 (JPEG/PNG)")],
@@ -609,6 +689,9 @@ async def img_guide(
     negative_prompt: str = Form("", description="負向提示詞"),
     mode: str = Form("i2i", description="生成模式：i2i | controlnet"),
     denoise: float = Form(0.35, ge=0.05, le=0.95, description="去噪強度（i2i 模式）"),
+    cn_weight: float = Form(0.85, ge=0.1, le=1.5, description="結構引導強度（controlnet 模式）"),
+    width: int = Form(1024),
+    height: int = Form(1024),
     steps: int = Form(20, ge=5, le=60),
     seed: int = Form(-1),
     art_style_id: Optional[int] = Form(None),
@@ -620,51 +703,42 @@ async def img_guide(
 
     image_bytes = await file.read()
     actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
+    width, height = _clamp_dim(width), _clamp_dim(height)
 
     art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
-    style = _resolve_style(art_style)
-    default_neg = (art_style.negative if art_style and art_style.negative else STYLE_CONFIG[style].negative)
-    neg = negative_prompt.strip() or default_neg
+    style, pos, neg = _style_prompts(db, art_style_id, prompt, negative_prompt)
 
-    extra = _extra_tags(art_style)
-    pos = f"{prompt}, {extra}" if extra else prompt
-
-    uploaded_name = comfyui_client.upload_image_bytes(image_bytes, file.filename or "ref.png")
+    # [CN-125] 走目前選用的 workflow（與 txt2img 同源）；系統 SDXL 工作流會被全域 checkpoint 覆寫成 Anima UNet 檔 → Value not in list
+    active_wf = state.get_workflow()
+    wf = _load_workflow(active_wf)
+    cap = resolve_capability(wf, resolve_checkpoint_for_workflow(active_wf))
+    profile, _family = resolve_profile_for_workflow(active_wf)
+    if _wf_has_ipa(wf):
+        _bypass_ipa_nodes(wf)
+    if _wf_has_controlnet(wf) and not (mode == "controlnet" and cap.get("cn_supported")):
+        _bypass_controlnet_nodes(wf)
+    lora_list = _collect_loras(art_style)
+    _inject_loras(wf, lora_list)
+    _inject_prompts(wf, pos, neg)
+    _set_main_sampler(wf, seed=actual_seed, steps=steps, width=width, height=height)
 
     if mode == "i2i":
-        wf = _load_workflow("image_to_image.json")
-        _inject_loras(wf, art_style.loras if art_style else [])
-        for node in wf.values():
-            if not isinstance(node, dict):
-                continue
-            ct = node.get("class_type")
-            inputs = node.get("inputs", {})
-            if ct == "LoadImage":
-                inputs["image"] = uploaded_name
-            elif ct == "CLIPTextEncode":
-                if inputs.get("text") == "__POSITIVE__":
-                    inputs["text"] = pos
-                elif inputs.get("text") == "__NEGATIVE__":
-                    inputs["text"] = neg
-            elif ct == "KSampler":
-                inputs["seed"] = actual_seed
-                inputs["steps"] = steps
-                inputs["denoise"] = round(denoise, 2)
-
-    else:  # controlnet
-        wf = _load_workflow("sketch_to_reference.json")
-        _inject_loras(wf, art_style.loras if art_style else [])
-        img_w, img_h = _image_dimensions(image_bytes)
-        _inject_controlnet_compose(wf, uploaded_name, pos, neg, actual_seed, img_w, img_h, steps)
+        uploaded = comfyui_client.upload_image_bytes(_fit_to_canvas(image_bytes, width, height), "guide_i2i_ref.png")
+        if not _inject_img2img(wf, uploaded, round(denoise, 2)):
+            raise HTTPException(status_code=422, detail="目前 workflow 找不到 KSampler 或 VAE，無法做 Image2Image")
+        mechanism, mech_params = "img2img", {"denoise": round(denoise, 2)}
+    else:
+        mechanism, mech_params = _apply_cn_guide(wf, cap, profile, image_bytes, width, height, cn_weight, "guide")
 
     _replace_negative_seeds(wf, actual_seed)
     await guardian.request_focus("comfyui")
     image_out = await _run_comfyui(wf)
 
     hist_id = record_generation(
-        db, endpoint="img_guide", seed=actual_seed, workflow=state.get_workflow(),
+        db, endpoint="img_guide", seed=actual_seed, workflow=active_wf,
         style=style.value, positive=pos, negative=neg,
-        params={"mode": mode, "denoise": denoise, "steps": steps, "art_style_id": art_style_id},
+        params={"mode": mode, "mechanism": mechanism, **mech_params, "steps": steps,
+                "width": width, "height": height, "loras": lora_list, "art_style_id": art_style_id},
     )
     return Response(
         content=image_out,
@@ -672,8 +746,9 @@ async def img_guide(
         headers={
             "X-Seed": str(actual_seed),
             "X-Mode": mode,
+            "X-Mechanism": mechanism,
             "X-Style": style.value,
-            "X-Denoise": str(denoise),
+            "X-Denoise": str(mech_params.get("denoise", "")),
             "X-History-Id": str(hist_id) if hist_id else "",
         },
     )
@@ -693,6 +768,9 @@ async def ipadapter(
     db: Session = Depends(get_db),
 ):
     """以參考圖萃取外觀特徵（角色臉部、髮型、服裝風格） [FD-013]"""
+    _cap = _current_capability()
+    if not _cap["ipa_supported"]:
+        raise HTTPException(status_code=422, detail=f"目前 workflow 家族（{_cap.get('family')}）不支援 IP-Adapter，請改用 Image2Image 或結構引導")
     image_bytes = await file.read()
     actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
 

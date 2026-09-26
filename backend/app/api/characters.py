@@ -323,6 +323,7 @@ class VariantUpdate(BaseModel):
     height: Optional[int] = None
     birthday: Optional[str] = None
     gender: Optional[str] = None
+    appearance_age: Optional[str] = None
 
 
 @router.get("/characters/{character_id}/variants/{slot}")

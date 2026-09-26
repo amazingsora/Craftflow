@@ -40,6 +40,18 @@ class GenProfile:
     cn_fallback_chain: tuple[str, ...] = ()
     # [CN-082] LLLite strength 是 LoRA-like 乘數（default 1.0、range -10~10），與 CN 的 0~1 權重尺度不同
     lllite_strength_scale: float = 1.0
+    # [CN-120] 人設圖 FaceDetailer：None＝不注入；workflow 已含 FaceDetailer 時亦不注入
+    face_detailer_denoise: float | None = None
+    face_detailer_steps: int = 18
+
+    def face_detailer_strength(self, requested: float | None) -> float | None:
+        """使用者滑桿值夾進安全區間；未指定用家族預設；家族未開回 None [FD-121]"""
+        if self.face_detailer_denoise is None:
+            return None
+        if requested is None:
+            return self.face_detailer_denoise
+        lo, hi = FACE_DETAILER_DENOISE_RANGE
+        return round(min(hi, max(lo, float(requested))), 2)
 
     @property
     def cn_fallback(self) -> str | None:
@@ -58,6 +70,9 @@ class GenProfile:
         return round(self.img2img_denoise_max - ratio * d_span, 2)
 
 
+# [CN-120] 修臉 denoise 可調區間：<0.2 幾乎無變化；>0.7 換臉感明顯、與身體畫風脫節
+FACE_DETAILER_DENOISE_RANGE = (0.2, 0.7)
+
 # family → profile。未列家族走 _DEFAULT（= 現況 SDXL 行為，零變更）。
 _DEFAULT = GenProfile(family="sdxl")
 
@@ -72,7 +87,10 @@ GEN_PROFILE: dict[str, GenProfile] = {
                               cn_enabled=False,
                               cn_fallback_chain=("lllite", "img2img"),
                               img2img_denoise_min=0.20,
-                              lllite_strength_scale=1.0),
+                              # [CN-120] 滑桿預設 0.85 × 1.47 ≈ 1.25；full 全程控制（ComfyUI F2）
+                              lllite_strength_scale=1.47,
+                              coverage_cn_end_pct={"full": 1.0},
+                              face_detailer_denoise=0.50),
 }
 
 

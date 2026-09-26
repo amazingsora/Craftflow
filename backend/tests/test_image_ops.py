@@ -11,7 +11,6 @@ from PIL import Image
 from app.services.ai.image_ops import (
     _border_color,
     _clamp_dim,
-    _fullbody_canvas,
     _image_dimensions,
     _is_flat_color_draft,
     _letterbox_to_aspect,
@@ -19,9 +18,7 @@ from app.services.ai.image_ops import (
     _pixel_fullness_check,
     _detect_body_break,
     _shrink_for_full_body,
-    _FULLBODY_CANVAS_TALL,
     _FULLBODY_CANVAS_STD,
-    _FULLBODY_CANVAS_SHORT,
 )
 
 
@@ -61,17 +58,9 @@ def test_image_dimensions_garbage_falls_back():
 
 # ── _fullbody_canvas ──────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("height, expected", [
-    (175, _FULLBODY_CANVAS_TALL),
-    (170, _FULLBODY_CANVAS_TALL),    # 邊界：≥170
-    (160, _FULLBODY_CANVAS_STD),
-    (149, _FULLBODY_CANVAS_SHORT),   # 邊界：<150
-    (None, _FULLBODY_CANVAS_STD),
-    ("abc", _FULLBODY_CANVAS_STD),   # 無法解析 → 標準
-    ("", _FULLBODY_CANVAS_STD),
-])
-def test_fullbody_canvas(height, expected):
-    assert _fullbody_canvas(height) == expected
+def test_fullbody_canvas_is_fixed_std():
+    """[CN-128] R-01：身高不再決定畫布，只剩標準檔。"""
+    assert _FULLBODY_CANVAS_STD == (1024, 1536)
 
 
 # ── _letterbox_to_aspect ──────────────────────────────────────────────────────

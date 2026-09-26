@@ -17,7 +17,7 @@ import random
 from sqlalchemy.orm import Session
 
 from app.core.config import CUSTOM_WORKFLOWS_DIR, COMFYUI_LORAS_DIR, COMFYUI_JOB_TIMEOUT_SEC
-from app.core.config import PERSONAL_KIND_STYLE, PERSONAL_KIND_NEGATIVE, personal_family_extra
+from app.core.config import PERSONAL_KIND_NEGATIVE, personal_family_extra
 from app.core import state
 from app.models.art_style import ArtStyle
 from app.models.character import Character
@@ -27,7 +27,6 @@ from app.services.ai.prompt_engine.styles import STYLE_CONFIG
 from app.schemas.art_generate import GenerateRequest
 from app.services.ai.capability import _STYLES_YML, load_checkpoint_styles_section
 from app.services.ai.wf_node_ops import _inject_prompts
-from app.services.ai.prompt_engine.content_guard import apply_content_guard
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +92,6 @@ _PROFILE_MISS_WARNED: set[str] = set()
 _LEGACY_PROFILES_WARNED = False
 # [CN-114] _detect_style 兩個 SDXL 退路（讀檔失敗／checkpoint 未登錄）各自 warn-once 的鍵
 _STYLE_FALLBACK_WARNED: set[str] = set()
-# [CN-115] 非 anima 家族的個人標籤含 `@`（Anima 專用畫師前綴）→ 每家族警告一次
-_PERSONAL_AT_WARNED: set[str] = set()
-_ANIMA_ARTIST_PREFIX = "@"
 
 
 def _profile_for_style(style: str, workflow: str = "") -> dict:
@@ -176,24 +172,14 @@ def _prompt_profile_source(art_style: Optional[ArtStyle], workflow: str) -> str:
         src = f"family fallback (STYLE_CONFIG: {style})"
     if art_style and (art_style.quality_prefix or art_style.negative):
         src += f" +art_style#{art_style.id}"
-    if any(personal_family_extra(k, style) for k in (PERSONAL_KIND_STYLE, PERSONAL_KIND_NEGATIVE)):
+    if personal_family_extra(PERSONAL_KIND_NEGATIVE, style):
         src += " +personal(.env)"
     return src
 
 
 def _personal_extra(kind: str, workflow: str) -> str:
-    """[CN-115] 取 workflow 所屬家族的個人標籤（.env PERSONAL_<kind>_EXTRA_<家族>）。
-    非 anima 家族的值含 `@`（Anima 畫師前綴）時 warn-once。"""
-    family = _detect_style(workflow).value
-    value = personal_family_extra(kind, family)
-    if (value and _ANIMA_ARTIST_PREFIX in value and family != PromptStyle.ANIMA.value
-            and family not in _PERSONAL_AT_WARNED):
-        _PERSONAL_AT_WARNED.add(family)
-        logger.warning(
-            "[personal] PERSONAL_%s_EXTRA_%s 含 '@'（Anima 專用畫師前綴），%s 家族可能無法辨識：%s",
-            kind, family.upper(), family, value,
-        )
-    return value
+    """[CN-115] 取 workflow 所屬家族的 .env PERSONAL_<kind>_EXTRA_<家族>（現僅 NEGATIVE）。"""
+    return personal_family_extra(kind, _detect_style(workflow).value)
 
 
 def _extra_tags(art_style: Optional[ArtStyle]) -> str:
@@ -236,7 +222,9 @@ def _lora_arch(lora_name: str):
                 n = struct.unpack("<Q", f.read(8))[0]
                 hdr = json.loads(f.read(n))
             base = str(hdr.get("__metadata__", {}).get("ss_base_model_version", "")).lower()
-            if "xl" in base:
+            if "anima" in base or "cosmos" in base:
+                arch = "anima"
+            elif "xl" in base:
                 arch = "sdxl"
             elif base.startswith("sd_v1") or "v1-5" in base or "sd1" in base:
                 arch = "sd15"
@@ -283,62 +271,88 @@ def lora_trigger_words(loras: list) -> list[str]:
     return out
 
 
+_CLIP_LOADER_TYPES = ("CLIPLoader", "CLIPLoaderGGUF", "DualCLIPLoader", "DualCLIPLoaderGGUF")
+
+
+def _find_node_id(wf: dict, types) -> str | None:
+    return next((nid for nid, n in wf.items() if isinstance(n, dict) and n.get("class_type") in types), None)
+
+
 def _inject_loras(wf: dict, loras: list) -> None:
     """Insert a LoraLoader chain into the workflow (mutates wf in place) [FD-109]"""
     valid = [l for l in (loras or []) if isinstance(l, dict) and l.get("model", "").strip()]
     if not valid:
         return
 
-    ckpt_id = next(
-        (nid for nid, n in wf.items()
-         if isinstance(n, dict) and n.get("class_type") == "CheckpointLoaderSimple"),
-        None,
-    )
-    if ckpt_id is None:
-        logger.warning("[lora] CheckpointLoaderSimple not found — skipping LoRA injection")
-        return
+    from app.services.ai.capability import _UNET_LOADER_TYPES, resolve_family
+    # [CN-124] Anima 等 UNet 工作流沒有 CheckpointLoaderSimple：MODEL 取 UNet 載入器、CLIP 取文字編碼器載入器
+    ckpt_id = _find_node_id(wf, ("CheckpointLoaderSimple",))
+    if ckpt_id is not None:
+        model_src, clip_src = [ckpt_id, 0], [ckpt_id, 1]
+        base_name = wf[ckpt_id].get("inputs", {}).get("ckpt_name", "")
+    else:
+        unet_id = _find_node_id(wf, _UNET_LOADER_TYPES)
+        if unet_id is None:
+            logger.warning("[lora] 找不到 CheckpointLoaderSimple／UNet 載入器 — 略過 LoRA 注入")
+            return
+        clip_id = _find_node_id(wf, _CLIP_LOADER_TYPES)
+        model_src = [unet_id, 0]
+        clip_src = [clip_id, 0] if clip_id is not None else None
+        base_name = wf[unet_id].get("inputs", {}).get("unet_name", "")
 
-    # 架構健檢（警告為主，不阻擋）：LoRA 訓練底模與 checkpoint family 不符 → 多半靜默失效。
+    # 架構健檢（警告為主，不阻擋）：LoRA 訓練底模與底模家族不符 → 多半靜默失效。
     try:
-        from app.services.ai.capability import resolve_family
-        _ckpt_name = wf[ckpt_id].get("inputs", {}).get("ckpt_name", "")
-        _ckpt_arch = "sd15" if resolve_family(_ckpt_name) == "sd15" else "sdxl"
+        _fam = resolve_family(base_name) if isinstance(base_name, str) else ""
+        _base_arch = {"sd15": "sd15", "anima": "anima"}.get(_fam, "sdxl")
         for _l in valid:
             _la = _lora_arch(_l["model"].strip())
-            if _la and _la != _ckpt_arch:
-                logger.warning("[lora] 架構不符：LoRA '%s'(%s) vs checkpoint '%s'(%s) → 多半靜默失效，請確認",
-                               _l["model"], _la, _ckpt_name, _ckpt_arch)
+            if _la and _la != _base_arch:
+                logger.warning("[lora] 架構不符：LoRA '%s'(%s) vs 底模 '%s'(%s) → 多半靜默失效，請確認",
+                               _l["model"], _la, base_name, _base_arch)
     except Exception as _e:
         logger.debug("[lora] arch check skipped: %s", _e)
 
-    prev_id = ckpt_id
+    prev_model, prev_clip = list(model_src), (list(clip_src) if clip_src else None)
+    lora_ids = set()
     for i, lora in enumerate(valid):
         node_id = f"_lora_{i}"
         weight = float(lora.get("weight", 0.8))
-        wf[node_id] = {
-            "class_type": "LoraLoader",
-            "inputs": {
-                "model": [prev_id, 0],
-                "clip": [prev_id, 1],
-                "lora_name": lora["model"].strip(),
-                "strength_model": weight,
-                "strength_clip": weight,
-            },
-        }
+        if prev_clip is not None:
+            wf[node_id] = {
+                "class_type": "LoraLoader",
+                "inputs": {
+                    "model": prev_model,
+                    "clip": prev_clip,
+                    "lora_name": lora["model"].strip(),
+                    "strength_model": weight,
+                    "strength_clip": weight,
+                },
+            }
+            prev_clip = [node_id, 1]
+        else:
+            wf[node_id] = {
+                "class_type": "LoraLoaderModelOnly",
+                "inputs": {"model": prev_model, "lora_name": lora["model"].strip(), "strength_model": weight},
+            }
         logger.debug("[lora] injected %s (weight=%.2f)", lora["model"], weight)
-        prev_id = node_id
+        prev_model = [node_id, 0]
+        lora_ids.add(node_id)
 
     # [CN-106] LoRA rewire 改走 edge-based：type-based 會漏掉中間節點，注入的 LoRA 變成懸空未用
-    lora_ids = {f"_lora_{i}" for i in range(len(valid))}
+    def _same(val, src) -> bool:
+        return (src is not None and isinstance(val, list) and len(val) >= 2
+                and str(val[0]) == str(src[0]) and val[1] == src[1])
+
     for nid, node in wf.items():
         if nid in lora_ids or not isinstance(node, dict):
             continue
         for key, val in node.get("inputs", {}).items():
-            if isinstance(val, list) and len(val) >= 2 and str(val[0]) == str(ckpt_id):
-                if val[1] == 0:
-                    node["inputs"][key] = [prev_id, 0]
-                elif val[1] == 1:
-                    node["inputs"][key] = [prev_id, 1]
+            if _same(val, model_src):
+                node["inputs"][key] = list(prev_model)
+            elif _same(val, clip_src):
+                node["inputs"][key] = list(prev_clip)
+    logger.info("[lora] 已注入 %d 支 LoRA（%s）", len(valid),
+                "LoraLoader" if clip_src is not None else "LoraLoaderModelOnly")
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -530,17 +544,9 @@ def _build_txt2img(req: "GenerateRequest", db: Session, batch_size: int = 1):
     # [CN-118]「以此角色生圖」帶 character_id → 以角色年齡判定未成年（15–17 歲不產生年齡 tag，
     # 單靠正向標記會漏）；在此先套用，讓回傳／寫進 history 的 prompt 與實送一致。
     age = _character_age(db, getattr(req, "character_id", None))
-    prompt, negative = apply_content_guard(prompt, negative, age=age, layer="txt2img")
 
     wf = _load_workflow(state.get_workflow())
-    # global LoRA（settings 頁設定）優先注入，art_style LoRA 疊加在後
-    global_lora = state.get_lora()
-    lora_list = []
-    # 全域 LoRA 僅 Checkpoint 模式（系統工作流）生效；自訂 workflow 模式由 workflow 決定。
-    if global_lora.get("name") and not _is_custom_workflow(state.get_workflow()):
-        lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
-    if art_style and art_style.loras:
-        lora_list.extend(art_style.loras)
+    lora_list = _collect_loras(art_style)
     _inject_loras(wf, lora_list)
     _inject_prompts(wf, prompt, negative, age=age)
     for node in wf.values():
@@ -559,6 +565,18 @@ def _build_txt2img(req: "GenerateRequest", db: Session, batch_size: int = 1):
 
     _replace_negative_seeds(wf, seed)
     return wf, seed, style, prompt, negative, lora_list
+
+
+def _collect_loras(art_style) -> list[dict]:
+    """全域 LoRA（僅 Checkpoint 模式）在前，art_style LoRA 疊加在後。"""
+    global_lora = state.get_lora()
+    lora_list = []
+    # 全域 LoRA 僅 Checkpoint 模式（系統工作流）生效；自訂 workflow 模式由 workflow 決定。
+    if global_lora.get("name") and not _is_custom_workflow(state.get_workflow()):
+        lora_list.append({"model": global_lora["name"], "weight": global_lora["strength"]})
+    if art_style and art_style.loras:
+        lora_list.extend(art_style.loras)
+    return lora_list
 
 
 def _style_prompts(db: Session, art_style_id: Optional[int], prompt: str, negative: str):

@@ -1,6 +1,7 @@
 """Art AI services — all powered by Ollama vision model [FD-031]"""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -27,6 +28,39 @@ def suggest_lineart_colors_bytes(
     model: str = ollama_client.DEFAULT_VISION_MODEL,
 ) -> str:
     return ollama_client.analyze_image_bytes(image_bytes, load_prompt("art/line_color"), model=model)
+
+
+# [CN-126] LLM tag 輸出清理規則；Danbooru 真實存在的 no_* tag 保留
+_HEDGE_PREFIXES = ("without ", "not ", "slightly ", "somewhat ", "possibly ", "maybe ", "probably ")
+_DANBOORU_NO_TAGS = frozenset({"no humans", "no pupils", "no nose", "no mouth", "no shoes",
+                               "no headwear", "no eyes", "no sclera"})
+_MAX_TAG_WORDS = 4
+
+
+def sanitize_tags(text: str, drop_negations: bool = True) -> str:
+    """清理逗號分隔 tag：去空、去重（保留首次順序）；drop_negations 再去否定／二選一／長句 [FD-121]"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in re.split(r"[,\n]", text or ""):
+        tag = re.sub(r"\s+", " ", raw.strip().strip(".").strip())
+        if not tag:
+            continue
+        low = tag.lower()
+        if drop_negations and _is_unfit_tag(low):
+            continue
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(tag)
+    return ", ".join(out)
+
+
+def _is_unfit_tag(low: str) -> bool:
+    if low.startswith("no ") and low not in _DANBOORU_NO_TAGS:
+        return True
+    if low.startswith(_HEDGE_PREFIXES) or " or " in f" {low} ":
+        return True
+    return len(low.split()) > _MAX_TAG_WORDS
 
 
 def analyze_composition_bytes(
@@ -64,7 +98,7 @@ def analyze_composition_bytes(
                 advice = parts[0].replace("ADVICE:", "").strip()
                 sdxl_prompt = parts[1].strip()
 
-    return advice, sdxl_prompt
+    return advice, sanitize_tags(sdxl_prompt)
 
 
 def describe_illustration(

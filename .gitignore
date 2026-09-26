@@ -64,3 +64,5 @@ backend/data/expand_cache/
 Claude outputs/
 t1.png
 mailmap.txt
+# 客製化標籤（作品／繪師，含版權名稱，只存本機）
+data/custom_tags.json

@@ -13,7 +13,8 @@ from app.models.analysis_report import AnalysisReport
 from app.models.chapter import Chapter
 from app.models.character import Character
 from app.services.ai import rhythm_service, rewrite_service, consistency_service, character_service
-from app.services.ai.ollama_client import DEFAULT_TEXT_MODEL
+from app.core import state
+from app.services.ai import ollama_client
 from app.services.ai.vram_manager import guardian
 
 router = APIRouter(tags=["ai-text"])
@@ -25,22 +26,22 @@ DbDep = Annotated[Session, Depends(get_db)]
 class AnalyzeRequest(BaseModel):
     mode: str = "gentle"          # gentle | pro
     enable_semantic: bool = False
-    model: str = DEFAULT_TEXT_MODEL
+    model: Optional[str] = None  # None → 設定頁選的文字模型
 
 
 class RewriteRequest(BaseModel):
     mode: str = "gentle"
-    model: str = DEFAULT_TEXT_MODEL
+    model: Optional[str] = None  # None → 設定頁選的文字模型
 
 
 class ExtractRequest(BaseModel):
     chapter_id: int
-    model: str = DEFAULT_TEXT_MODEL
+    model: Optional[str] = None  # None → 設定頁選的文字模型
 
 
 class CharacterAskRequest(BaseModel):
     question: str
-    model: str = DEFAULT_TEXT_MODEL
+    model: Optional[str] = None  # None → 設定頁選的文字模型
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -79,7 +80,7 @@ async def analyze_chapter(chapter_id: int, req: AnalyzeRequest, db: DbDep):
         chapter.content,
         profiles,
         enable_semantic=req.enable_semantic and req.mode == "pro",
-        model=req.model,
+        model=_model(req.model),
     )
     consistency_data = [
         {
@@ -134,27 +135,23 @@ async def rewrite_chapter(chapter_id: int, req: RewriteRequest, db: DbDep):
         return {"chapter_id": chapter_id, "message": "No rhythm issues found, no rewrite needed.", "suggestions": []}
 
     suggestions = await run_in_threadpool(
-        rewrite_service.batch_rewrite, to_rewrite, mode=req.mode, model=req.model
+        rewrite_service.batch_rewrite, to_rewrite, mode=req.mode, model=_model(req.model)
     )
 
+    # [CN-123] Ollama 錯誤字串不可當建議內容；分流到 error 欄位
+    items = [_suggestion_dict(s) for s in suggestions]
+    if items and all(i["error"] for i in items):
+        raise HTTPException(status_code=503, detail=f"改寫失敗（文字模型 {_model(req.model)}）：{items[0]['error']}")
+
     import json
-    report_content = json.dumps(
-        [{"paragraph_index": s.paragraph_index, "original": s.original,
-          "suggestion": s.suggestion, "reason": s.reason}
-         for s in suggestions],
-        ensure_ascii=False,
-    )
+    report_content = json.dumps(items, ensure_ascii=False)
     report = AnalysisReport(chapter_id=chapter_id, report_type="rewrite", content=report_content)
     db.add(report)
     db.commit()
 
     return {
         "chapter_id": chapter_id,
-        "suggestions": [
-            {"paragraph_index": s.paragraph_index, "original": s.original,
-             "suggestion": s.suggestion, "reason": s.reason}
-            for s in suggestions
-        ],
+        "suggestions": items,
         "report_id": report.id,
     }
 
@@ -175,7 +172,7 @@ async def extract_character_traits(character_id: int, req: ExtractRequest, db: D
 
     await guardian.request_focus("ollama")
     extracted = await run_in_threadpool(
-        character_service.extract_from_text, chapter.content, character.name, model=req.model
+        character_service.extract_from_text, chapter.content, character.name, model=_model(req.model)
     )
     return {
         "character_id": character_id,
@@ -204,12 +201,22 @@ async def character_design_ask(character_id: int, req: CharacterAskRequest, db: 
         question=req.question,
         character_name=character.name,
         existing_profile=profile,
-        model=req.model,
+        model=_model(req.model),
     )
     return {"character_id": character_id, "character_name": character.name, "answer": answer}
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+def _model(requested: Optional[str]) -> str:
+    return requested or state.get_text_model()
+
+
+def _suggestion_dict(s) -> dict:
+    err = s.suggestion if (not s.suggestion or ollama_client.is_error(s.suggestion)) else None
+    return {"paragraph_index": s.paragraph_index, "original": s.original,
+            "suggestion": "" if err else s.suggestion, "reason": s.reason,
+            "error": (err or "模型回傳空字串") if err is not None else None}
 
 def _parse_lines(text: Optional[str]) -> List[str]:
     if not text:

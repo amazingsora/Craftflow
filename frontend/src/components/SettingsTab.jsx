@@ -66,18 +66,6 @@ const S = {
     border: '1px solid var(--accent-border)',
     fontSize: 12, color: 'var(--muted)', lineHeight: 1.6,
   },
-  workflowList: { display: 'flex', flexDirection: 'column', gap: 6 },
-  workflowItem: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '8px 12px', borderRadius: 6,
-    border: '1px solid var(--border)',
-    fontSize: 12, color: 'var(--text)',
-  },
-  workflowActive: { borderColor: 'var(--accent)', color: 'var(--accent)' },
-  workflowBadge: {
-    fontSize: 10, padding: '1px 6px', borderRadius: 4, fontWeight: 600,
-    background: 'var(--accent-soft-2)', color: 'var(--accent)',
-  },
   loraNone: { color: 'var(--muted)', fontSize: 12, marginTop: 2 },
 }
 
@@ -424,14 +412,6 @@ export default function SettingsTab({
                     <option key={w} value={w}>{w.replace('.json', '')}</option>
                   ))}
                 </select>
-              </div>
-              <div style={S.workflowList}>
-                {workflows.map(w => (
-                  <div key={w} style={{ ...S.workflowItem, ...(w === activeWorkflow ? S.workflowActive : {}) }}>
-                    <span>{w.replace('.json', '')}</span>
-                    {w === activeWorkflow && <span style={S.workflowBadge}>使用中</span>}
-                  </div>
-                ))}
               </div>
             </div>
           ) : (

@@ -21,54 +21,22 @@ def _clean_cache(monkeypatch):
 
 # ── 角色屬性 → SD 標籤 ────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("gender, age, expected", [
-    ("female", 16, "1girl"),
-    ("female", None, "1girl"),
-    ("female", 30, "1woman"),
-    ("female", 45, "1woman, mature female"),
-    ("male", 16, "1boy"),
-    ("male", 30, "1man"),
-    ("male", 50, "1man, mature male"),
-    ("neutral", 20, "androgynous"),
-    (None, 20, ""),
-])
-def test_age_gender_tag(gender, age, expected):
-    assert ve._age_gender_tag(gender, age) == expected
-
-
-@pytest.mark.parametrize("age, keyword", [
+@pytest.mark.parametrize("gender, expected", [
+    ("female", "1girl"),
+    ("male", "1boy"),
+    ("neutral", "androgynous"),
     (None, ""),
-    (5, "toddler"),
-    (10, "child"),
-    (13, "flat chest"),
-    (16, ""),      # S3（2026-07-13）：15-17 歲檔改空
-    (20, ""),
+    ("", ""),
 ])
-def test_age_body_tags(age, keyword):
-    result = ve._age_body_tags(age)
-    if keyword:
-        assert keyword in result
-    else:
-        assert result == ""
+def test_gender_tag_depends_on_gender_only(gender, expected):
+    """[CN-128] R-01：主體 tag 只看性別。"""
+    assert ve._gender_tag(gender) == expected
 
 
-def test_age_body_tags_s3_child_is_single_tag_no_flat_chest():
-    """S3：≤12 歲檔縮為單一 `child`，拔 flat chest/small hands（防三頭身 chibi）。"""
-    assert ve._age_body_tags(10) == "child"
-    assert "flat chest" not in ve._age_body_tags(10)
-
-
-@pytest.mark.parametrize("height, expected", [
-    (None, ""),
-    (120, "very short stature, tiny, small figure"),
-    (140, "short stature, petite"),
-    (155, "petite"),
-    (165, ""),
-    (175, "tall, long legs"),
-    (185, "very tall, long legs"),
-])
-def test_height_body_tags(height, expected):
-    assert ve._height_body_tags(height) == expected
+def test_age_height_helpers_removed():
+    """[CN-128] 年齡／身高不再轉 SD tag；舊函式不可復活。"""
+    for name in ("_age_gender_tag", "_age_body_tags", "_height_body_tags"):
+        assert not hasattr(ve, name)
 
 
 # ── 服裝/髮型過濾 ─────────────────────────────────────────────────────────────

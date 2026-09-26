@@ -13,7 +13,7 @@ from app.core.database import get_db
 from app.models.character import Character
 from app.models.illustration import Illustration
 from app.services.ai import art_service, character_service
-from app.services.ai.ollama_client import DEFAULT_VISION_MODEL
+from app.core import state
 from app.services.ai.vram_manager import guardian
 
 router = APIRouter(tags=["ai-art"])
@@ -24,16 +24,16 @@ VALID_MODES = {"sketch_critique", "finished_critique", "line_color"}
 
 class AnalyzeIllustrationRequest(BaseModel):
     mode: str = "sketch_critique"   # sketch_critique | finished_critique | line_color
-    model: str = DEFAULT_VISION_MODEL
+    model: Optional[str] = None  # None → 設定頁選的視覺模型
 
 
 class ArtAskRequest(BaseModel):
     question: str
-    model: str = DEFAULT_VISION_MODEL
+    model: Optional[str] = None  # None → 設定頁選的視覺模型
 
 
 class DescribePortraitRequest(BaseModel):
-    model: str = DEFAULT_VISION_MODEL
+    model: Optional[str] = None  # None → 設定頁選的視覺模型
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -49,11 +49,11 @@ async def analyze_illustration(illustration_id: int, req: AnalyzeIllustrationReq
     await guardian.request_focus("ollama")
 
     if req.mode == "sketch_critique":
-        result = await run_in_threadpool(art_service.critique_sketch, image_path, model=req.model)
+        result = await run_in_threadpool(art_service.critique_sketch, image_path, model=req.model or state.get_vision_model())
     elif req.mode == "finished_critique":
-        result = await run_in_threadpool(art_service.critique_finished, image_path, model=req.model)
+        result = await run_in_threadpool(art_service.critique_finished, image_path, model=req.model or state.get_vision_model())
     else:
-        result = await run_in_threadpool(art_service.advise_color, image_path, model=req.model)
+        result = await run_in_threadpool(art_service.advise_color, image_path, model=req.model or state.get_vision_model())
 
     return {
         "illustration_id": illustration_id,
@@ -65,12 +65,12 @@ async def analyze_illustration(illustration_id: int, req: AnalyzeIllustrationReq
 
 
 @router.post("/illustrations/{illustration_id}/describe")
-async def describe_illustration(illustration_id: int, db: DbDep, model: str = DEFAULT_VISION_MODEL):
+async def describe_illustration(illustration_id: int, db: DbDep, model: Optional[str] = None):
     illus = _get_illustration(illustration_id, db)
     image_path = str(UPLOAD_DIR / illus.file_path)
 
     await guardian.request_focus("ollama")
-    description = await run_in_threadpool(art_service.describe_illustration, image_path, model=model)
+    description = await run_in_threadpool(art_service.describe_illustration, image_path, model=model or state.get_vision_model())
     illus.ai_description = description
     db.commit()
 
@@ -87,7 +87,7 @@ async def ask_with_illustration(illustration_id: int, req: ArtAskRequest, db: Db
         art_service.composition_ask,
         question=req.question,
         image_path=image_path,
-        model=req.model,
+        model=req.model or state.get_vision_model(),
     )
     return {"illustration_id": illustration_id, "question": req.question, "answer": answer}
 
@@ -95,7 +95,7 @@ async def ask_with_illustration(illustration_id: int, req: ArtAskRequest, db: Db
 @router.post("/art/ask")
 async def art_ask_freeform(
     question: str,
-    model: str = DEFAULT_VISION_MODEL,
+    model: Optional[str] = None,
     image: Annotated[Optional[UploadFile], File()] = None,
 ):
     """
@@ -110,7 +110,7 @@ async def art_ask_freeform(
         art_service.composition_ask,
         question=question,
         image_bytes=image_bytes,
-        model=model,
+        model=model or state.get_vision_model(),
     )
     return {"question": question, "answer": answer}
 
@@ -146,7 +146,7 @@ async def describe_character_portrait(
     image_path = str(UPLOAD_DIR / illus.file_path)
     await guardian.request_focus("ollama")
     description = await run_in_threadpool(
-        character_service.describe_portrait, image_path, character.name, model=req.model
+        character_service.describe_portrait, image_path, character.name, model=req.model or state.get_vision_model()
     )
 
     existing = character.notes or ""

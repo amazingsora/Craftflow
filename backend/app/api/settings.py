@@ -122,6 +122,8 @@ def get_capabilities():
         "cn_supported":  cap["cn_supported"],
         # CN 不支援時的替代路徑名稱；前端據此保留「草圖引導」控制項並改標示
         "cn_fallback":   cap.get("cn_fallback"),
+        # 「增強臉部輪廓」開關是否顯示（家族 profile 有開且 workflow 可注入 FaceDetailer）
+        "face_detailer_supported": bool(cap.get("face_detailer_supported")),
         "family":        cap["family"],
     }
 

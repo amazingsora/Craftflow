@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 
-from app.services.ai.prompt_engine.content_guard import apply_content_guard
-
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +282,66 @@ def _inject_img2img(wf: dict, uploaded_name: str, denoise: float) -> bool:
     _set_node_input(wf, ks_id, "denoise", float(denoise))
     logger.info("[img2img] 已注入：KSampler(%s).latent_image ← VAEEncode(%s) ← LoadImage(%s)，denoise=%.2f",
                 ks_id, encode_id, loadimg_id, denoise)
+    return True
+
+
+# [CN-120] FaceDetailer 補在既有 ToDetailerPipe 之後；取樣參數必須與主 KSampler 同源
+_FACE_DETAILER_TYPES = {"FaceDetailerPipe", "FaceDetailer"}
+_FACE_DETAILER_FIXED = {
+    "guide_size": 512, "guide_size_for": True, "max_size": 1536,
+    "feather": 16, "noise_mask": True, "force_inpaint": True,
+    "bbox_threshold": 0.4, "bbox_dilation": 8, "bbox_crop_factor": 2.5,
+    "sam_detection_hint": "none", "sam_dilation": 4, "sam_threshold": 0.9,
+    "sam_bbox_expansion": 0, "sam_mask_hint_threshold": 0.7, "sam_mask_hint_use_negative": "False",
+    "drop_size": 16, "refiner_ratio": 0.2, "cycle": 1, "inpaint_model": False,
+    "noise_mask_feather": 64, "tiled_encode": False, "tiled_decode": False,
+}
+_FACE_DETAILER_SHARED_KEYS = ("seed", "cfg", "sampler_name", "scheduler")
+
+
+def _wf_face_detailer_injectable(wf: dict) -> bool:
+    """workflow 有 ToDetailerPipe 且尚無 FaceDetailer ⇒ 可由程式注入（能力旗標與注入共用）"""
+    types = {n.get("class_type") for n in wf.values() if isinstance(n, dict)}
+    return "ToDetailerPipe" in types and not (types & _FACE_DETAILER_TYPES)
+
+
+def _inject_face_detailer(wf: dict, denoise: float, steps: int) -> bool:
+    """在主 VAEDecode 與其消費端之間插入 FaceDetailerPipe，回傳是否成功 [FD-117]"""
+    if any(isinstance(n, dict) and n.get("class_type") in _FACE_DETAILER_TYPES for n in wf.values()):
+        logger.info("[face-detailer] workflow 已含 FaceDetailer，不重複注入")
+        return False
+    pipe_id = next((k for k, n in wf.items()
+                    if isinstance(n, dict) and n.get("class_type") == "ToDetailerPipe"), None)
+    ks_id = _find_main_ksampler_id(wf)
+    if pipe_id is None or ks_id is None:
+        logger.info("[face-detailer] 缺 ToDetailerPipe 或 KSampler，略過注入")
+        return False
+    decode_id = next((k for k, n in wf.items()
+                      if isinstance(n, dict) and n.get("class_type") == "VAEDecode"
+                      and n.get("inputs", {}).get("samples") == [ks_id, 0]), None)
+    if decode_id is None:
+        logger.warning("[face-detailer] 找不到主 KSampler(%s) 的 VAEDecode，略過注入", ks_id)
+        return False
+
+    ks_inputs = wf[ks_id].get("inputs", {})
+    fd_id = str(max((int(k) for k in wf if k.isdigit()), default=0) + 1)
+    consumers = [(k, key) for k, n in wf.items() if isinstance(n, dict)
+                 for key, v in n.get("inputs", {}).items() if v == [decode_id, 0]]
+    wf[fd_id] = {
+        "class_type": "FaceDetailerPipe",
+        "inputs": {
+            **_FACE_DETAILER_FIXED,
+            **{key: ks_inputs[key] for key in _FACE_DETAILER_SHARED_KEYS if key in ks_inputs},
+            "steps": int(steps),
+            "denoise": round(float(denoise), 2),
+            "image": [decode_id, 0],
+            "detailer_pipe": [pipe_id, 0],
+        },
+    }
+    for k, key in consumers:
+        wf[k]["inputs"][key] = [fd_id, 0]
+    logger.info("[face-detailer] 已注入：VAEDecode(%s) → FaceDetailerPipe(%s) → %s，denoise=%.2f steps=%d",
+                decode_id, fd_id, consumers, denoise, steps)
     return True
 
 
@@ -618,7 +676,6 @@ def _sync_saver_prompt_metadata(wf: dict, positive: str, negative: str) -> int:
 
 def _inject_prompts(wf: dict, positive: str, negative: str, age: int | None = None) -> None:
     """Inject positive/negative prompts into CLIPTextEncode nodes [FD-108]"""
-    positive, negative = apply_content_guard(positive, negative, age=age, layer="inject")
     clips = {
         nid: node for nid, node in wf.items()
         if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode"

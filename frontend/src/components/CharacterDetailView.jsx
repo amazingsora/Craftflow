@@ -3,9 +3,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { request, apiDelete, apiUrl } from '../api/client'
 import { S } from './characterTabStyles.js'
-import { Spinner, ImageLightbox, GenderPicker, DeleteConfirm } from './characterTabParts.jsx'
+import { Spinner, ImageLightbox, GenderPicker, DeleteConfirm, AppearanceCardPicker, appearanceTagPreview } from './characterTabParts.jsx'
 import { apiFetch } from './characterTabShared.js'
 import { GenerationInfo } from './GenerationInfo.jsx'
+import { CustomTagsField } from './CustomTagsField.jsx'
 
 
 const DEFAULT_TAB_NAMES = ['主版本', 'Tab 2', 'Tab 3']
@@ -40,6 +41,9 @@ function _initVariant(v = {}, charId = null, slot = null) {
     cnEnabled: true,
     cnWeight: 0.85,
     visionEnabled: true,
+    faceDetailerEnabled: true,
+    faceDetailerDenoise: 0.5,
+    customTags: '',
   })
   return {
     color: v.color ?? '', traits: v.core_traits ?? '',
@@ -52,8 +56,11 @@ function _initVariant(v = {}, charId = null, slot = null) {
     cnEnabled: prefs.cnEnabled,
     cnWeight: prefs.cnWeight,
     visionEnabled: prefs.visionEnabled,
+    faceDetailerEnabled: prefs.faceDetailerEnabled,
+    faceDetailerDenoise: prefs.faceDetailerDenoise,
+    customTags: prefs.customTags,
     age: v.age != null ? String(v.age) : '', height: v.height != null ? String(v.height) : '', birthday: v.birthday ?? '',
-    gender: v.gender ?? null, aiSummary: v.ai_summary ?? null,
+    gender: v.gender ?? null, appearanceAge: v.appearance_age ?? '', aiSummary: v.ai_summary ?? null,
     conceptImages: v.concept_images ?? [], aiImages: v.ai_generated_images ?? [],
     pendingQueue: [], generating: false, savingGen: false, savingFields: false,
     summarizing: false, uploadingConcept: false,
@@ -71,6 +78,8 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   // cnUsable：有替代路徑時控制項仍須可勾選，否則後端 cn_fallback 永遠收不到 use_controlnet
   const cnFallback = capability.cn_fallback || null
   const cnUsable   = cnSupported || !!cnFallback
+  // [CN-122] 增強臉部輪廓：後端判定可注入 FaceDetailer 才顯示（SDXL V38 內建修臉 → 隱藏）
+  const faceDetailerSupported = !!capability.face_detailer_supported
   // LLLite 是真條件注入（等價 ControlNet），標籤不顯示「不支援」
   const cnLabel    = cnSupported ? 'ControlNet'
     : cnFallback === 'lllite' ? 'ControlNet (LLLite)'
@@ -99,6 +108,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [voice, setVoice] = useState(initChar.voice_style ?? '')
   const [age, setAge] = useState(initChar.age ?? '')
   const [height, setHeight] = useState(initChar.height ?? '')
+  const [appearanceAge, setAppearanceAge] = useState(initChar.appearance_age ?? '')
   const [birthday, setBirthday] = useState(initChar.birthday ?? '')
   const [gender, setGender] = useState(initChar.gender ?? null)
   const [aiPrompt, setAiPrompt] = useState(initChar.ai_prompt ?? '')
@@ -120,6 +130,8 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [deletingConceptIdx, setDeletingConceptIdx] = useState(null)
   const [deletingAiIdx, setDeletingAiIdx] = useState(null)
   const [artStyleId, setArtStyleId] = useState(initChar.art_style_id ?? null)
+  // R-02：勾選才套用預設畫風；取消勾選＝清空已選畫風
+  const [artStyleOn, setArtStyleOn] = useState(!!initChar.art_style_id)
   const [artStyles, setArtStyles] = useState([])
   // 角色專屬 LoRA（直通欄位）
   const [loraName, setLoraName] = useState(initChar.lora_name ?? '')
@@ -149,6 +161,18 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [visionEnabled, setVisionEnabled] = useState(
     () => _loadGenPrefs(initChar.id, null, { visionEnabled: true }).visionEnabled
   )
+  // [CN-120] 增強臉部輪廓（FaceDetailer）；[CN-122] 客製化標籤（選擇存 localStorage，清單在本機 JSON）
+  const [faceDetailerEnabled, setFaceDetailerEnabled] = useState(
+    () => _loadGenPrefs(initChar.id, null, { faceDetailerEnabled: true }).faceDetailerEnabled
+  )
+  const [faceDetailerDenoise, setFaceDetailerDenoise] = useState(
+    () => _loadGenPrefs(initChar.id, null, { faceDetailerDenoise: 0.5 }).faceDetailerDenoise
+  )
+  const [customTags, setCustomTags] = useState(
+    () => _loadGenPrefs(initChar.id, null, { customTags: '' }).customTags
+  )
+  const [customTagOptions, setCustomTagOptions] = useState({ series: [], artists: [] })
+  const [appearanceCards, setAppearanceCards] = useState([])
   const [showDebugPrompt, setShowDebugPrompt] = useState(false)
   const [lastDebugPrompt, setLastDebugPrompt] = useState(null)
   const [lastRawDesc, setLastRawDesc] = useState(null)
@@ -190,6 +214,8 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
   useEffect(() => {
     apiFetch('/art-styles').then(setArtStyles).catch(() => {})
+    apiFetch('/art/custom-tags').then(setCustomTagOptions).catch(() => {})
+    apiFetch('/art/appearance-cards').then(d => setAppearanceCards(d?.cards || [])).catch(() => {})
     // ComfyUI 離線時 /settings/loras 會 503，靜默忽略即可
     apiFetch('/settings/loras').then(d => setLoraList(d.loras || [])).catch(() => {})
   }, [])
@@ -210,11 +236,12 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           notes: notes || null,
           age: age !== '' ? parseInt(age) : null,
           height: height !== '' ? parseInt(height) : null,
+          appearance_age: appearanceAge || null,
           birthday: birthday.trim() || null,
           gender: gender || null,
           ai_prompt: aiPrompt.trim() || null,
           outfit: outfit.trim() || null,
-          art_style_id: artStyleId || null,
+          art_style_id: (artStyleOn && artStyleId) || null,
           lora_name: loraName.trim() || null,
           lora_weight: loraName.trim() ? parseFloat(loraWeight) : null,
         }),
@@ -268,6 +295,9 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         cn_weight: String(cnWeight),
         seed: String(seed),
         reuse_prompt: reusePrompt ? '1' : '0',
+        face_detailer: faceDetailerEnabled ? '1' : '0',
+        face_detailer_denoise: String(faceDetailerDenoise),
+        custom_tags: customTags,
       })
       const resp = await request(`/characters/${char.id}/generate-design?${params}`, { method: 'POST' })
       const seedHeader = resp.headers.get('X-Seed')  // 純數字字串，非 base64（後端未編碼）
@@ -438,6 +468,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           notes: v.notes || null,
           age: v.age !== '' ? parseInt(v.age) : null,
           height: v.height !== '' ? parseInt(v.height) : null,
+          appearance_age: v.appearanceAge || null,
           birthday: v.birthday.trim() || null,
           gender: v.gender || null,
           ai_prompt: v.aiPrompt.trim() || null,
@@ -506,6 +537,9 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         cn_weight: String(vState.cnWeight ?? 0.85),
         seed: String(vState.seed ?? -1),
         reuse_prompt: vState.reusePrompt ? '1' : '0',
+        face_detailer: (vState.faceDetailerEnabled ?? true) ? '1' : '0',
+        face_detailer_denoise: String(vState.faceDetailerDenoise ?? 0.5),
+        custom_tags: vState.customTags ?? '',
       })
       const resp = await request(`/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
       const seedHeader = resp.headers.get('X-Seed')  // 純數字字串，非 base64
@@ -718,27 +752,35 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
           {/* AI 人設圖 */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (ipaSupported && ipaEnabled) || (cnUsable && cnEnabled) ? 8 : 6 }}>
-              <span style={S.sectionLabel}>AI 人設圖（{aiImages.length}/8）</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {ipaSupported ? (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                    <input type="checkbox" checked={ipaEnabled} onChange={e => { setIpaEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'ipaEnabled', e.target.checked) }}
-                      style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                    概念圖參考
-                  </label>
-                ) : capChip('概念圖參考（不支援）', ipaHint)}
-                {cnUsable && (
-                  <label title={cnHint} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: cnEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                    <input type="checkbox" checked={cnEnabled} onChange={e => { setCnEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'cnEnabled', e.target.checked) }}
-                      style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                    {cnLabel}
-                  </label>
-                )}
-                <button style={S.btnSm} disabled={generating} onClick={generateDesignImage}>
-                  {generating ? <><Spinner />生成中...</> : '生成人設圖'}
-                </button>
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ ...S.sectionLabel, marginBottom: 0, whiteSpace: 'nowrap' }}>AI 人設圖（{aiImages.length}/8）</span>
+              <button style={{ ...S.btnSm, whiteSpace: 'nowrap' }} disabled={generating} onClick={generateDesignImage}>
+                {generating ? <><Spinner />生成中...</> : '生成人設圖'}
+              </button>
+            </div>
+            {/* 生成選項獨立一列，可換行，避免與標題／按鈕擠在同一列 */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4, marginBottom: 8 }}>
+              {ipaSupported ? (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={ipaEnabled} onChange={e => { setIpaEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'ipaEnabled', e.target.checked) }}
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
+                  概念圖參考
+                </label>
+              ) : capChip('概念圖參考（不支援）', ipaHint)}
+              {cnUsable && (
+                <label title={cnHint} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: cnEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={cnEnabled} onChange={e => { setCnEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'cnEnabled', e.target.checked) }}
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
+                  {cnLabel}
+                </label>
+              )}
+              {faceDetailerSupported && (
+              <label title="生成後以 FaceDetailer 重繪臉部" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: faceDetailerEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={faceDetailerEnabled} onChange={e => { setFaceDetailerEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'faceDetailerEnabled', e.target.checked) }}
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
+                  增強臉部輪廓
+                </label>
+              )}
             </div>
             {ipaSupported && ipaEnabled && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -760,6 +802,18 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                   onChange={e => { const v = Number(e.target.value); setCnWeight(v); _saveGenPref(initChar.id, null, 'cnWeight', v) }} />
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
                 <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{cnWeight.toFixed(2)}</span>
+              </div>
+            )}
+            {faceDetailerSupported && faceDetailerEnabled && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}
+                title="修臉重繪幅度（denoise）：低＝保留原臉只補細節；高＝重畫臉型五官，過高會與身體畫風脫節">
+                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>臉部強度</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.2</span>
+                <input type="range" min={0.2} max={0.7} step={0.05} value={faceDetailerDenoise}
+                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
+                  onChange={e => { const v = Number(e.target.value); setFaceDetailerDenoise(v); _saveGenPref(initChar.id, null, 'faceDetailerDenoise', v) }} />
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.7</span>
+                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{faceDetailerDenoise.toFixed(2)}</span>
               </div>
             )}
             {/* seed：-1＝隨機；固定 seed＋「沿用 prompt」可重現同一張圖 */}
@@ -931,11 +985,11 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
           <div style={S.row}>
             <div style={S.fieldGroup}>
-              <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>年齡</label>
+              <label style={S.label}>年齡</label>
               <input type="number" style={S.input} value={age} onChange={e => setAge(e.target.value)} placeholder="例如：18" min="0" max="9999" />
             </div>
             <div style={S.fieldGroup}>
-              <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>身高 (cm)</label>
+              <label style={S.label}>身高 (cm)</label>
               <input type="number" style={S.input} value={height} onChange={e => setHeight(e.target.value)} placeholder="例如：162" min="50" max="250" />
             </div>
             <div style={{ ...S.fieldGroup, flex: 2 }}>
@@ -947,28 +1001,47 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           <div>
             <label style={S.label}>
               性別
-              {gender && age !== '' && (
+              {gender && (
                 <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)' }}>
-                  → {gender === 'female' ? (parseInt(age) < 25 ? '1girl' : parseInt(age) < 40 ? '1woman' : '1woman, mature female') : gender === 'male' ? (parseInt(age) < 25 ? '1boy' : parseInt(age) < 40 ? '1man' : '1man, mature male') : 'androgynous'}
+                  → {appearanceTagPreview(gender, appearanceAge, appearanceCards)}
                 </span>
               )}
             </label>
             <GenderPicker value={gender} onChange={setGender} />
           </div>
 
+          <div>
+            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>外觀年齡</label>
+            <AppearanceCardPicker value={appearanceAge} onChange={setAppearanceAge} cards={appearanceCards} gender={gender} />
+          </div>
+
           {/* 畫風 */}
           <div>
-            <label style={S.label}>預設畫風</label>
-            <select
-              style={S.select}
-              value={artStyleId ?? ''}
-              onChange={e => setArtStyleId(e.target.value ? parseInt(e.target.value) : null)}
-            >
-              <option value="">（不設定，依全域 checkpoint 自動偵測）</option>
-              {artStyles.map(s => (
-                <option key={s.id} value={s.id}>{s.name} [{s.base_style}]</option>
-              ))}
-            </select>
+            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={artStyleOn}
+                onChange={e => {
+                  const on = e.target.checked
+                  setArtStyleOn(on)
+                  if (!on) setArtStyleId(null)
+                }}
+              />
+              使用預設畫風
+              {!artStyleOn && <span style={{ opacity: 0.6 }}>（未勾選＝依目前 workflow／checkpoint 自動偵測）</span>}
+            </label>
+            {artStyleOn && (
+              <select
+                style={S.select}
+                value={artStyleId ?? ''}
+                onChange={e => setArtStyleId(e.target.value ? parseInt(e.target.value) : null)}
+              >
+                <option value="">（請選擇畫風）</option>
+                {artStyles.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} [{s.base_style}]</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* 角色專屬 LoRA（直通欄位，獨立於畫風） */}
@@ -1101,6 +1174,9 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
               </>
             )}
           </div>
+
+          <CustomTagsField value={customTags} options={customTagOptions}
+            onChange={v => { setCustomTags(v); _saveGenPref(initChar.id, null, 'customTags', v) }} />
 
           <div>
             <label style={S.label}>創作筆記</label>
@@ -1268,27 +1344,35 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
           {/* Variant AI images */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: (ipaSupported && vState.ipaEnabled) || (cnUsable && (vState.cnEnabled ?? true)) ? 8 : 6 }}>
-              <span style={S.sectionLabel}>AI 人設圖（{vState.aiImages.length}/8）</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {ipaSupported ? (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: vState.ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                    <input type="checkbox" checked={vState.ipaEnabled} onChange={e => { setV(activeTab, { ipaEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'ipaEnabled', e.target.checked) }}
-                      style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                    概念圖參考
-                  </label>
-                ) : capChip('概念圖參考（不支援）', ipaHint)}
-                {cnUsable && (
-                  <label title={cnHint} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: (vState.cnEnabled ?? true) ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                    <input type="checkbox" checked={vState.cnEnabled ?? true} onChange={e => { setV(activeTab, { cnEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'cnEnabled', e.target.checked) }}
-                      style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                    {cnLabel}
-                  </label>
-                )}
-                <button style={S.btnSm} disabled={vState.generating} onClick={generateVariantDesignImage}>
-                  {vState.generating ? <><Spinner />生成中...</> : '生成人設圖'}
-                </button>
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ ...S.sectionLabel, marginBottom: 0, whiteSpace: 'nowrap' }}>AI 人設圖（{vState.aiImages.length}/8）</span>
+              <button style={{ ...S.btnSm, whiteSpace: 'nowrap' }} disabled={vState.generating} onClick={generateVariantDesignImage}>
+                {vState.generating ? <><Spinner />生成中...</> : '生成人設圖'}
+              </button>
+            </div>
+            {/* 生成選項獨立一列，可換行，避免與標題／按鈕擠在同一列 */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4, marginBottom: 8 }}>
+              {ipaSupported ? (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: vState.ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={vState.ipaEnabled} onChange={e => { setV(activeTab, { ipaEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'ipaEnabled', e.target.checked) }}
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
+                  概念圖參考
+                </label>
+              ) : capChip('概念圖參考（不支援）', ipaHint)}
+              {cnUsable && (
+                <label title={cnHint} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: (vState.cnEnabled ?? true) ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={vState.cnEnabled ?? true} onChange={e => { setV(activeTab, { cnEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'cnEnabled', e.target.checked) }}
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
+                  {cnLabel}
+                </label>
+              )}
+              {faceDetailerSupported && (
+              <label title="生成後以 FaceDetailer 重繪臉部" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: (vState.faceDetailerEnabled ?? true) ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={(vState.faceDetailerEnabled ?? true)} onChange={e => { setV(activeTab, { faceDetailerEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'faceDetailerEnabled', e.target.checked) }}
+                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
+                  增強臉部輪廓
+                </label>
+              )}
             </div>
             {ipaSupported && vState.ipaEnabled && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1310,6 +1394,18 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
                   onChange={e => { const v = Number(e.target.value); setV(activeTab, { cnWeight: v }); _saveGenPref(initChar.id, activeTab, 'cnWeight', v) }} />
                 <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
                 <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.cnWeight ?? 0.85).toFixed(2)}</span>
+              </div>
+            )}
+            {faceDetailerSupported && (vState.faceDetailerEnabled ?? true) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}
+                title="修臉重繪幅度（denoise）：低＝保留原臉只補細節；高＝重畫臉型五官，過高會與身體畫風脫節">
+                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>臉部強度</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.2</span>
+                <input type="range" min={0.2} max={0.7} step={0.05} value={(vState.faceDetailerDenoise ?? 0.5)}
+                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
+                  onChange={e => { const v = Number(e.target.value); setV(activeTab, { faceDetailerDenoise: v }); _saveGenPref(initChar.id, activeTab, 'faceDetailerDenoise', v) }} />
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.7</span>
+                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.faceDetailerDenoise ?? 0.5).toFixed(2)}</span>
               </div>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1440,11 +1536,11 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           </div>
           <div style={S.row}>
             <div style={S.fieldGroup}>
-              <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>年齡</label>
+              <label style={S.label}>年齡</label>
               <input type="number" style={S.input} value={vState.age} onChange={e => setV(activeTab, { age: e.target.value })} placeholder="例如：18" min="0" max="9999" />
             </div>
             <div style={S.fieldGroup}>
-              <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>身高 (cm)</label>
+              <label style={S.label}>身高 (cm)</label>
               <input type="number" style={S.input} value={vState.height} onChange={e => setV(activeTab, { height: e.target.value })} placeholder="例如：162" min="50" max="250" />
             </div>
             <div style={{ ...S.fieldGroup, flex: 2 }}>
@@ -1455,6 +1551,11 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           <div>
             <label style={S.label}>性別</label>
             <GenderPicker value={vState.gender} onChange={v => setV(activeTab, { gender: v })} />
+          </div>
+          <div>
+            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>外觀年齡</label>
+            <AppearanceCardPicker value={vState.appearanceAge} onChange={k => setV(activeTab, { appearanceAge: k })}
+              cards={appearanceCards} gender={vState.gender} />
           </div>
           <div>
             <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>外貌 / 個性特徵</label>
@@ -1507,6 +1608,9 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
               </>
             )}
           </div>
+
+          <CustomTagsField value={vState.customTags ?? ''} options={customTagOptions}
+            onChange={v => { setV(activeTab, { customTags: v }); _saveGenPref(initChar.id, activeTab, 'customTags', v) }} />
           <div>
             <label style={S.label}>創作筆記</label>
             <textarea style={{ ...S.textarea, minHeight: 120 }} value={vState.notes} onChange={e => setV(activeTab, { notes: e.target.value })} placeholder="隨時新增想法..." />

@@ -137,52 +137,13 @@ def _detect_coverage_and_extract_visual(images_bytes: list[bytes]) -> tuple[str,
         return "full", ""
 
 
-def _age_gender_tag(gender: str | None, age: int | None) -> str:
-    """Return the primary SD subject tag(s) based on gender + age [FD-090]"""
-    if gender == "female":
-        base = "1girl" if (age is None or age < 25) else "1woman"
-        suffix = ", mature female" if age is not None and age >= 40 else ""
-        return base + suffix
-    if gender == "male":
-        base = "1boy" if (age is None or age < 25) else "1man"
-        suffix = ", mature male" if age is not None and age >= 40 else ""
-        return base + suffix
-    if gender == "neutral":
-        return "androgynous"
-    return ""
+# [CN-128] R-01：主體 tag 只看性別；年齡、身高只當背景敘述，不再轉成 SD tag 或決定畫布
+_GENDER_SUBJECT_TAG = {"female": "1girl", "male": "1boy", "neutral": "androgynous"}
 
 
-def _age_body_tags(age: int | None) -> str:
-    """角色年齡 → SD 比例 tag。≤12 只給單一 `child`（多 tag 會壓成 chibi 比例）；
-    15–17 不給 tag（體型交給 _height_body_tags）。"""
-    if age is None:
-        return ""
-    if age <= 6:
-        return "toddler, very young, chubby cheeks, round face"
-    if age <= 12:
-        return "child"
-    if age <= 14:
-        return "young girl, youthful, flat chest"
-    if age <= 17:
-        return ""
-    return ""
-
-
-def _height_body_tags(height: int | None) -> str:
-    """Convert character height (cm) to SD stature tags."""
-    if height is None:
-        return ""
-    if height < 130:
-        return "very short stature, tiny, small figure"
-    if height < 150:
-        return "short stature, petite"
-    if height < 160:
-        return "petite"
-    if height < 170:
-        return ""
-    if height < 180:
-        return "tall, long legs"
-    return "very tall, long legs"
+def _gender_tag(gender: str | None) -> str:
+    """Return the primary SD subject tag based on gender only [FD-090]"""
+    return _GENDER_SUBJECT_TAG.get(gender or "", "")
 
 
 _CLOTHING_KW = {

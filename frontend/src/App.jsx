@@ -375,11 +375,12 @@ export default function App() {
   const [workflows, setWorkflows] = useState([])
   const [activeWorkflow, setActiveWorkflow] = useState('text_to_image.json')
   // capability 由 /settings/capabilities 取得；cn_fallback＝CN 不支援時的替代路徑
-  const [capability, setCapability] = useState({ ipa_supported: true, cn_supported: true, cn_fallback: null, family: 'sdxl' })
+  const [capability, setCapability] = useState({ ipa_supported: true, cn_supported: true, cn_fallback: null, face_detailer_supported: false, family: 'sdxl' })
   const [generationMode, setGenerationMode] = useState(
     () => localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint'
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [trainingOpen, setTrainingOpen] = useState(false)  // R-08：LoRA 訓練獨立入口
   const [pendingGenPrompt, setPendingGenPrompt] = useState('')
   const [historyFilter, setHistoryFilter] = useState('all')
   const [visionModels, setVisionModels] = useState([])
@@ -470,7 +471,7 @@ export default function App() {
           : Promise.resolve()
         // 等 workflow 同步後再抓 capability（確保後端 state 已更新）
         doSync.then(() => fetch('/api/v1/settings/capabilities').then(r => r.ok ? r.json() : null).then(cap => {
-          if (cap) setCapability({ ipa_supported: !!cap.ipa_supported, cn_supported: !!cap.cn_supported, cn_fallback: cap.cn_fallback ?? null, family: cap.family ?? 'sdxl' })
+          if (cap) setCapability({ ipa_supported: !!cap.ipa_supported, cn_supported: !!cap.cn_supported, cn_fallback: cap.cn_fallback ?? null, face_detailer_supported: !!cap.face_detailer_supported, family: cap.family ?? 'sdxl' })
         }).catch(() => {}))
       })
       .catch(() => {})
@@ -551,6 +552,7 @@ export default function App() {
           ipa_supported: !!data.ipa_supported,
           cn_supported:  !!data.cn_supported,
           cn_fallback:   data.cn_fallback ?? null,
+          face_detailer_supported: !!data.face_detailer_supported,
           family:        data.family ?? 'sdxl',
         })
       }
@@ -688,6 +690,11 @@ export default function App() {
           </button>
           <button
             style={S.footerBtn}
+            onClick={() => setTrainingOpen(true)}
+            title="LoRA 訓練"
+          >🧪 LoRA 訓練</button>
+          <button
+            style={S.footerBtn}
             onClick={() => setSettingsOpen(true)}
             title="設定"
           >⚙ 設定</button>
@@ -719,6 +726,7 @@ export default function App() {
             onAddHistory={addHistory}
             pendingPrompt={pendingGenPrompt}
             onPromptConsumed={() => setPendingGenPrompt('')}
+            capability={capability}
           />
         </div>
         <div style={{ display: tab === 'compose' ? 'block' : 'none' }}>
@@ -766,10 +774,21 @@ export default function App() {
                 activeTextModel={activeTextModel}
                 onTextModelChange={onTextModelChange}
               />
-              <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)', marginBottom: 12 }}>LoRA 訓練</div>
-                <TrainingTab />
-              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LoRA training modal（與設定同層） */}
+      {trainingOpen && (
+        <div style={S.modalOverlay} onClick={e => e.target === e.currentTarget && setTrainingOpen(false)}>
+          <div style={{ ...S.modalBox, maxWidth: 640 }}>
+            <div style={S.modalHeader}>
+              <span style={S.modalTitle}>🧪 LoRA 訓練</span>
+              <button style={S.modalClose} onClick={() => setTrainingOpen(false)}>×</button>
+            </div>
+            <div style={S.modalBody}>
+              <TrainingTab />
             </div>
           </div>
         </div>

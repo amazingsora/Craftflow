@@ -21,10 +21,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import (
     UPLOAD_DIR, CUSTOM_WORKFLOWS_DIR,
-    PERSONAL_STYLE_ENABLED, PERSONAL_STYLE_EXTRA_TAGS,
     PERSONAL_NEGATIVE_ENABLED, PERSONAL_NEGATIVE, PERSONAL_STYLE_WEIGHT,
     IPA_FLAT_DRAFT_SCALE,
-    PERSONAL_KIND_STYLE, PERSONAL_KIND_NEGATIVE,
+    PERSONAL_KIND_NEGATIVE,
 )
 from app.core import state
 from app.core.database import get_db
@@ -32,7 +31,6 @@ from app.models.art_style import ArtStyle
 from app.models.character import Character
 from app.models.generation_history import GenerationHistory
 from app.services import comfyui_client
-from app.services.ai.prompt_engine.content_guard import apply_content_guard
 from app.services.ai.prompt_engine import compile as compile_prompt
 from app.services.ai.prompt_engine import prompt_cache_hit
 from app.services.ai.prompt_engine.lexicon import apply_personal_term_map
@@ -62,7 +60,7 @@ from app.services.ai.image_ops import (
     _border_color,
     _dedup_tags,
     _drop_negative_overlap,
-    _fullbody_canvas,
+    _FULLBODY_CANVAS_STD,
     _reorder_subject_first,
     _strip_sheet_tags,
     _is_flat_color_draft,
@@ -76,12 +74,15 @@ from app.services.ai.image_ops import (
 )
 from app.services.ai.capability import extract_checkpoint_from_wf, resolve_capability
 from app.services.ai.gen_profile import resolve_profile_for_workflow
+from app.services.ai.custom_tags import format_custom_tags
+from app.services.ai.appearance_cards import resolve_card
 from app.services.ai.wf_node_ops import (
     _CN_APPLY_TYPES,
     _bypass_controlnet_nodes,
     _get_node_input,
     _bypass_ipa_nodes,
     _inject_controlnet_image,
+    _inject_face_detailer,
     _inject_img2img,
     _inject_lllite,
     _inject_ipa_cn_nodes,
@@ -93,10 +94,8 @@ from app.services.ai.wf_node_ops import (
 )
 from app.services.ai.vision_extract import (
     _HAIRSTYLE_KW,
-    _age_body_tags,
-    _age_gender_tag,
+    _gender_tag,
     _filter_visual_for_llm,
-    _height_body_tags,
     _vision_extract_cached,
 )
 from app.services.ai.variant_helpers import _get_variants, _slot_index
@@ -406,6 +405,7 @@ class _DesignInputs:
     age: Optional[int]
     ai_prompt: Optional[str]
     height: Optional[int]
+    appearance_age: Optional[str] = None  # [CN-129] 外觀年齡卡片 key
 
 
 # [CN-035] 全身 suffix 不含 design/reference sheet（會出雙人）
@@ -421,24 +421,51 @@ def _build_fullbody_suffix(bg_tag: str) -> str:
     )
 
 
+# [CN-121] 男角 tag 包（ComfyUI F2）：male focus 前置、去女性化；1boy 另壓老化。女性分支不變
+_MALE_NEG_EXTRA = (
+    ", bare chest, shirtless, topless, naked upper body, no shirt"
+    ", skirt, dress, miniskirt, female clothes, feminine clothing, thighhighs, sailor uniform"
+    ", 1girl, female, breasts, makeup, lipstick, long eyelashes"
+)
+_BOY_NEG_EXTRA = ", old man, mature male, facial hair, stubble, wrinkles, thick eyebrows"
+
+
+def _gender_extras(gender_tag: str) -> tuple[str, str]:
+    """主體 tag → (正向附加, 負向附加) [FD-118]"""
+    if gender_tag.startswith("1boy"):
+        return ", male focus, bishounen", _MALE_NEG_EXTRA + _BOY_NEG_EXTRA
+    if gender_tag.startswith("1man"):
+        return ", male focus", _MALE_NEG_EXTRA
+    if gender_tag.startswith(("1girl", "1woman")):
+        return "", ", male face, masculine features"
+    return "", ""
+
+
+def _appearance_parts(card_key: Optional[str], gender: Optional[str], gender_tag: str) -> tuple[str, str, str]:
+    """外觀卡片 → (body_prefix, 性別正向附加, 性別負向附加) [CN-129]"""
+    card = resolve_card(card_key, gender)
+    # 成熟／年長男角改走成年男角包（不加 bishounen 與年輕化負向）
+    pack_tag = "1man" if (card and card.adult_male_pack and gender_tag.startswith("1boy")) else gender_tag
+    pos_extra, neg_extra = _gender_extras(pack_tag)
+    if card is None:
+        return "", pos_extra, neg_extra
+    body_prefix = f"{card.positive}, " if card.positive else ""
+    if card.negative:
+        neg_extra = f"{neg_extra}, {card.negative}"
+    return body_prefix, pos_extra, neg_extra
+
+
 def _wf_checkpoint(wf: dict) -> str:
     """實際生效的 checkpoint：workflow 內嵌值優先，讀不到才退回全域設定。
     收實際要送出的 wf dict，確保家族判定值＝記錄值＝實跑值。"""
     return extract_checkpoint_from_wf(wf) or state.get_checkpoint()
 
 
-# [CN-037] 畫風 tag／權重優先序：art_style DB > yml style_extra > .env
-# [CN-115] 其後再疊加 .env 分家族個人標籤，權重／位置沿用前段規則
+# [CN-037] 畫風 tag 優先序：art_style DB > yml style_extra；權重 yml > .env PERSONAL_STYLE_WEIGHT
+# [CN-122] 個人作品／繪師改由呼叫端疊加角色「客製化標籤」，.env 不再提供畫風 tag
 def _resolve_style_extra(art_style: Optional[ArtStyle], workflow: str) -> tuple[str, float]:
     profile_extra, profile_weight = _workflow_style_extra(workflow)
-    style_extra = _extra_tags(art_style)
-    if not style_extra and profile_extra:
-        style_extra = profile_extra
-    if not style_extra and PERSONAL_STYLE_ENABLED and PERSONAL_STYLE_EXTRA_TAGS:
-        style_extra = PERSONAL_STYLE_EXTRA_TAGS
-    personal = _personal_extra(PERSONAL_KIND_STYLE, workflow)
-    if personal:
-        style_extra = f"{style_extra}, {personal}" if style_extra else personal
+    style_extra = _extra_tags(art_style) or profile_extra
     weight = profile_weight if profile_weight is not None else PERSONAL_STYLE_WEIGHT
     return style_extra, weight
 
@@ -472,6 +499,9 @@ async def _generate_design_core(
     record_endpoint: str,
     seed: int = -1,                # -1＝隨機；>=0 固定 seed（可重現）
     reuse_prompt: bool = False,    # True＝沿用上次 generation_history 的 prompt，不重新編譯
+    use_face_detailer: bool = True,  # 「增強臉部輪廓」：家族 profile 有開才注入
+    face_detailer_denoise: Optional[float] = None,  # 修臉強度（None＝家族預設）
+    custom_tags: str = "",         # 角色客製化標籤（作品／繪師），疊在畫風段尾
 ):
     """角色人設圖 / 變體人設圖共用核心；兩者差異以參數表達。"""
     if expression and expression not in _EXPRESSION_MAP:
@@ -547,7 +577,7 @@ async def _generate_design_core(
             else:
                 coverage, visual = "full", ""
             if need_coverage:
-                _exp_w, _exp_h = _fullbody_canvas(inp.height)
+                _exp_w, _exp_h = _FULLBODY_CANVAS_STD
                 _cn_coverage = coverage
                 # 角色版：LLM 偵測 full 時用像素分析二次確認（變體版略過）
                 if use_pixel_override and _cn_coverage == "full":
@@ -672,7 +702,7 @@ async def _generate_design_core(
         if is_expression:
             width, height, steps = 512, 640, 20
         else:
-            width, height = _fullbody_canvas(inp.height)
+            width, height = _FULLBODY_CANVAS_STD
             steps = _profile.steps
     else:
         t0 = time.perf_counter()
@@ -727,30 +757,21 @@ async def _generate_design_core(
             width, height, steps = 512, 640, 20
         else:
             suffix = _build_fullbody_suffix(bg_tag)
-            width, height = _fullbody_canvas(inp.height)
+            width, height = _FULLBODY_CANVAS_STD
             steps = _profile.steps
 
-        # Gender/age tag anchors subject count — must be at absolute front
-        gender_tag = _age_gender_tag(inp.gender, inp.age)
+        # Gender tag anchors subject count — must be at absolute front
+        # [CN-128] 年齡／身高不進 prompt；[CN-129] 外觀由使用者選的卡片決定
+        gender_tag = _gender_tag(inp.gender)
         gender_prefix = gender_tag + ", " if gender_tag else ""
-
-        _age_tags = _age_body_tags(inp.age)
-        _ht_tags = _height_body_tags(inp.height)
-        _body_parts = [t for t in [_age_tags, _ht_tags] if t]
-        body_prefix = ", ".join(_body_parts) + ", " if _body_parts else ""
-
-        is_male = gender_tag.startswith(("1boy", "1man"))
-        is_female = gender_tag.startswith(("1girl", "1woman"))
-        gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
-        gender_neg_extra = (
-            ", bare chest, shirtless, topless, naked upper body, no shirt"
-            ", skirt, dress, miniskirt, female clothes, feminine clothing, thighhighs, sailor uniform"
-            if is_male else
-            ", male face, masculine features" if is_female else ""
-        )
+        body_prefix, gender_pos_extra, gender_neg_extra = _appearance_parts(inp.appearance_age, inp.gender, gender_tag)
 
         # 畫風 tag／權重優先序：art_style DB > workflow profile > .env（見 _resolve_style_extra）
         style_extra, _style_weight = _resolve_style_extra(art_style, active_wf)
+        # [CN-122] 客製化標籤疊在畫風段尾：權重、subject_first 位置沿用畫風段
+        _custom = format_custom_tags(custom_tags, _gen_family)
+        if _custom:
+            style_extra = f"{style_extra}, {_custom}" if style_extra else _custom
         # [CN-048] style weight!=1.0 時畫風 tags 加權並前置到 identity，讓畫風由 prompt 承擔、CN 可降權
         style_front = ""
         style_extra_str = ""
@@ -796,11 +817,6 @@ async def _generate_design_core(
         final_negative = _dedup_tags(final_negative)
         # [CN-116] 年齡／身高／性別是確定性斷言，家族負向不得抵消（例：Anima 負向 child vs 12 歲 child）
         final_negative = _drop_negative_overlap(final_negative, gender_prefix + body_prefix)
-
-    # [CN-118] NSFW／未成年護欄（重用 prompt 與新編譯兩條分支都要過；外擴、history 記錄皆用護欄後版本）
-    final_positive, final_negative = apply_content_guard(
-        final_positive, final_negative, age=inp.age, layer="design", adult_negative=True)
-
     # seed<0＝隨機；>=0 沿用指定值（可重現）
     seed = random.randint(0, 2**31 - 1) if seed < 0 else seed
     _canvas_expand_available = (CUSTOM_WORKFLOWS_DIR / _CANVAS_EXPAND_WF).exists()
@@ -1076,6 +1092,11 @@ async def _generate_design_core(
                 logger.warning("[%s] CN 替代：img2img 注入失敗（缺 KSampler 或 VAE）→ 退回純 txt2img",
                                log_label)
 
+    # [CN-120] 人設圖 FaceDetailer：家族 profile 開關，workflow 已含 FaceDetailer 時 no-op
+    _fd_denoise = _profile.face_detailer_strength(face_detailer_denoise)
+    face_detailer_used = use_face_detailer and _fd_denoise is not None and _inject_face_detailer(
+        wf, _fd_denoise, _profile.face_detailer_steps)
+
     _replace_negative_seeds(wf, seed)
     _log_wf_snapshot(wf, label=log_label)
     t0 = time.perf_counter()
@@ -1153,6 +1174,8 @@ async def _generate_design_core(
             # [CN-067] LLLite strength 改記「實際送出值」（滑桿×scale）；⚠️ #648 之前是滑桿值，比較前先看 id
             "lllite_strength": _lllite_strength if lllite_used else None,
             "img2img_denoise": round(i2i_denoise, 2) if i2i_used and i2i_denoise is not None else None,
+            "appearance_age": inp.appearance_age or None,
+            "face_detailer_denoise": _fd_denoise if face_detailer_used else None,
         },
     )
     return Response(
@@ -1197,6 +1220,9 @@ async def generate_character_design(
     cn_weight: float = 0.65,   # 草圖 CN 過高會拉低整圖品質
     seed: int = -1,
     reuse_prompt: bool = False,
+    use_face_detailer: bool = True,
+    face_detailer_denoise: Optional[float] = None,
+    custom_tags: str = "",
     db: Session = Depends(get_db),
 ):
     """角色人設圖生成（expression=None＝全身設定圖） [FD-043]"""
@@ -1217,6 +1243,7 @@ async def generate_character_design(
         age=character.age,
         ai_prompt=character.ai_prompt,
         height=getattr(character, "height", None),
+        appearance_age=getattr(character, "appearance_age", None),
     )
     return await _generate_design_core(
         character=character, inp=inp, db=db, slot=None,
@@ -1227,6 +1254,8 @@ async def generate_character_design(
         canvas_expand_mode="pre", use_pixel_override=True,
         log_label="char-gen", record_endpoint="character_design",
         seed=seed, reuse_prompt=reuse_prompt,
+        use_face_detailer=use_face_detailer, face_detailer_denoise=face_detailer_denoise,
+        custom_tags=custom_tags,
     )
 
 
@@ -1244,6 +1273,9 @@ async def generate_variant_design(
     cn_weight: float = 0.65,
     seed: int = -1,
     reuse_prompt: bool = False,
+    use_face_detailer: bool = True,
+    face_detailer_denoise: Optional[float] = None,
+    custom_tags: str = "",
     db: Session = Depends(get_db),
 ):
     """Generate a design sheet using the variant's data instead of the main character fields."""
@@ -1263,6 +1295,7 @@ async def generate_variant_design(
         age=v.get("age"),
         ai_prompt=v.get("ai_prompt"),
         height=v.get("height"),
+        appearance_age=v.get("appearance_age"),
     )
     return await _generate_design_core(
         character=character, inp=inp, db=db, slot=slot,
@@ -1273,6 +1306,8 @@ async def generate_variant_design(
         canvas_expand_mode="post", use_pixel_override=False,
         log_label="variant-gen", record_endpoint="variant_design",
         seed=seed, reuse_prompt=reuse_prompt,
+        use_face_detailer=use_face_detailer, face_detailer_denoise=face_detailer_denoise,
+        custom_tags=custom_tags,
     )
 
 
@@ -1297,10 +1332,10 @@ async def build_identity_prompt(character_id: int, db: Session) -> dict:
     # Ollama 失敗時的退路：不含名字的中文，前端放回中文描述欄讓使用者自行按 AI 編譯
     fallback_zh = raw_desc
 
-    gender_tag = _age_gender_tag(character.gender, character.age)
+    gender_tag = _gender_tag(character.gender)
     gender_prefix = gender_tag + ", " if gender_tag else ""
-    body_parts = [t for t in (_age_body_tags(character.age), _height_body_tags(character.height)) if t]
-    body_prefix = ", ".join(body_parts) + ", " if body_parts else ""
+    body_prefix, gender_pos_extra, gender_neg_extra = _appearance_parts(
+        getattr(character, "appearance_age", None), character.gender, gender_tag)
 
     model = state.get_text_model()
     positive, negative = "", ""
@@ -1332,14 +1367,6 @@ async def build_identity_prompt(character_id: int, db: Session) -> dict:
         else:
             style_extra_str = f", {style_extra}"
 
-    is_male = gender_tag.startswith(("1boy", "1man"))
-    is_female = gender_tag.startswith(("1girl", "1woman"))
-    gender_pos_extra = ", clothed, shirt, pants, male clothes" if is_male else ""
-    gender_neg_extra = (
-        ", bare chest, shirtless, topless, naked upper body, no shirt" if is_male else
-        ", male face, masculine features" if is_female else ""
-    )
-
     final_positive = (gender_prefix + body_prefix + style_front + extra_prefix + positive
                       + gender_pos_extra + style_extra_str).strip(", ")
     final_positive = _strip_sheet_tags(_dedup_tags(final_positive))
@@ -1349,9 +1376,6 @@ async def build_identity_prompt(character_id: int, db: Session) -> dict:
         )
     final_negative = _with_personal_negative(f"{negative}{gender_neg_extra}".strip(", "), active_wf)
     final_negative = _drop_negative_overlap(_dedup_tags(final_negative), gender_prefix + body_prefix)
-    # [CN-118] 此 prompt 會回填到生圖頁，先過護欄（未成年依角色年齡強制）
-    final_positive, final_negative = apply_content_guard(
-        final_positive, final_negative, age=character.age, layer="identity")
 
     return {"source": "compiled", "positive": final_positive, "negative": final_negative,
             "zh": "", "character_id": character.id, "age": character.age}

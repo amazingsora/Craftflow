@@ -172,6 +172,13 @@ const S = {
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
+const RHYTHM_LABEL = { TOO_SHORT: '段落過短', TOO_LONG: '段落過長' }
+
+async function _errText(r) {
+  if (!r) return '連線失敗：後端沒有回應'
+  try { const j = await r.json(); return j.detail || `HTTP ${r.status}` } catch { return `HTTP ${r.status}` }
+}
+
 export default function NovelTab() {
   // Projects
   const [projects,       setProjects]       = useState([])
@@ -360,6 +367,7 @@ export default function NovelTab() {
     }).catch(() => null)
     setAiLoading(false)
     if (r?.ok) setAnalysisResult(await r.json())
+    else setAnalysisResult({ rhythm: [], consistency: [], warnings: [await _errText(r)] })
   }
 
   const runRewrite = async () => {
@@ -374,6 +382,7 @@ export default function NovelTab() {
     }).catch(() => null)
     setAiLoading(false)
     if (r?.ok) setRewriteResult(await r.json())
+    else setRewriteResult({ suggestions: [], error: await _errText(r) })
   }
 
   // ── Drag & Drop ─────────────────────────────────────────────────────────────
@@ -649,6 +658,12 @@ export default function NovelTab() {
                 {aiMode === 'analyze' && analysisResult && (
                   <>
                     <div style={S.analysisTitle}>節奏分析 — {analysisResult.rhythm_summary}</div>
+                    {(analysisResult.rhythm ?? []).filter(p => p.status !== 'NORMAL').map(p => (
+                      <div key={p.index} style={{ ...S.issue, ...S.issueWarn }}>
+                        <strong>第 {p.index} 段</strong>（{p.char_count} 字）：{RHYTHM_LABEL[p.status] ?? p.status}
+                        <div style={{ marginTop: 2, color: 'var(--muted)' }}>「{p.preview}」</div>
+                      </div>
+                    ))}
                     {(() => {
                       const issues = (analysisResult.consistency ?? []).flatMap(pc => pc.issues)
                       return issues.length > 0 ? (
@@ -673,12 +688,15 @@ export default function NovelTab() {
                   <>
                     <div style={S.analysisTitle}>改寫建議 — {rewriteResult.suggestions?.length ?? 0} 處</div>
                     {rewriteResult.message && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{rewriteResult.message}</div>}
+                    {rewriteResult.error && <div style={{ ...S.issue, ...S.issueSevere }}>{rewriteResult.error}</div>}
                     {(rewriteResult.suggestions ?? []).map((s, i) => (
                       <div key={i} style={S.rewriteItem}>
                         <div style={S.rewriteMeta}>第 {s.paragraph_index} 段 · {s.reason}</div>
                         <div style={S.rewriteGrid}>
                           <div style={S.rewriteOld}>{s.original}</div>
-                          <div style={S.rewriteNew}>{s.suggestion}</div>
+                          {s.error
+                            ? <div style={{ ...S.rewriteNew, ...S.issueSevere }}>改寫失敗：{s.error}</div>
+                            : <div style={S.rewriteNew}>{s.suggestion}</div>}
                         </div>
                       </div>
                     ))}

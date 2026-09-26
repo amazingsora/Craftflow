@@ -48,7 +48,8 @@
 | 新 checkpoint 歸哪個 family | `backend/checkpoint_styles.yml`（`checkpoints:` 與 `families:` **兩區都要加**） |
 | 某底模家族的 prompt 配方 | `backend/prompt_profiles.yml` 的 `families:`（**以底模家族為鍵，新增／改名 workflow 免登錄**；只有新 checkpoint 需登錄 `checkpoint_styles.yml`）。個案實驗走 art_style（DB），不加 workflow 例外 |
 | 生成旋鈕（VRAM 門檻、畫風權重、upsample 開關…） | 專案根 `.env`，定義見 `core/config.py` |
-| 個人畫風標籤／個人負向（例：畫師、作品名） | 專案根 `.env` 的 `PERSONAL_STYLE_EXTRA_<家族>`／`PERSONAL_NEGATIVE_EXTRA_<家族>`（家族＝PromptStyle 大寫，如 `ANIMA`、`ILLUSTRIOUS`；疊加語義；`.env` 不進 git）。見 CN-115 |
+| 個人負向（例：halo） | 專案根 `.env` 的 `PERSONAL_NEGATIVE_EXTRA_<家族>`（家族＝PromptStyle 大寫，如 `ANIMA`、`ILLUSTRIOUS`；疊加語義；`.env` 不進 git）。見 CN-115。**作品／繪師不再走 `.env`**，改用下一列 |
+| 角色管理「客製化標籤」的作品／繪師下拉清單 | `data/custom_tags.json`（不進 git；格式見 `custom_tags.example.json`；免重啟）。見 CN-122 |
 | 家族生成策略（CN 上限、denoise 映射、能力開關） | `services/ai/gen_profile.py` 的 `GEN_PROFILE` |
 
 ## Coding Rules

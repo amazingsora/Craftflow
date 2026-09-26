@@ -550,33 +550,13 @@ def test_prompt_profile_source_ignores_other_family_personal_env(monkeypatch):
     """ANIMA 的個人鍵不得讓 illustrious 的來源標註誤標 +personal。"""
     _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
     monkeypatch.setattr(wb, "_load_prompt_profiles", lambda: {"illustrious": {"quality_prefix": "x"}})
-    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "@some artist")
+    monkeypatch.setenv("PERSONAL_NEGATIVE_EXTRA_ANIMA", "(halo:1.5)")
     assert wb._prompt_profile_source(None, "Standard_V38.json") == "family: illustrious"
 
 
 def test_personal_extra_reads_detected_family_key(monkeypatch):
     _as_family(monkeypatch, PromptStyle.ANIMA)
-    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "  some series, @some artist  ")
-    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ILLUSTRIOUS", "some artist")
-    assert wb._personal_extra("STYLE", "AnimaStandardV9_miaomiaoHarem.json") == "some series, @some artist"
-    assert wb._personal_extra("NEGATIVE", "AnimaStandardV9_miaomiaoHarem.json") == ""
+    monkeypatch.setenv("PERSONAL_NEGATIVE_EXTRA_ANIMA", "  (halo:1.5)  ")
+    monkeypatch.setenv("PERSONAL_NEGATIVE_EXTRA_ILLUSTRIOUS", "halo")
+    assert wb._personal_extra("NEGATIVE", "AnimaStandardV9_miaomiaoHarem.json") == "(halo:1.5)"
 
-
-def test_personal_extra_warns_once_on_at_prefix_outside_anima(monkeypatch, caplog):
-    _as_family(monkeypatch, PromptStyle.ILLUSTRIOUS)
-    monkeypatch.setattr(wb, "_PERSONAL_AT_WARNED", set())
-    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ILLUSTRIOUS", "@some artist")
-    with caplog.at_level("WARNING"):
-        for _ in range(3):
-            assert wb._personal_extra("STYLE", "Standard_V38.json") == "@some artist"
-    hits = [r for r in caplog.records if "[personal]" in r.getMessage()]
-    assert len(hits) == 1
-
-
-def test_personal_extra_at_prefix_is_silent_for_anima(monkeypatch, caplog):
-    _as_family(monkeypatch, PromptStyle.ANIMA)
-    monkeypatch.setattr(wb, "_PERSONAL_AT_WARNED", set())
-    monkeypatch.setenv("PERSONAL_STYLE_EXTRA_ANIMA", "@some artist")
-    with caplog.at_level("WARNING"):
-        wb._personal_extra("STYLE", "AnimaStandardV9_miaomiaoHarem.json")
-    assert not [r for r in caplog.records if "[personal]" in r.getMessage()]

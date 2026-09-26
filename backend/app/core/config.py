@@ -38,6 +38,8 @@ TRAINING_IMAGES_DIR = Path(os.getenv("TRAINING_IMAGES_DIR", str(BASE_DIR.parent 
 COMFYUI_LORAS_DIR = Path(os.getenv("COMFYUI_LORAS_DIR", r"C:\ComfyUI\models\loras"))
 
 CUSTOM_WORKFLOWS_DIR = Path(os.getenv("CUSTOM_WORKFLOWS_DIR", str(BASE_DIR.parent / "data" / "custom_workflows")))
+# [CN-122] 客製化標籤（作品／繪師）清單：只存本機檔，不進 git、不進 DB
+CUSTOM_TAGS_FILE = Path(os.getenv("CUSTOM_TAGS_FILE", str(BASE_DIR.parent / "data" / "custom_tags.json")))
 
 # ── 資料安全（章節版本快照 + DB 備份）──────────────────────────────────────
 CHAPTER_REVISIONS_KEEP = int(os.getenv("CHAPTER_REVISIONS_KEEP", "20"))  # 每章保留快照數
@@ -73,20 +75,16 @@ OLLAMA_KEEP_ALIVE_SEC: int = int(os.getenv("OLLAMA_KEEP_ALIVE_SEC", "0"))
 # [CN-007] sysmem fallback 在 ComfyUI 端完全無聲，只能靠耗時警戒補 log。0=停用
 COMFYUI_SLOW_JOB_WARN_SEC: int = int(os.getenv("COMFYUI_SLOW_JOB_WARN_SEC", "150"))
 
-# [CN-008] 本組 .env 是全域基準線＋總開關，非唯一來源；PERSONAL_STYLE_ENABLED 不節制 yml
-PERSONAL_STYLE_ENABLED: bool = os.getenv("PERSONAL_STYLE_ENABLED", "false").lower() == "true"
-PERSONAL_STYLE_EXTRA_TAGS: str = os.getenv("PERSONAL_STYLE_EXTRA_TAGS", "")
+# [CN-122] 個人畫風標籤（舊 PERSONAL_STYLE_*）已由角色「客製化標籤」取代；.env 只留個人負向
 PERSONAL_NEGATIVE_ENABLED: bool = os.getenv("PERSONAL_NEGATIVE_ENABLED", "false").lower() == "true"
 PERSONAL_NEGATIVE: str = os.getenv("PERSONAL_NEGATIVE", "")
 # [CN-009] 畫風 tags 加權係數：!=1.0 時包成 (tag:w) 並前置到 identity；1.0=末端 append
 PERSONAL_STYLE_WEIGHT: float = float(os.getenv("PERSONAL_STYLE_WEIGHT", "1.0"))
 
-# [CN-115] 分家族個人標籤 PERSONAL_<STYLE|NEGATIVE>_EXTRA_<家族大寫>：疊加語義、留空＝關閉。
-# 呼叫時才讀（家族是動態值，測試可用 setenv 隔離）
-PERSONAL_KIND_STYLE = "STYLE"
+# [CN-115] 分家族個人負向 PERSONAL_NEGATIVE_EXTRA_<家族大寫>：疊加語義、留空＝關閉；呼叫時才讀
 PERSONAL_KIND_NEGATIVE = "NEGATIVE"
-# 測試隔離用（tests/conftest.py 依此清掉使用者 .env 的家族個人標籤）
-PERSONAL_FAMILY_KEY_PREFIXES = tuple(f"PERSONAL_{k}_EXTRA_" for k in (PERSONAL_KIND_STYLE, PERSONAL_KIND_NEGATIVE))
+# 測試隔離用（tests/conftest.py 依此清掉使用者 .env 的家族個人負向）
+PERSONAL_FAMILY_KEY_PREFIXES = (f"PERSONAL_{PERSONAL_KIND_NEGATIVE}_EXTRA_",)
 
 
 def personal_family_extra(kind: str, family: str) -> str:

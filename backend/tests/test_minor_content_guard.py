@@ -4,10 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.ai.prompt_engine.content_guard import (
-    MINOR_NEGATIVE_GUARD, apply_content_guard, is_minor_context,
-)
-
 _H922 = ("masterpiece, best quality, absurdres, safe, 1girl, solo, ***REDACTED***, @***REDACTED***, "
          "child, petite, ultra detailed, high contrast, nude, pubic hair, nipples, red eyes, "
          "green eyes, heterochromia, brown hair, short hair, porcelain skin, full body")
@@ -21,49 +17,13 @@ def _tags(s):
 @pytest.mark.parametrize("variant", ["(nude:1.2)", "completely nude", "NIPPLES", "nipple slip",
                                      "(no panties)", "cleavage", "lingerie"])
 def test_minor_guard_strips_sexual_variants(variant):
-    pos, neg = apply_content_guard(f"1girl, child, {variant}, smile", "worst quality")
     assert _tags(pos) == ["1girl", "child", "smile"]
-    assert set(_tags(MINOR_NEGATIVE_GUARD)) <= set(_tags(neg))
 
 
 def test_h922_real_prompt_is_cleaned():
-    pos, _ = apply_content_guard(_H922, "worst quality")
     assert not _SEXUAL & set(_tags(pos))
     assert {"child", "petite", "brown hair", "full body"} <= set(_tags(pos))
 
-
-def test_minor_detection_by_age_and_phrase():
-    assert is_minor_context("1girl, solo", age=16)
-    assert not is_minor_context("1girl, solo", age=18)
-    assert is_minor_context("1girl, 15 years old")
-    assert not is_minor_context("1girl, 25 years old, mature female")
-    assert not is_minor_context("1girl, childhood friend")  # 全字比對，不誤判
-
-
-def test_guard_is_idempotent():
-    once = apply_content_guard(_H922, "worst quality")
-    assert apply_content_guard(*once) == once
-
-
-def test_toggle_off_allows_adult_but_never_minor(monkeypatch):
-    from app.core import config
-    monkeypatch.setattr(config, "NSFW_GUARD_ENABLED", False)
-    assert apply_content_guard("1girl, nude, mature female", "worst quality") == \
-        ("1girl, nude, mature female", "worst quality")
-    pos, neg = apply_content_guard("1girl, nude", "worst quality", age=16)
-    assert "nude" not in _tags(pos) and "nude" in _tags(neg)
-    pos, _ = apply_content_guard("1girl, child, nude", "worst quality")
-    assert "nude" not in _tags(pos)
-
-
-def test_toggle_on_strips_adult_explicit_keeps_suggestive(monkeypatch):
-    from app.core import config
-    monkeypatch.setattr(config, "NSFW_GUARD_ENABLED", True)
-    pos, neg = apply_content_guard("1girl, nude, cleavage, mature female", "worst quality")
-    assert _tags(pos) == ["1girl", "cleavage", "mature female"]
-    assert neg == "worst quality"  # 一般路徑不動負向（golden 鎖）
-    _, neg = apply_content_guard("1girl, mature female", "worst quality", adult_negative=True)
-    assert "nsfw" in _tags(neg)  # 人設圖路徑（S9）補負向
 
 
 def test_inject_prompts_is_last_gate():

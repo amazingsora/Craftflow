@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import CapabilityNotice from './CapabilityNotice'
+import { FitImage, renderInlineMd } from './ImageViewer'
 import { UI } from './sharedStyles'
 
 const S = {
@@ -95,7 +96,7 @@ const S = {
   },
   spinner: UI.spinner,
   imgRow: { display: 'flex', gap: 12 },
-  imgHalf: { flex: 1 },
+  imgHalf: { flex: 1, minWidth: 0 },
 }
 
 const PLACEHOLDER_QUESTIONS = [
@@ -381,14 +382,10 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
               <p style={S.sectionLabel}>草稿 → AI 參考圖</p>
               <div style={S.imgRow}>
                 <div style={S.imgHalf}>
-                  <img src={preview} style={{ ...S.resultImg }} alt="original" />
+                  <FitImage src={preview} alt="original" maxHeight="min(60vh, 560px)" />
                 </div>
                 <div style={S.imgHalf}>
-                  <img
-                    src={`data:image/png;base64,${result.image}`}
-                    style={S.resultImg}
-                    alt="generated reference"
-                  />
+                  <FitImage src={`data:image/png;base64,${result.image}`} alt="generated reference" maxHeight="min(60vh, 560px)" />
                 </div>
               </div>
               <button style={{ ...S.btnSecondary, marginTop: 8 }} onClick={downloadResult}>
@@ -396,10 +393,10 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
               </button>
             </div>
 
-            {/* SDXL prompt */}
+            {/* 生成 prompt */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <p style={{ ...S.sectionLabel, marginBottom: 0 }}>Ollama 生成的 SDXL Prompt</p>
+                <p style={{ ...S.sectionLabel, marginBottom: 0 }}>Ollama 生成的 Prompt{result.style ? `（${String(result.style).toUpperCase()}）` : ''}{result.mechanism ? ` · 引導：${result.mechanism}` : ''}</p>
                 {onSendToGenerate && (
                   <button
                     style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer', fontWeight: 600 }}
@@ -414,7 +411,7 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
             {/* Advice */}
             <div>
               <p style={S.sectionLabel}>構圖意見</p>
-              <div style={S.adviceCard}>{result.advice}</div>
+              <div style={S.adviceCard}>{renderInlineMd(result.advice)}</div>
             </div>
           </>
         )}

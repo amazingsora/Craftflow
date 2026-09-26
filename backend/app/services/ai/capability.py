@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from app.services.ai.wf_node_ops import _wf_has_ipa, _wf_has_controlnet
+from app.services.ai.wf_node_ops import _wf_has_ipa, _wf_has_controlnet, _wf_face_detailer_injectable
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +127,7 @@ def resolve_capability(wf: dict, checkpoint_name: str) -> dict:
             "lllite_node_class": None,
             "family":        family,
             "models":        None,
+            "face_detailer_supported": False,
             "family_conflict": "loader_mismatch",
         }
 
@@ -157,10 +158,20 @@ def resolve_capability(wf: dict, checkpoint_name: str) -> dict:
         except Exception as e:
             logger.debug("[capability] cn_fallback 解析略過：%s", e)
 
+    # [CN-122] 「增強臉部輪廓」只在家族 profile 有開、且 workflow 可注入時提供（V38 內建修臉 → False）
+    face_detailer_supported = False
+    try:
+        from app.services.ai.gen_profile import get_profile
+        face_detailer_supported = (get_profile(family).face_detailer_denoise is not None
+                                   and _wf_face_detailer_injectable(wf))
+    except Exception as e:
+        logger.debug("[capability] face_detailer 判定略過：%s", e)
+
     return {
         "ipa_supported": ipa_supported,
         "cn_supported":  cn_supported,
         "cn_fallback":   cn_fallback,
+        "face_detailer_supported": face_detailer_supported,
         "lllite_weight": lllite_weight,      # None = 不走 lllite；有值 = 要餵給節點的檔名
         "lllite_node_class": lllite_node_class,  # 探測到的實際 class 名，None = 未探測/不可用
         "family":        family,
