@@ -136,6 +136,51 @@ export function appearanceTagPreview(gender, cardKey, cards) {
   return [_GENDER_TAG[gender], side?.positive].filter(Boolean).join(', ')
 }
 
+// [CN-130] 身材卡片：每組單選；卡片不適用目前性別／外觀年齡時隱藏（已存的選擇保留，後端會略過）
+const _genderKey = g => (g === 'female' || g === 'male' ? g : 'neutral')
+
+export function BodyCardPicker({ value, onChange, groups, gender, appearanceAge }) {
+  const selected = (value || '').split(',').map(s => s.trim()).filter(Boolean)
+  const g = _genderKey(gender)
+  const usable = c => c.tags?.[g] 
+  const pick = (group, key) => {
+    const others = selected.filter(k => !group.cards.some(c => c.key === k))
+    onChange([...others, ...(key ? [key] : [])].join(','))
+  }
+  const chip = on => ({
+    padding: '4px 10px', borderRadius: 10, cursor: 'pointer', fontSize: 12,
+    border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`,
+    background: on ? 'var(--accent-soft-2)' : 'transparent',
+    color: on ? 'var(--accent)' : 'var(--muted)', fontWeight: on ? 700 : 400, transition: 'all .15s',
+  })
+  const active = (groups || []).map(gr => ({ ...gr, cards: gr.cards.filter(usable) })).filter(gr => gr.cards.length)
+  const preview = active.flatMap(gr => gr.cards.filter(c => selected.includes(c.key)).map(c => c.tags[g]))
+  const pos = preview.map(s => s.positive).filter(Boolean).join(', ')
+  const neg = preview.map(s => s.negative).filter(Boolean).join(', ')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {active.map(gr => {
+        const cur = gr.cards.find(c => selected.includes(c.key))?.key || ''
+        return (
+          <div key={gr.key} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)', minWidth: 36 }}>{gr.label}</span>
+            {[{ key: '', label: '不指定' }, ...gr.cards].map(c => (
+              <button key={c.key || 'none'} title={c.hint} onClick={() => pick(gr, c.key)} style={chip(cur === c.key)}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )
+      })}
+      {(pos || neg) && (
+        <div style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>
+          {pos && <>正向 + {pos}</>}{pos && neg && '　'}{neg && <>負向 + {neg}</>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function AppearanceCardPicker({ value, onChange, cards, gender }) {
   const options = [{ key: '', label: '不指定', hint: '不加外觀 tag' }, ...(cards || [])]
   const selected = options.find(o => o.key === (value || '')) || options[0]

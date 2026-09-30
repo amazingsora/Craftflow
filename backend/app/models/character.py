@@ -45,6 +45,7 @@ class Character(Base):
     age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # cm
     appearance_age: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # [CN-129] 外觀年齡卡片 key
+    body_cards: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # [CN-130] 身材卡片 key（逗號串）
     birthday: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     gender: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # male | female | neutral
     tab_names: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)

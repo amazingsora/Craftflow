@@ -230,3 +230,47 @@ def test_appearance_age_field_wired():
     assert "appearance_age" in VariantUpdate.model_fields
     assert "appearance_age" in CharacterUpdate.model_fields and "appearance_age" in CharacterResponse.model_fields
     assert hasattr(Character, "appearance_age")
+
+
+# ── 身材卡片（CN-130）──────────────────────────────────────────────────────────
+
+def test_body_groups_chest_is_female_only_and_blocks_minors():
+    from app.services.ai.appearance_cards import list_body_groups
+    groups = {g["key"]: g for g in list_body_groups()}
+    assert {"build", "chest"} <= set(groups)
+    for card in groups["chest"]["cards"]:
+        assert card["tags"]["female"] and card["tags"]["male"] is None and card["tags"]["neutral"] is None
+    for card in groups["build"]["cards"]:
+        assert all(card["tags"][g] for g in ("female", "male", "neutral"))
+
+
+@pytest.mark.parametrize("keys, gender, age, pos", [
+    ("slender,small_breasts", "female", None, "slender, small breasts"),
+    ("slender,small_breasts", "male", None, "slender"),
+    ("toned,large_breasts", "neutral", None, "toned"),
+    ("toned,large_breasts", "female", "teenage", "toned"),
+    ("plump", "female", "child", ""),
+    ("slender,toned", "female", None, "slender"),
+    ("no_such_card", "female", None, ""),
+    (None, None, None, ""),
+])
+def test_resolve_body(keys, gender, age, pos):
+    from app.services.ai.appearance_cards import resolve_body
+    assert resolve_body(keys, gender, age).positive == pos
+
+
+def test_body_parts_conflict_tags_strip_llm_positive():
+    from app.services.ai import character_design_service as cds
+    pos, neg, conflicts = cds._body_parts("small_breasts", "female", "young_adult")
+    assert pos == "small breasts, " and "large breasts" in neg
+    stripped = cds._drop_negative_overlap("1girl, small breasts, (large breasts:1.1), blue eyes", conflicts)
+    assert stripped == "1girl, small breasts, blue eyes"
+
+
+def test_body_cards_field_wired():
+    from app.api.characters import VariantUpdate
+    from app.schemas.character import CharacterUpdate, CharacterResponse
+    from app.models.character import Character
+    assert "body_cards" in VariantUpdate.model_fields
+    assert "body_cards" in CharacterUpdate.model_fields and "body_cards" in CharacterResponse.model_fields
+    assert hasattr(Character, "body_cards")

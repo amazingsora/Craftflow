@@ -27,7 +27,7 @@ from app.services.ai.generation_recorder import record_generation
 from app.services.ai import generation_jobs
 from app.services.ai import character_design_service
 from app.services.ai.custom_tags import load_custom_tags
-from app.services.ai.appearance_cards import list_cards
+from app.services.ai.appearance_cards import list_body_groups, list_cards
 from app.services.ai import image_edit_service
 from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
 from app.services.ai.gen_profile import resolve_profile_for_workflow
@@ -560,10 +560,10 @@ def get_custom_tags():
 
 # ── WD14 Tag Extraction ───────────────────────────────────────────────────────
 
-@router.get("/art/appearance-cards", summary="角色外觀年齡卡片清單（backend/appearance_cards.yml）")
+@router.get("/art/appearance-cards", summary="角色外觀年齡／身材卡片清單（backend/appearance_cards.yml）")
 def get_appearance_cards():
-    """[CN-129] 卡片定義與各性別對應 tag；免重啟。"""
-    return {"cards": list_cards()}
+    """[CN-129][CN-130] 卡片定義與各性別對應 tag；免重啟。"""
+    return {"cards": list_cards(), "body_groups": list_body_groups()}
 
 
 @router.post("/art/wd14-tags", summary="WD14 圖像反推 Danbooru 標籤")

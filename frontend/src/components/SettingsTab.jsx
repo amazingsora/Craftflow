@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
 import { notifyEnabled, soundEnabled, setNotifyEnabled, setSoundEnabled, ensureNotifyPermission, notifyPermission, requestNotifyPermission } from '../notify.js'
 
+// 全局 LoRA 區塊暫時隱藏（保留程式碼，改 true 即恢復）。後端 state 的 lora.name 為空時不會注入。
+const SHOW_GLOBAL_LORA = false
+
 const S = {
   root: { display: 'flex', flexDirection: 'column', gap: 24 },
   section: {
@@ -265,7 +268,7 @@ export default function SettingsTab({
             <div>
               <div style={S.radioTitle}>Checkpoint + LoRA 模式</div>
               <div style={S.radioDesc}>
-                使用系統 text_to_image 工作流，手動選擇 Checkpoint 與全局 LoRA。
+                使用系統 text_to_image 工作流，手動選擇 Checkpoint。
               </div>
             </div>
           </label>
@@ -307,7 +310,8 @@ export default function SettingsTab({
           ) : (
             <div style={S.configArea}>
               <div style={S.infoBox}>
-                ComfyUI 離線，無法讀取清單。可手動輸入名稱，連線後自動生效。
+                讀不到 Checkpoint 清單（ComfyUI 離線，或啟動 Craftflow 時 ComfyUI 尚未就緒 → 請重新整理頁面）。<br />
+                注意：Anima 等 UNet 模型放在 diffusion_models/，不屬於此清單，也無法用本模式載入 → 請改用「自訂 Workflow 模式」。
               </div>
               <div>
                 <span style={S.fieldLabel}>手動輸入 Checkpoint 名稱</span>
@@ -329,7 +333,7 @@ export default function SettingsTab({
       )}
 
       {/* LoRA 設定 */}
-      {generationMode === 'checkpoint' && (
+      {SHOW_GLOBAL_LORA && generationMode === 'checkpoint' && (
         <div style={S.section}>
           <div style={S.sectionTitle}>全局 LoRA</div>
           <div style={S.configArea}>

@@ -47,3 +47,48 @@ cards:
     female:  {positive: "old woman", negative: "child, teenage"}
     male:    {positive: "old man", negative: "child, teenage"}
     neutral: {positive: "", negative: "child, teenage"}
+
+
+
+body_groups:
+
+  build:
+    label: 體型
+    cards:
+      slender:
+        label: 纖瘦
+        all: {positive: "slender", negative: "plump, muscular"}
+      toned:
+        label: 精壯
+        female:  {positive: "toned", negative: "plump"}
+        male:    {positive: "toned male", negative: "plump"}
+        neutral: {positive: "toned", negative: "plump"}
+      muscular:
+        label: 肌肉發達
+        female:  {positive: "muscular female", negative: "skinny"}
+        male:    {positive: "muscular male", negative: "skinny"}
+        neutral: {positive: "muscular", negative: "skinny"}
+      plump:
+        label: 豐滿
+        female:  {positive: "curvy", negative: "skinny"}
+        male:    {positive: "plump", negative: "skinny"}
+        neutral: {positive: "plump", negative: "skinny"}
+
+  chest:
+    label: 胸部
+    cards:
+      flat_chest:
+        label: 平胸
+        female: {positive: "flat chest"}
+      small_breasts:
+        label: 小
+        female: {positive: "small breasts"}
+      medium_breasts:
+        label: 中
+        female: {positive: "medium breasts"}
+      large_breasts:
+        label: 大
+        female: {positive: "large breasts"}
+      giant_breasts:
+        label: 超特
+        female: {positive: "giant breasts"}

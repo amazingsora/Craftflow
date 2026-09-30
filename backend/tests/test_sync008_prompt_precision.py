@@ -1,6 +1,6 @@
 """SYNC-008（2026-09-24）提示詞精度：視覺細節不再被整句剝除、Anima 官方順序、確定性身體 tag 去衝突。
 
-根因與 A/B 證據見 doc/2026-09-24_開發記錄.md 第七節、CODE_NOTES [CN-116]。
+根因與 A/B 證據見 doc/archive/2026-09/2026-09-24_開發記錄.md 第七節、CODE_NOTES [CN-116]。
 Ollama 全部 mock；每個新邏輯都「真的執行」（CLAUDE.md 檢查點 1）。
 """
 import pytest

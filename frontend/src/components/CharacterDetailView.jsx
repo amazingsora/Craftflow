@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { request, apiDelete, apiUrl } from '../api/client'
 import { S } from './characterTabStyles.js'
-import { Spinner, ImageLightbox, GenderPicker, DeleteConfirm, AppearanceCardPicker, appearanceTagPreview } from './characterTabParts.jsx'
+import { Spinner, ImageLightbox, GenderPicker, DeleteConfirm, AppearanceCardPicker, BodyCardPicker, appearanceTagPreview } from './characterTabParts.jsx'
 import { apiFetch } from './characterTabShared.js'
 import { GenerationInfo } from './GenerationInfo.jsx'
 import { CustomTagsField } from './CustomTagsField.jsx'
@@ -43,7 +43,6 @@ function _initVariant(v = {}, charId = null, slot = null) {
     visionEnabled: true,
     faceDetailerEnabled: true,
     faceDetailerDenoise: 0.5,
-    customTags: '',
   })
   return {
     color: v.color ?? '', traits: v.core_traits ?? '',
@@ -58,9 +57,8 @@ function _initVariant(v = {}, charId = null, slot = null) {
     visionEnabled: prefs.visionEnabled,
     faceDetailerEnabled: prefs.faceDetailerEnabled,
     faceDetailerDenoise: prefs.faceDetailerDenoise,
-    customTags: prefs.customTags,
     age: v.age != null ? String(v.age) : '', height: v.height != null ? String(v.height) : '', birthday: v.birthday ?? '',
-    gender: v.gender ?? null, appearanceAge: v.appearance_age ?? '', aiSummary: v.ai_summary ?? null,
+    gender: v.gender ?? null, appearanceAge: v.appearance_age ?? '', bodyCards: v.body_cards ?? '', aiSummary: v.ai_summary ?? null,
     conceptImages: v.concept_images ?? [], aiImages: v.ai_generated_images ?? [],
     pendingQueue: [], generating: false, savingGen: false, savingFields: false,
     summarizing: false, uploadingConcept: false,
@@ -109,6 +107,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   const [age, setAge] = useState(initChar.age ?? '')
   const [height, setHeight] = useState(initChar.height ?? '')
   const [appearanceAge, setAppearanceAge] = useState(initChar.appearance_age ?? '')
+  const [bodyCards, setBodyCards] = useState(initChar.body_cards ?? '')
   const [birthday, setBirthday] = useState(initChar.birthday ?? '')
   const [gender, setGender] = useState(initChar.gender ?? null)
   const [aiPrompt, setAiPrompt] = useState(initChar.ai_prompt ?? '')
@@ -133,7 +132,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   // R-02：勾選才套用預設畫風；取消勾選＝清空已選畫風
   const [artStyleOn, setArtStyleOn] = useState(!!initChar.art_style_id)
   const [artStyles, setArtStyles] = useState([])
-  // 角色專屬 LoRA（直通欄位）
+  // 角色 LoRA（直通欄位）
   const [loraName, setLoraName] = useState(initChar.lora_name ?? '')
   const [loraWeight, setLoraWeight] = useState(initChar.lora_weight ?? 0.8)
   const [loraList, setLoraList] = useState([])
@@ -173,6 +172,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   )
   const [customTagOptions, setCustomTagOptions] = useState({ series: [], artists: [] })
   const [appearanceCards, setAppearanceCards] = useState([])
+  const [bodyGroups, setBodyGroups] = useState([])
   const [showDebugPrompt, setShowDebugPrompt] = useState(false)
   const [lastDebugPrompt, setLastDebugPrompt] = useState(null)
   const [lastRawDesc, setLastRawDesc] = useState(null)
@@ -215,10 +215,84 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
   useEffect(() => {
     apiFetch('/art-styles').then(setArtStyles).catch(() => {})
     apiFetch('/art/custom-tags').then(setCustomTagOptions).catch(() => {})
-    apiFetch('/art/appearance-cards').then(d => setAppearanceCards(d?.cards || [])).catch(() => {})
+    apiFetch('/art/appearance-cards').then(d => {
+      setAppearanceCards(d?.cards || [])
+      setBodyGroups(d?.body_groups || [])
+    }).catch(() => {})
     // ComfyUI 離線時 /settings/loras 會 503，靜默忽略即可
     apiFetch('/settings/loras').then(d => setLoraList(d.loras || [])).catch(() => {})
   }, [])
+
+  // 畫風／LoRA／客製化標籤屬角色層級：各分頁共用同一份狀態
+  const styleLoraFields = (
+    <>
+      {/* 畫風 */}
+      <div>
+        <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={artStyleOn}
+            onChange={e => {
+              const on = e.target.checked
+              setArtStyleOn(on)
+              if (!on) setArtStyleId(null)
+            }}
+          />
+          使用預設畫風
+          {!artStyleOn && <span style={{ opacity: 0.6 }}>（未勾選＝依目前 workflow／checkpoint 自動偵測）</span>}
+        </label>
+        {artStyleOn && (
+          <select
+            style={S.select}
+            value={artStyleId ?? ''}
+            onChange={e => setArtStyleId(e.target.value ? parseInt(e.target.value) : null)}
+          >
+            <option value="">（請選擇畫風）</option>
+            {artStyles.map(s => (
+              <option key={s.id} value={s.id}>{s.name} [{s.base_style}]</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* 角色 LoRA（直通欄位，獨立於畫風） */}
+      <div>
+        <label style={S.label}>LoRA</label>
+        <select
+          style={S.select}
+          value={loraName}
+          onChange={e => setLoraName(e.target.value)}
+        >
+          <option value="">（不使用 LoRA）</option>
+          {/* 已選但清單中沒有（ComfyUI 離線）時仍保留目前值 */}
+          {loraName && !loraList.includes(loraName) && (
+            <option value={loraName}>{loraName}（目前設定）</option>
+          )}
+          {loraList.map(l => (
+            <option key={l} value={l}>{l}</option>
+          ))}
+        </select>
+        {loraName && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>權重</span>
+            <input
+              type="range" min="0" max="1" step="0.05"
+              value={loraWeight}
+              onChange={e => setLoraWeight(parseFloat(e.target.value))}
+              style={{ flex: 1 }}
+            />
+            <span style={{ fontSize: 12, color: 'var(--text)', width: 32, textAlign: 'right' }}>
+              {Number(loraWeight).toFixed(2)}
+            </span>
+          </div>
+        )}
+      </div>
+    </>
+  )
+  const customTagsField = (
+    <CustomTagsField value={customTags} options={customTagOptions}
+      onChange={v => { setCustomTags(v); _saveGenPref(initChar.id, null, 'customTags', v) }} />
+  )
 
   const saveFields = async () => {
     if (!charName.trim()) { setError('角色名稱不能為空'); return }
@@ -237,6 +311,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           age: age !== '' ? parseInt(age) : null,
           height: height !== '' ? parseInt(height) : null,
           appearance_age: appearanceAge || null,
+          body_cards: bodyCards || null,
           birthday: birthday.trim() || null,
           gender: gender || null,
           ai_prompt: aiPrompt.trim() || null,
@@ -469,12 +544,24 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           age: v.age !== '' ? parseInt(v.age) : null,
           height: v.height !== '' ? parseInt(v.height) : null,
           appearance_age: v.appearanceAge || null,
+          body_cards: v.bodyCards || null,
           birthday: v.birthday.trim() || null,
           gender: v.gender || null,
           ai_prompt: v.aiPrompt.trim() || null,
           outfit: v.outfit.trim() || null,
         }),
       })
+      // 畫風／LoRA 屬角色層級，變體分頁儲存時一併寫回（部分更新）
+      const updatedChar = await apiFetch(`/characters/${char.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          art_style_id: (artStyleOn && artStyleId) || null,
+          lora_name: loraName.trim() || null,
+          lora_weight: loraName.trim() ? parseFloat(loraWeight) : null,
+        }),
+      })
+      setChar(updatedChar)
       // Sync variant data back from server response
       const serverVar = (updated.variants || [])[slot - 1] || {}
       setV(slot, { savingFields: false, conceptImages: serverVar.concept_images ?? v.conceptImages, aiImages: serverVar.ai_generated_images ?? v.aiImages })
@@ -539,7 +626,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         reuse_prompt: vState.reusePrompt ? '1' : '0',
         face_detailer: (vState.faceDetailerEnabled ?? true) ? '1' : '0',
         face_detailer_denoise: String(vState.faceDetailerDenoise ?? 0.5),
-        custom_tags: vState.customTags ?? '',
+        custom_tags: customTags,
       })
       const resp = await request(`/characters/${char.id}/variants/${slot}/generate-design?${vParams}`, { method: 'POST' })
       const seedHeader = resp.headers.get('X-Seed')  // 純數字字串，非 base64
@@ -1015,67 +1102,12 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
             <AppearanceCardPicker value={appearanceAge} onChange={setAppearanceAge} cards={appearanceCards} gender={gender} />
           </div>
 
-          {/* 畫風 */}
           <div>
-            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={artStyleOn}
-                onChange={e => {
-                  const on = e.target.checked
-                  setArtStyleOn(on)
-                  if (!on) setArtStyleId(null)
-                }}
-              />
-              使用預設畫風
-              {!artStyleOn && <span style={{ opacity: 0.6 }}>（未勾選＝依目前 workflow／checkpoint 自動偵測）</span>}
-            </label>
-            {artStyleOn && (
-              <select
-                style={S.select}
-                value={artStyleId ?? ''}
-                onChange={e => setArtStyleId(e.target.value ? parseInt(e.target.value) : null)}
-              >
-                <option value="">（請選擇畫風）</option>
-                {artStyles.map(s => (
-                  <option key={s.id} value={s.id}>{s.name} [{s.base_style}]</option>
-                ))}
-              </select>
-            )}
+            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>身材</label>
+            <BodyCardPicker value={bodyCards} onChange={setBodyCards} groups={bodyGroups} gender={gender} appearanceAge={appearanceAge} />
           </div>
 
-          {/* 角色專屬 LoRA（直通欄位，獨立於畫風） */}
-          <div>
-            <label style={S.label}>專屬 LoRA</label>
-            <select
-              style={S.select}
-              value={loraName}
-              onChange={e => setLoraName(e.target.value)}
-            >
-              <option value="">（不使用專屬 LoRA）</option>
-              {/* 已選但清單中沒有（ComfyUI 離線）時仍保留目前值 */}
-              {loraName && !loraList.includes(loraName) && (
-                <option value={loraName}>{loraName}（目前設定）</option>
-              )}
-              {loraList.map(l => (
-                <option key={l} value={l}>{l}</option>
-              ))}
-            </select>
-            {loraName && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                <span style={{ fontSize: 12, color: 'var(--muted)' }}>權重</span>
-                <input
-                  type="range" min="0" max="1" step="0.05"
-                  value={loraWeight}
-                  onChange={e => setLoraWeight(parseFloat(e.target.value))}
-                  style={{ flex: 1 }}
-                />
-                <span style={{ fontSize: 12, color: 'var(--text)', width: 32, textAlign: 'right' }}>
-                  {Number(loraWeight).toFixed(2)}
-                </span>
-              </div>
-            )}
-          </div>
+          {styleLoraFields}
 
           {/* 所屬勢力 */}
           <div>
@@ -1175,8 +1207,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
             )}
           </div>
 
-          <CustomTagsField value={customTags} options={customTagOptions}
-            onChange={v => { setCustomTags(v); _saveGenPref(initChar.id, null, 'customTags', v) }} />
+          {customTagsField}
 
           <div>
             <label style={S.label}>創作筆記</label>
@@ -1558,6 +1589,12 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
               cards={appearanceCards} gender={vState.gender} />
           </div>
           <div>
+            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>身材</label>
+            <BodyCardPicker value={vState.bodyCards} onChange={k => setV(activeTab, { bodyCards: k })}
+              groups={bodyGroups} gender={vState.gender} appearanceAge={vState.appearanceAge} />
+          </div>
+          {styleLoraFields}
+          <div>
             <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>外貌 / 個性特徵</label>
             <textarea style={{ ...S.textarea, minHeight: 70 }} value={vState.traits} onChange={e => setV(activeTab, { traits: e.target.value })} placeholder="髮色、體型、個性..." />
           </div>
@@ -1609,8 +1646,7 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
             )}
           </div>
 
-          <CustomTagsField value={vState.customTags ?? ''} options={customTagOptions}
-            onChange={v => { setV(activeTab, { customTags: v }); _saveGenPref(initChar.id, activeTab, 'customTags', v) }} />
+          {customTagsField}
           <div>
             <label style={S.label}>創作筆記</label>
             <textarea style={{ ...S.textarea, minHeight: 120 }} value={vState.notes} onChange={e => setV(activeTab, { notes: e.target.value })} placeholder="隨時新增想法..." />

@@ -75,7 +75,7 @@ from app.services.ai.image_ops import (
 from app.services.ai.capability import extract_checkpoint_from_wf, resolve_capability
 from app.services.ai.gen_profile import resolve_profile_for_workflow
 from app.services.ai.custom_tags import format_custom_tags
-from app.services.ai.appearance_cards import resolve_card
+from app.services.ai.appearance_cards import resolve_body, resolve_card
 from app.services.ai.wf_node_ops import (
     _CN_APPLY_TYPES,
     _bypass_controlnet_nodes,
@@ -406,6 +406,7 @@ class _DesignInputs:
     ai_prompt: Optional[str]
     height: Optional[int]
     appearance_age: Optional[str] = None  # [CN-129] 外觀年齡卡片 key
+    body_cards: Optional[str] = None  # [CN-130] 身材卡片 key（逗號串）
 
 
 # [CN-035] 全身 suffix 不含 design/reference sheet（會出雙人）
@@ -453,6 +454,13 @@ def _appearance_parts(card_key: Optional[str], gender: Optional[str], gender_tag
     if card.negative:
         neg_extra = f"{neg_extra}, {card.negative}"
     return body_prefix, pos_extra, neg_extra
+
+
+def _body_parts(body_keys: Optional[str], gender: Optional[str], age_key: Optional[str]) -> tuple[str, str, str]:
+    """身材卡片 → (正向前綴, 負向附加, 正向需剔除的衝突 tag) [CN-130]"""
+    body = resolve_body(body_keys, gender, age_key)
+    return (f"{body.positive}, " if body.positive else "",
+            f", {body.negative}" if body.negative else "", body.negative)
 
 
 def _wf_checkpoint(wf: dict) -> str:
@@ -765,6 +773,9 @@ async def _generate_design_core(
         gender_tag = _gender_tag(inp.gender)
         gender_prefix = gender_tag + ", " if gender_tag else ""
         body_prefix, gender_pos_extra, gender_neg_extra = _appearance_parts(inp.appearance_age, inp.gender, gender_tag)
+        _body_pos, _body_neg, _body_conflicts = _body_parts(inp.body_cards, inp.gender, inp.appearance_age)
+        body_prefix += _body_pos
+        gender_neg_extra += _body_neg
 
         # 畫風 tag／權重優先序：art_style DB > workflow profile > .env（見 _resolve_style_extra）
         style_extra, _style_weight = _resolve_style_extra(art_style, active_wf)
@@ -787,6 +798,7 @@ async def _generate_design_core(
 
         final_positive = gender_prefix + body_prefix + style_front + extra_prefix + positive + suffix + gender_pos_extra + style_extra_str
         final_positive = _dedup_tags(final_positive)  # 去框架/眼睛等重複,收稀釋
+        final_positive = _drop_negative_overlap(final_positive, _body_conflicts)  # [CN-130] 身材卡優先於 LLM 正向
         # 剝除 LLM 自行吐出的多視圖／設定稿 tag（僅正向）
         final_positive = _strip_sheet_tags(final_positive)
         # [CN-116] tag_order=subject_first：quality/safety → 主體 → 畫風段 → 其餘
@@ -1175,6 +1187,7 @@ async def _generate_design_core(
             "lllite_strength": _lllite_strength if lllite_used else None,
             "img2img_denoise": round(i2i_denoise, 2) if i2i_used and i2i_denoise is not None else None,
             "appearance_age": inp.appearance_age or None,
+            "body_cards": inp.body_cards or None,
             "face_detailer_denoise": _fd_denoise if face_detailer_used else None,
         },
     )
@@ -1244,6 +1257,7 @@ async def generate_character_design(
         ai_prompt=character.ai_prompt,
         height=getattr(character, "height", None),
         appearance_age=getattr(character, "appearance_age", None),
+        body_cards=getattr(character, "body_cards", None),
     )
     return await _generate_design_core(
         character=character, inp=inp, db=db, slot=None,
@@ -1296,6 +1310,7 @@ async def generate_variant_design(
         ai_prompt=v.get("ai_prompt"),
         height=v.get("height"),
         appearance_age=v.get("appearance_age"),
+        body_cards=v.get("body_cards"),
     )
     return await _generate_design_core(
         character=character, inp=inp, db=db, slot=slot,
@@ -1336,6 +1351,10 @@ async def build_identity_prompt(character_id: int, db: Session) -> dict:
     gender_prefix = gender_tag + ", " if gender_tag else ""
     body_prefix, gender_pos_extra, gender_neg_extra = _appearance_parts(
         getattr(character, "appearance_age", None), character.gender, gender_tag)
+    _body_pos, _body_neg, _body_conflicts = _body_parts(
+        getattr(character, "body_cards", None), character.gender, getattr(character, "appearance_age", None))
+    body_prefix += _body_pos
+    gender_neg_extra += _body_neg
 
     model = state.get_text_model()
     positive, negative = "", ""
@@ -1369,7 +1388,7 @@ async def build_identity_prompt(character_id: int, db: Session) -> dict:
 
     final_positive = (gender_prefix + body_prefix + style_front + extra_prefix + positive
                       + gender_pos_extra + style_extra_str).strip(", ")
-    final_positive = _strip_sheet_tags(_dedup_tags(final_positive))
+    final_positive = _strip_sheet_tags(_drop_negative_overlap(_dedup_tags(final_positive), _body_conflicts))
     if _workflow_tag_order(active_wf) == "subject_first":
         final_positive = _reorder_subject_first(
             final_positive, overrides.get("quality_prefix_override", ""), style_extra,
