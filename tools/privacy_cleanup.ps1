@@ -51,9 +51,14 @@ Run python tools\check_oss.py --emit-replace-text $Replace
 $emails = git log --all --format="%ae" | Sort-Object -Unique | Where-Object { $_ -ne $Noreply }
 $map = $emails | ForEach-Object { "amazingsora <$Noreply> <$_>" }
 Set-Content -Path mailmap.txt -Value $map -Encoding UTF8
-$fr = @("--force", "--invert-paths", "--mailmap", "mailmap.txt", "--replace-text", $Replace)
+# 歷史裡有 2GB 的 OllamaSetup.exe：Windows 版 fast-import 處理 >2GB pack 會 "cannot truncate pack"。
+# GitHub 單檔上限 100MB，這類 blob 本來就推不上去，直接剝掉
+$fr = @("--force", "--invert-paths", "--mailmap", "mailmap.txt", "--replace-text", $Replace, "--strip-blobs-bigger-than", "100M")
 foreach ($p in $Purge) { $fr += @("--path", $p) }
 Confirm-Step "即將改寫全部分支的歷史（備份已在 $Backup）。繼續？"
+# 上次（09-23）的 filter-repo 紀錄與失敗殘留：清掉，這次當全新一輪
+Remove-Item .git\filter-repo -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item .git\fast_import_crash_* -Force -ErrorAction SilentlyContinue
 python -m git_filter_repo @fr
 $frExit = $LASTEXITCODE
 Remove-Item mailmap.txt, $Replace -ErrorAction SilentlyContinue
