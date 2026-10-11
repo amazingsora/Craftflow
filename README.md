@@ -128,7 +128,7 @@ cp .env.example .env
 cd backend
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
-.\.venv\Scripts\uvicorn main:app --reload --host 0.0.0.0 --port 8000
+.\.venv\Scripts\uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 （或在專案根目錄執行 `.\run_backend.ps1`）
 
@@ -159,7 +159,7 @@ npm run dev
 | `COMFYUI_CHECKPOINT` | 覆寫所有工作流的 ckpt | （空＝用工作流內建） |
 | `TRAINING_RUNNER_MODE` | LoRA 訓練模式 `local` / `remote` | `local` |
 | `KOHYA_PATH` | kohya_ss 安裝目錄 | `C:\kohya_ss` |
-| `PERSONAL_STYLE_ENABLED` | 啟用個人畫風預設標籤（如 ***REDACTED*** 風） | `false` |
+| `PERSONAL_STYLE_ENABLED` | 已移除（CN-122），改用 `data/custom_tags.json` | `false` |
 
 ---
 

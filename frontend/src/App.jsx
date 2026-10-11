@@ -9,11 +9,11 @@ import SettingsTab from './components/SettingsTab.jsx'
 import NovelTab from './components/NovelTab.jsx'
 import { ensureNotifyPermission, notifyDone } from './notify.js'
 import { GenerationInfo } from './components/GenerationInfo.jsx'
+import { Icon } from './components/Icon.jsx'
 
 const _HISTORY_KEY = 'craftflow_history_v2'
 const _MAX_HISTORY = 100
-// 2026-07-26：300 → 768。原值下「檢視」把 300px 圖放大到 80vw 顯示 → 明顯模糊。
-// 提高解析度會撐大 localStorage（見 _saveHistory 的配額降階），故同批加降階邏輯。
+// 縮圖邊長：過小在「檢視」放大時會糊；過大會撐爆 localStorage（見 _saveHistory 降階）
 const _THUMB_PX = 768
 const _THUMB_QUALITY = 0.85
 // localStorage 配額超出時，依序砍到剩幾筆再試（最後一階只留最新 5 筆）。
@@ -22,28 +22,27 @@ const _STATUS_POLL_MS = 20000  // 系統狀態輪詢間隔
 
 // header 服務狀態燈：顯示 Ollama / ComfyUI 是否在線，離線時 hover 顯示提示
 function ServiceStatus({ status }) {
-  const dot = (label, ok) => ({
-    label,
-    ok,
-    color: ok ? 'var(--success)' : 'var(--danger)',
-  })
   // status 為 null（尚未取得 / 後端離線）時，兩者皆視為未知（灰）
   const known = !!status
   const ollamaOk = known && status.services?.ollama?.available
   const comfyOk = known && status.services?.comfyui?.available
   const dots = [
-    { label: 'Ollama', ok: ollamaOk, color: !known ? 'var(--muted)' : (ollamaOk ? 'var(--success)' : 'var(--danger)') },
-    { label: 'ComfyUI', ok: comfyOk, color: !known ? 'var(--muted)' : (comfyOk ? 'var(--success)' : 'var(--danger)') },
+    { label: 'Ollama', ok: ollamaOk, color: !known ? 'var(--faint)' : (ollamaOk ? 'var(--success)' : 'var(--danger)') },
+    { label: 'ComfyUI', ok: comfyOk, color: !known ? 'var(--faint)' : (comfyOk ? 'var(--success)' : 'var(--danger)') },
   ]
   const hints = (status?.hints ?? [])
   const tip = !known
     ? '無法取得系統狀態（後端可能未啟動）'
     : (hints.length ? hints.join('\n') : 'Ollama 與 ComfyUI 皆正常運作')
   return (
-    <div title={tip} style={{ display: 'flex', gap: 12, alignItems: 'center', cursor: 'default' }}>
+    <div title={tip} style={{ display: 'flex', gap: 14, alignItems: 'center', cursor: 'default' }}>
       {dots.map(d => (
-        <span key={d.label} style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 12, color: 'var(--muted)' }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: d.color, display: 'inline-block' }} />
+        <span key={d.label} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{
+            width: 7, height: 7, borderRadius: '50%', background: d.color, display: 'inline-block',
+            boxShadow: `0 0 0 3px color-mix(in srgb, ${d.color} 18%, transparent)`,
+            animation: known && !d.ok ? 'cf-pulse 1.6s ease-in-out infinite' : 'none',
+          }} />
           {d.label}
         </span>
       ))}
@@ -69,9 +68,7 @@ async function _makeThumbnail(url) {
   })
 }
 
-// 持久化時 url 一律換成縮圖：item.url 是 blob: object URL，重整後即失效。
-// 2026-07-26：縮圖放大到 768px 後單筆約 100-200KB，100 筆必爆 localStorage 5-10MB 配額，
-// 故改為逐階減量重試，而非原本「全部 → 40 筆」兩階（40 筆在新尺寸下仍會爆，等同靜默全丟）。
+// 持久化時 url 換成縮圖（blob URL 重整即失效）；超出 localStorage 配額時逐階減量重試
 function _saveHistory(items) {
   for (const n of _HISTORY_QUOTA_STEPS) {
     try {
@@ -99,259 +96,187 @@ function _badgeLabel(type) {
 }
 
 const TABS = [
-  // TODO: 草稿→線稿功能暫時隱藏，待評估是否整合進角色管理或移除
-  { id: 'process', label: '草稿 → 線稿', hidden: true },
-  { id: 'novel', label: '小說' },
-  { id: 'generate', label: '文字 → 生圖' },
-  { id: 'compose', label: '草圖問答' },
-  { id: 'character', label: '角色管理' },
-  { id: 'artstyle', label: '畫風' },
+  { id: 'process', label: '草稿 → 線稿', icon: 'brush', hidden: true },
+  { id: 'novel', label: '小說', icon: 'book-open-text', desc: '章節寫作與 AI 分析' },
+  { id: 'generate', label: '文字生圖', icon: 'wand-sparkles', desc: '中文描述 → 提示詞 → ComfyUI' },
+  { id: 'compose', label: '草圖問答', icon: 'messages-square', desc: '以草圖向視覺模型提問' },
+  { id: 'character', label: '角色管理', icon: 'users', desc: '作品、勢力與角色人設' },
+  { id: 'artstyle', label: '畫風', icon: 'palette', desc: '可重用的畫風配方' },
+]
+
+const HISTORY_FILTERS = [
+  { key: 'all', label: '全部' },
+  { key: 'process', label: '線稿' },
+  { key: 'generate', label: '生圖' },
+  { key: 'compose', label: '問答' },
+  { key: 'character', label: '角色' },
 ]
 
 const S = {
-  app: { minHeight: '100vh', display: 'flex', alignItems: 'stretch' },
+  app: {
+    height: '100vh', display: 'grid', overflow: 'hidden',
+    gridTemplateColumns: 'var(--rail) minmax(0, 1fr)',
+    gridTemplateRows: 'minmax(0, 1fr) 28px',
+    transition: 'grid-template-columns .22s var(--ease)',
+  },
+  // ── Rail ──
   sidebar: {
-    width: 196,
-    flexShrink: 0,
-    transition: 'width .2s ease',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-    padding: '20px 12px 16px',
+    gridRow: '1 / 3', minWidth: 0, overflow: 'hidden',
+    display: 'flex', flexDirection: 'column', gap: 2,
+    padding: '14px 10px 10px',
     borderRight: '1px solid var(--border)',
     background: 'var(--surface)',
-    position: 'sticky',
-    top: 0,
-    height: '100vh',
-    overflowY: 'auto',
   },
-  sidebarCollapsed: { width: 0, padding: 0, borderRight: 'none', overflow: 'hidden' },
-  hamburgerBtn: { border: '1px solid var(--border)', borderRadius: 8, background: 'transparent', color: 'var(--muted)', fontSize: 16, lineHeight: 1, cursor: 'pointer', padding: '4px 9px' },
-  brand: { fontSize: 18, fontWeight: 700, letterSpacing: .5, color: 'var(--text)', padding: '0 10px' },
-  brandSub: { fontSize: 11, color: 'var(--muted)', padding: '0 10px', marginBottom: 16 },
+  brandRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '2px 6px 18px', minHeight: 44 },
+  brandMark: {
+    width: 22, height: 22, borderRadius: 6, flexShrink: 0, position: 'relative',
+    background: 'var(--text)', display: 'grid', placeItems: 'center',
+  },
+  brandMarkInner: {
+    width: 10, height: 10, background: 'var(--accent)',
+    clipPath: 'polygon(0 0, 100% 0, 0 100%)', transform: 'translate(-1px,-1px)',
+  },
+  brand: { fontSize: 15, fontWeight: 700, letterSpacing: '-.02em', color: 'var(--text)', lineHeight: 1.1 },
+  brandSub: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.2, marginTop: 2 },
+  navLabel: { fontSize: 11, fontWeight: 600, color: 'var(--faint)', padding: '0 10px 6px', letterSpacing: '.04em', whiteSpace: 'nowrap' },
   navItem: {
-    display: 'block',
-    width: '100%',
-    textAlign: 'left',
-    padding: '9px 12px',
-    border: 'none',
-    borderRadius: 8,
-    background: 'transparent',
-    color: 'var(--muted)',
-    fontSize: 14,
-    cursor: 'pointer',
-    transition: 'color .15s, background .15s',
+    display: 'flex', alignItems: 'center', gap: 10,
+    width: '100%', height: 34, textAlign: 'left',
+    padding: '0 10px', border: 'none', borderRadius: 'var(--r)',
+    background: 'transparent', color: 'var(--text-2)',
+    fontSize: 13.5, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden',
+    position: 'relative',
   },
   navItemActive: { background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 },
   sidebarFooter: {
-    marginTop: 'auto',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
-    padding: '12px 10px 0',
-    borderTop: '1px solid var(--border)',
+    marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 2,
+    paddingTop: 8, borderTop: '1px solid var(--border)',
   },
-  footerBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    width: '100%',
-    padding: '7px 10px',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    background: 'transparent',
-    color: 'var(--muted)',
-    fontSize: 12,
-    cursor: 'pointer',
-    transition: 'color .15s, border-color .15s',
-  },
-  main: {
-    flex: 1,
-    minWidth: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 16,
-    padding: '20px 28px 24px',
-  },
+  // ── Main ──
+  main: { minWidth: 0, minHeight: 0, display: 'grid', gridTemplateRows: '48px minmax(0, 1fr)', position: 'relative' },
   topbar: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    gap: 12,
+    display: 'flex', alignItems: 'center', gap: 12,
+    padding: '0 12px 0 12px', background: 'var(--surface)', borderBottom: '1px solid var(--border)',
+    minWidth: 0,
   },
-  topbarTitle: { fontSize: 17, fontWeight: 600, color: 'var(--text)' },
-  topbarInfo: { fontSize: 12, color: 'var(--muted)', textAlign: 'right' },
-  modelSelect: {
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    color: 'var(--text)',
-    padding: '6px 10px',
-    fontSize: 13,
-    outline: 'none',
-    maxWidth: 260,
+  iconBtn: {
+    width: 30, height: 30, display: 'grid', placeItems: 'center', flexShrink: 0,
+    border: 'none', borderRadius: 'var(--r)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer',
   },
-  modelLabel: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 },
-  content: {
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 12,
-    padding: 24,
+  topbarTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap' },
+  topbarDesc: { fontSize: 12.5, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  ctxChip: {
+    display: 'inline-flex', alignItems: 'center', gap: 8, maxWidth: 360, height: 30,
+    padding: '0 10px', border: '1px solid var(--border-strong)', borderRadius: 'var(--r)',
+    background: 'var(--surface)', color: 'var(--text-2)', fontSize: 12.5, cursor: 'pointer', flexShrink: 1, minWidth: 0,
   },
-  // History panel
-  historyPanel: {
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 12,
-    padding: '14px 20px',
+  ctxKind: { fontSize: 10.5, fontWeight: 600, color: 'var(--muted)', letterSpacing: '.04em', textTransform: 'uppercase' },
+  ctxName: { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  scroller: { minHeight: 0, overflow: 'auto', scrollbarGutter: 'stable' },
+  content: { padding: '24px 28px 40px' },
+  // ── Status bar ──
+  statusbar: {
+    gridColumn: 2, display: 'flex', alignItems: 'center', gap: 14, minWidth: 0,
+    padding: '0 8px 0 14px', background: 'var(--surface)', borderTop: '1px solid var(--border)',
+    fontSize: 11.5, color: 'var(--muted)', whiteSpace: 'nowrap', position: 'relative', zIndex: 30,
   },
-  historyHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+  sbSep: { width: 1, height: 12, background: 'var(--border-strong)', flexShrink: 0 },
+  sbItem: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 },
+  sbBtn: {
+    display: 'inline-flex', alignItems: 'center', gap: 6, height: 22, padding: '0 7px',
+    border: 'none', borderRadius: 'var(--r-sm)', background: 'transparent', color: 'var(--text-2)',
+    fontSize: 11.5, cursor: 'pointer',
   },
-  historyTitle: { fontSize: 13, fontWeight: 600, color: 'var(--muted)' },
+  sbCount: {
+    fontFamily: 'var(--font-mono)', fontSize: 10, lineHeight: '15px', padding: '0 5px', borderRadius: 3,
+    background: 'var(--accent)', color: 'var(--accent-contrast)',
+  },
+  // ── History drawer ──
+  drawer: {
+    position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 20,
+    background: 'var(--surface)', borderTop: '1px solid var(--border-strong)',
+    boxShadow: '0 -16px 40px -20px rgba(13,17,23,.35)',
+    animation: 'cf-drawer .22s var(--ease) both',
+    display: 'flex', flexDirection: 'column', maxHeight: '46vh',
+  },
+  drawerHead: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--border)' },
+  historyTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--text)' },
+  historyCount: { fontFamily: 'var(--font-mono)', fontSize: 11.5, fontWeight: 400, color: 'var(--muted)' },
+  seg: { display: 'inline-flex', border: '1px solid var(--border-strong)', borderRadius: 'var(--r)', overflow: 'hidden' },
+  segBtn: { padding: '3px 11px', fontSize: 12, border: 'none', borderLeft: '1px solid var(--border-strong)', background: 'var(--surface)', color: 'var(--text-2)', cursor: 'pointer' },
+  segBtnActive: { background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 },
   clearBtn: {
-    fontSize: 12,
-    color: 'var(--muted)',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    padding: '2px 6px',
+    fontSize: 12, color: 'var(--muted)', background: 'none', border: 'none',
+    cursor: 'pointer', padding: '4px 8px', borderRadius: 'var(--r-sm)',
   },
-  historyScroll: {
-    display: 'flex',
-    gap: 14,
-    overflowX: 'auto',
-    paddingBottom: 6,
-  },
-  historyEmpty: { color: 'var(--muted)', fontSize: 13 },
-  historyItemWrap: {
-    flex: '0 0 auto',
-    width: 150,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 6,
-    position: 'relative',
-  },
-  historyThumb: {
-    width: 150,
-    height: 150,
-    objectFit: 'cover',
-    borderRadius: 10,
-    border: '1px solid var(--border)',
-    cursor: 'zoom-in',
-    transition: 'border-color .15s',
-    display: 'block',
-  },
+  historyScroll: { display: 'flex', gap: 12, overflowX: 'auto', padding: '14px 16px 16px' },
+  historyEmpty: { color: 'var(--muted)', fontSize: 13, padding: '28px 16px', textAlign: 'center' },
+  historyItemWrap: { flex: '0 0 auto', width: 148, display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' },
+  historyThumbBox: { position: 'relative', width: 148, height: 148, borderRadius: 'var(--r)', overflow: 'hidden', background: 'var(--canvas)', boxShadow: '0 0 0 1px var(--border)' },
+  historyThumb: { width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 15%', cursor: 'zoom-in', display: 'block' },
   historyDeleteBtn: {
-    position: 'absolute',
-    top: 5,
-    left: 5,
-    width: 20,
-    height: 20,
-    borderRadius: '50%',
-    background: 'rgba(0,0,0,.75)',
-    border: 'none',
-    color: 'var(--accent-contrast)',
-    fontSize: 13,
-    lineHeight: '20px',
-    textAlign: 'center',
-    cursor: 'pointer',
-    padding: 0,
-    zIndex: 1,
-  },
-  historyToggleBtn: {
-    fontSize: 12,
-    color: 'var(--muted)',
-    background: 'none',
-    border: '1px solid var(--border)',
-    borderRadius: 6,
-    cursor: 'pointer',
-    padding: '2px 8px',
+    position: 'absolute', top: 6, left: 6, width: 22, height: 22,
+    borderRadius: 'var(--r-sm)', background: 'rgba(13,17,23,.72)', border: 'none', color: '#fff',
+    display: 'grid', placeItems: 'center', cursor: 'pointer', padding: 0, zIndex: 1,
   },
   lightboxOverlay: {
-    position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,.82)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 2000,
+    position: 'fixed', inset: 0, background: 'rgba(8,9,11,.86)', backdropFilter: 'blur(6px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: 32,
+    animation: 'cf-fade .18s var(--ease) both',
   },
-  lightboxBox: {
-    position: 'relative',
-    display: 'flex', flexDirection: 'column',
-    maxWidth: '80vw',
-  },
-  lightboxImg: {
-    maxWidth: '80vw',
-    maxHeight: '78vh',
-    borderRadius: 10,
-    display: 'block',
-    objectFit: 'contain',
-  },
+  lightboxBox: { position: 'relative', display: 'flex', flexDirection: 'column', maxWidth: '86vw', animation: 'cf-pop .22s var(--ease) both' },
+  lightboxImg: { maxWidth: '86vw', maxHeight: '76vh', borderRadius: 'var(--r)', display: 'block', objectFit: 'contain', alignSelf: 'center' },
   lightboxClose: {
-    position: 'absolute',
-    top: -14,
-    right: -14,
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    color: 'var(--text)',
-    fontSize: 16,
-    cursor: 'pointer',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1,
+    position: 'fixed', top: 18, right: 18, width: 36, height: 36, borderRadius: 'var(--r)',
+    background: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.16)', color: '#fff',
+    cursor: 'pointer', display: 'grid', placeItems: 'center', zIndex: 1,
   },
   lightboxFooter: {
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    padding: '8px 4px 0',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 24,
+    marginTop: 12, padding: '12px 14px', borderRadius: 'var(--r-lg)',
+    background: 'var(--surface)', border: '1px solid var(--border)',
   },
   badge: {
-    fontSize: 11,
-    borderRadius: 4,
-    padding: '2px 7px',
-    fontWeight: 700,
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    zIndex: 1,
+    fontSize: 10.5, borderRadius: 3, padding: '1px 6px', fontWeight: 600, lineHeight: 1.5,
+    position: 'absolute', top: 6, right: 6, zIndex: 1,
   },
   badgeProcess: { background: 'var(--tint-blue-bg)', color: 'var(--tint-blue-fg)' },
   badgeGenerate: { background: 'var(--tint-purple-bg)', color: 'var(--tint-purple-fg)' },
   badgeCompose: { background: 'var(--tint-green-bg)', color: 'var(--tint-green-fg)' },
-  historyMeta: { fontSize: 12, color: 'var(--text)', lineHeight: 1.5 },
-  historyMetaSub: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 1 },
+  historyMeta: { fontSize: 12, color: 'var(--text)', lineHeight: 1.45, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  historyMetaSub: { fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, marginTop: 1, fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  // ── Modal ──
   modalOverlay: {
-    position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,.55)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1000,
+    position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(3px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 24,
+    animation: 'cf-fade .16s var(--ease) both',
   },
   modalBox: {
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 14,
-    width: '100%',
-    maxWidth: 520,
-    maxHeight: '85vh',
-    display: 'flex', flexDirection: 'column',
-    overflow: 'hidden',
-    boxShadow: 'var(--shadow-modal)',
+    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12,
+    width: '100%', maxWidth: 520, maxHeight: '86vh',
+    display: 'flex', flexDirection: 'column', overflow: 'hidden',
+    boxShadow: 'var(--shadow-modal)', animation: 'cf-pop .22s var(--ease) both',
   },
   modalHeader: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    padding: '16px 20px',
-    borderBottom: '1px solid var(--border)',
+    padding: '12px 12px 12px 18px', borderBottom: '1px solid var(--border)',
   },
-  modalTitle: { fontSize: 15, fontWeight: 600, color: 'var(--text)' },
-  modalClose: {
-    background: 'none', border: 'none',
-    color: 'var(--muted)', fontSize: 20, cursor: 'pointer',
-    lineHeight: 1, padding: '2px 6px',
-  },
-  modalBody: { padding: '20px', overflowY: 'auto', flex: 1 },
+  modalTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600, color: 'var(--text)' },
+  modalBody: { padding: '18px 20px 22px', overflowY: 'auto', flex: 1 },
+}
+
+// /settings/capabilities → App 狀態（初次載入與重抓共用，避免兩處欄位漂移）
+function toCapability(cap) {
+  return {
+    ipa_supported: !!cap.ipa_supported,
+    cn_supported:  !!cap.cn_supported,
+    cn_fallback:   cap.cn_fallback ?? null,
+    face_detailer_supported: !!cap.face_detailer_supported,
+    family:        cap.family ?? 'sdxl',
+    gpu_tier:      cap.gpu_tier ?? null,
+    gpu_tier_source: cap.gpu_tier_source ?? '',
+    hires_enabled: !!cap.hires_enabled,
+  }
 }
 
 function formatTime(ts) {
@@ -376,20 +301,20 @@ export default function App() {
     catch { return [] }
   })
   const [historyVisible, setHistoryVisible] = useState(
-    () => localStorage.getItem('craftflow_history_visible') !== 'false'
+    () => localStorage.getItem('craftflow_history_visible') === 'true'
   )
   const [lightboxItem, setLightboxItem] = useState(null)
   const [checkpoints, setCheckpoints] = useState([])
   const [activeCheckpoint, setActiveCheckpoint] = useState('')
   const [workflows, setWorkflows] = useState([])
   const [activeWorkflow, setActiveWorkflow] = useState('text_to_image.json')
-  // capability: { ipa_supported, cn_supported, family }（由 /settings/capabilities 統一取得）
-  // cn_fallback（2026-07-25 D'-2）：CN 不支援但有替代路徑時為 'img2img'（Anima）。
-  const [capability, setCapability] = useState({ ipa_supported: true, cn_supported: true, cn_fallback: null, family: 'sdxl' })
+  // capability 由 /settings/capabilities 取得；cn_fallback＝CN 不支援時的替代路徑
+  const [capability, setCapability] = useState({ ipa_supported: true, cn_supported: true, cn_fallback: null, face_detailer_supported: false, family: 'sdxl', gpu_tier: null, gpu_tier_source: '', hires_enabled: false })
   const [generationMode, setGenerationMode] = useState(
     () => localStorage.getItem('craftflow_gen_mode') ?? 'checkpoint'
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [trainingOpen, setTrainingOpen] = useState(false)  // R-08：LoRA 訓練獨立入口
   const [pendingGenPrompt, setPendingGenPrompt] = useState('')
   const [historyFilter, setHistoryFilter] = useState('all')
   const [visionModels, setVisionModels] = useState([])
@@ -480,7 +405,7 @@ export default function App() {
           : Promise.resolve()
         // 等 workflow 同步後再抓 capability（確保後端 state 已更新）
         doSync.then(() => fetch('/api/v1/settings/capabilities').then(r => r.ok ? r.json() : null).then(cap => {
-          if (cap) setCapability({ ipa_supported: !!cap.ipa_supported, cn_supported: !!cap.cn_supported, cn_fallback: cap.cn_fallback ?? null, family: cap.family ?? 'sdxl' })
+          if (cap) setCapability(toCapability(cap))
         }).catch(() => {}))
       })
       .catch(() => {})
@@ -556,13 +481,7 @@ export default function App() {
     try {
       const r = await fetch('/api/v1/settings/capabilities')
       if (r.ok) {
-        const data = await r.json()
-        setCapability({
-          ipa_supported: !!data.ipa_supported,
-          cn_supported:  !!data.cn_supported,
-          cn_fallback:   data.cn_fallback ?? null,
-          family:        data.family ?? 'sdxl',
-        })
+        setCapability(toCapability(await r.json()))
       }
     } catch {}
   }
@@ -614,7 +533,7 @@ export default function App() {
 
   useEffect(() => { ensureNotifyPermission() }, [])
 
-  // D3 側欄響應式收合（手動切換持久化；視窗跨 880px 門檻時自動收/展）
+  // 側欄響應式收合（手動切換持久化；視窗跨 880px 門檻時自動收／展）
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('craftflow_sidebar_collapsed')
     if (saved !== null) return saved === 'true'
@@ -673,90 +592,230 @@ export default function App() {
     })
   }
 
+  // Esc 關閉最上層浮層（燈箱 → 設定 / 訓練 → 歷史抽屜）
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      if (lightboxItem) setLightboxItem(null)
+      else if (settingsOpen) setSettingsOpen(false)
+      else if (trainingOpen) setTrainingOpen(false)
+      else if (historyVisible) toggleHistoryVisible()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  const activeTab = TABS.find(t => t.id === tab)
+  const ctxKind = generationMode === 'workflow' ? 'Workflow' : 'Checkpoint'
+  const ctxName = generationMode === 'workflow'
+    ? (activeWorkflow.replace('.json', '') || '—')
+    : (activeCheckpoint ? activeCheckpoint.replace(/\.[^.]+$/, '') : '未設定')
+  const filteredHistory = historyFilter === 'all' ? history
+    : historyFilter === 'generate' ? history.filter(h => ['generate', 'i2i', 'controlnet', 'ipadapter'].includes(h.type))
+    : history.filter(h => h.type === historyFilter)
+
+  const navBtn = (t, active, onClick) => (
+    <button
+      key={t.id}
+      className="cf-nav-item"
+      style={{ ...S.navItem, ...(active ? S.navItemActive : {}), ...(sidebarCollapsed ? { justifyContent: 'center', padding: 0 } : {}) }}
+      onClick={onClick}
+      title={sidebarCollapsed ? t.label : undefined}
+      aria-current={active ? 'page' : undefined}
+    >
+      <Icon name={t.icon} size={17} style={{ color: active ? 'var(--accent)' : 'var(--muted)' }} />
+      {!sidebarCollapsed && <span>{t.label}</span>}
+    </button>
+  )
+
   return (
-    <div style={S.app}>
-      <aside style={{ ...S.sidebar, ...(sidebarCollapsed ? S.sidebarCollapsed : {}) }}>
-        <div style={S.brand}>Craftflow</div>
-        <div style={S.brandSub}>本地創作助手</div>
-        {TABS.filter(t => !t.hidden).map((t) => (
-          <button
-            key={t.id}
-            style={{ ...S.navItem, ...(tab === t.id ? S.navItemActive : {}) }}
-            onClick={() => switchTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
+    <div style={{ ...S.app, '--rail': sidebarCollapsed ? '60px' : 'var(--rail-w)' }}>
+      <aside style={{ ...S.sidebar, ...(sidebarCollapsed ? { padding: '14px 8px 10px' } : {}) }}>
+        <div style={{ ...S.brandRow, ...(sidebarCollapsed ? { justifyContent: 'center', padding: '2px 0 18px' } : {}) }}>
+          <span style={S.brandMark}><span style={S.brandMarkInner} /></span>
+          {!sidebarCollapsed && (
+            <div style={{ minWidth: 0 }}>
+              <div style={S.brand}>Craftflow</div>
+              <div style={S.brandSub}>本地創作助手</div>
+            </div>
+          )}
+        </div>
+        {!sidebarCollapsed && <div style={S.navLabel}>工作區</div>}
+        {TABS.filter(t => !t.hidden).map((t) => navBtn(t, tab === t.id, () => switchTab(t.id)))}
         <div style={S.sidebarFooter}>
-          <ServiceStatus status={svcStatus} />
-          <button
-            style={S.footerBtn}
-            onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-            title="切換淺色 / 深色主題"
-          >
-            {theme === 'light' ? '◑ 深色模式' : '◐ 淺色模式'}
-          </button>
-          <button
-            style={S.footerBtn}
-            onClick={() => setSettingsOpen(true)}
-            title="設定"
-          >⚙ 設定</button>
+          {navBtn({ id: 'training', label: 'LoRA 訓練', icon: 'flask-conical' }, trainingOpen, () => setTrainingOpen(true))}
+          {navBtn({ id: 'settings', label: '設定', icon: 'settings' }, settingsOpen, () => setSettingsOpen(true))}
         </div>
       </aside>
 
       <div style={S.main}>
-      <div style={S.topbar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button style={S.hamburgerBtn} onClick={toggleSidebar} title="收合 / 展開側欄" aria-label="收合或展開側欄">≡</button>
-          <div style={S.topbarTitle}>{TABS.find(t => t.id === tab)?.label}</div>
+        <header style={S.topbar}>
+          <button className="cf-link" style={S.iconBtn} onClick={toggleSidebar} title="收合 / 展開側欄" aria-label="收合或展開側欄">
+            <Icon name="panel-left" size={17} />
+          </button>
+          <div style={S.sbSep} />
+          <div style={S.topbarTitle}>{activeTab?.label}</div>
+          {activeTab?.desc && <div style={S.topbarDesc}>{activeTab.desc}</div>}
+          <div style={{ flex: 1 }} />
+          <button style={S.ctxChip} onClick={() => setSettingsOpen(true)} title="目前的生成來源（點擊開啟設定）">
+            <Icon name="cpu" size={14} style={{ color: 'var(--muted)' }} />
+            <span style={S.ctxKind}>{ctxKind}</span>
+            <span style={S.ctxName}>{ctxName}</span>
+            <Icon name="chevron-down" size={13} style={{ color: 'var(--faint)' }} />
+          </button>
+        </header>
+
+        {/* 用 display:none 切換，保留各 Tab 的 React state */}
+        <div style={S.scroller}>
+          <main style={S.content}>
+            <div style={{ display: tab === 'process' ? 'block' : 'none' }}>
+              <ProcessTab onAddHistory={addHistory} />
+            </div>
+            <div style={{ display: tab === 'generate' ? 'block' : 'none' }}>
+              <GenerateTab
+                onAddHistory={addHistory}
+                pendingPrompt={pendingGenPrompt}
+                onPromptConsumed={() => setPendingGenPrompt('')}
+                capability={capability}
+              />
+            </div>
+            <div style={{ display: tab === 'compose' ? 'block' : 'none' }}>
+              <ComposeTab
+                onAddHistory={addHistory}
+                activeVisionModel={activeVisionModel}
+                capability={capability}
+                onSendToGenerate={onSendToGenerate}
+              />
+            </div>
+            <div style={{ display: tab === 'novel' ? 'block' : 'none' }}>
+              <NovelTab />
+            </div>
+            <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
+              <CharacterTab onAddHistory={addHistory} onSendToGenerate={onSendToGenerate} capability={capability} />
+            </div>
+            <div style={{ display: tab === 'artstyle' ? 'block' : 'none' }}>
+              <ArtStyleTab />
+            </div>
+          </main>
         </div>
-        <div style={S.topbarInfo}>
-          {generationMode === 'workflow' ? 'Workflow' : 'Checkpoint'} ·{' '}
-          {generationMode === 'workflow'
-            ? (activeWorkflow.replace('.json', '') || '—')
-            : (activeCheckpoint || '未設定')}
-          {' '}· ComfyUI localhost:8188
-        </div>
+
+        {/* History drawer */}
+        {historyVisible && (
+          <section style={S.drawer} aria-label="歷史記錄">
+            <div style={S.drawerHead}>
+              <span style={S.historyTitle}>
+                <Icon name="history" size={15} style={{ color: 'var(--muted)' }} />
+                歷史記錄
+                <span style={S.historyCount}>{history.length}/{_MAX_HISTORY}</span>
+              </span>
+              {history.length > 0 && (
+                <div style={S.seg}>
+                  {HISTORY_FILTERS.map((f, i) => (
+                    <button
+                      key={f.key}
+                      onClick={() => setHistoryFilter(f.key)}
+                      style={{ ...S.segBtn, ...(i === 0 ? { borderLeft: 'none' } : {}), ...(historyFilter === f.key ? S.segBtnActive : {}) }}
+                    >{f.label}</button>
+                  ))}
+                </div>
+              )}
+              <div style={{ flex: 1 }} />
+              {history.length > 0 && (
+                <button className="cf-link" style={S.clearBtn} onClick={clearHistory}>清除全部</button>
+              )}
+              <button className="cf-link" style={S.iconBtn} onClick={toggleHistoryVisible} title="收起（Esc）" aria-label="收起歷史記錄">
+                <Icon name="chevron-down" size={16} />
+              </button>
+            </div>
+
+            {filteredHistory.length === 0
+              ? <div style={S.historyEmpty}>{history.length === 0 ? '尚無記錄，生成後圖片會保留在此' : '此類型無記錄'}</div>
+              : (
+              <div style={S.historyScroll}>
+                {filteredHistory.map((item) => (
+                  <div key={item.id} style={S.historyItemWrap} className="cf-hover-parent">
+                    <div style={S.historyThumbBox}>
+                      <button
+                        className="cf-reveal"
+                        style={S.historyDeleteBtn}
+                        onClick={() => deleteHistory(item.id)}
+                        title="刪除"
+                        aria-label="刪除此筆記錄"
+                      ><Icon name="x" size={13} /></button>
+                      <span style={{ ...S.badge, ..._badgeStyle(item.type, S) }}>
+                        {_badgeLabel(item.type)}
+                      </span>
+                      <img
+                        src={item.thumbnail ?? item.url}
+                        style={S.historyThumb}
+                        className="cf-card-img"
+                        alt={item.label || ''}
+                        onClick={() => setLightboxItem(item)}
+                      />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ ...S.historyMeta, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted)' }}>{formatTime(item.ts)}</div>
+                      {item.label && (
+                        <div style={S.historyMeta} title={item.label}>{item.label}</div>
+                      )}
+                      {item.model && (
+                        <div style={S.historyMetaSub} title={item.model}>
+                          {_shortModel(item.model)}
+                        </div>
+                      )}
+                      {item.params && (item.params.ipa != null || item.params.cn != null || item.params.cnMode) && (
+                        <div style={S.historyMetaSub}>
+                          {item.params.ipa != null ? `IPA ${Number(item.params.ipa).toFixed(2)}` : 'IPA off'}
+                          {' · '}
+                          {item.params.cn != null ? `CN ${Number(item.params.cn).toFixed(2)}` : 'CN off'}
+                          {item.params.cnMode ? ` (${item.params.cnMode})` : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </div>
 
-      {/* 用 display:none 切換，保留各 Tab 的 React state */}
-      <div style={S.content}>
-        <div style={{ display: tab === 'process' ? 'block' : 'none' }}>
-          <ProcessTab onAddHistory={addHistory} />
-        </div>
-        <div style={{ display: tab === 'generate' ? 'block' : 'none' }}>
-          <GenerateTab
-            onAddHistory={addHistory}
-            pendingPrompt={pendingGenPrompt}
-            onPromptConsumed={() => setPendingGenPrompt('')}
-          />
-        </div>
-        <div style={{ display: tab === 'compose' ? 'block' : 'none' }}>
-          <ComposeTab
-            onAddHistory={addHistory}
-            activeVisionModel={activeVisionModel}
-            capability={capability}
-            onSendToGenerate={onSendToGenerate}
-          />
-        </div>
-        <div style={{ display: tab === 'novel' ? 'block' : 'none' }}>
-          <NovelTab />
-        </div>
-        <div style={{ display: tab === 'character' ? 'block' : 'none' }}>
-          <CharacterTab onAddHistory={addHistory} onSendToGenerate={onSendToGenerate} capability={capability} />
-        </div>
-        <div style={{ display: tab === 'artstyle' ? 'block' : 'none' }}>
-          <ArtStyleTab />
-        </div>
-      </div>
+      <footer style={S.statusbar}>
+        <ServiceStatus status={svcStatus} />
+        <span style={S.sbSep} />
+        <span style={S.sbItem} title={`${ctxKind}：${ctxName}`}>
+          <Icon name="cpu" size={12} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis' }}>{ctxName}</span>
+        </span>
+        <span style={{ ...S.sbItem, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--faint)' }}>localhost:8188</span>
+        {capability.gpu_tier && (
+          <span style={{ ...S.sbItem, fontFamily: 'var(--font-mono)', fontSize: 11 }} title={`GPU 分級來源：${capability.gpu_tier_source}`}>
+            GPU {capability.gpu_tier} · Hires {capability.hires_enabled ? '開' : '關'}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        <button style={{ ...S.sbBtn, ...(historyVisible ? { background: 'var(--accent-soft)', color: 'var(--accent)' } : {}) }} onClick={toggleHistoryVisible} title="歷史記錄">
+          <Icon name="history" size={13} />
+          歷史記錄
+          {history.length > 0 && <span key={history[0]?.id} style={{ ...S.sbCount, animation: 'cf-pop .3s var(--ease)' }}>{history.length}</span>}
+        </button>
+        <button
+          style={S.sbBtn}
+          onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+          title={theme === 'light' ? '切換為深色模式' : '切換為淺色模式'}
+          aria-label="切換淺色 / 深色主題"
+        >
+          <Icon name={theme === 'light' ? 'moon' : 'sun-medium'} size={13} />
+        </button>
+      </footer>
 
       {/* Settings modal */}
       {settingsOpen && (
         <div style={S.modalOverlay} onClick={e => e.target === e.currentTarget && setSettingsOpen(false)}>
-          <div style={{ ...S.modalBox, maxWidth: 560 }}>
+          <div style={{ ...S.modalBox, maxWidth: 580 }} role="dialog" aria-modal="true" aria-label="設定">
             <div style={S.modalHeader}>
-              <span style={S.modalTitle}>⚙ 設定</span>
-              <button style={S.modalClose} onClick={() => setSettingsOpen(false)}>×</button>
+              <span style={S.modalTitle}><Icon name="settings" size={16} style={{ color: 'var(--muted)' }} />設定</span>
+              <button className="cf-link" style={S.iconBtn} onClick={() => setSettingsOpen(false)} aria-label="關閉"><Icon name="x" size={16} /></button>
             </div>
             <div style={S.modalBody}>
               <SettingsTab
@@ -776,142 +835,57 @@ export default function App() {
                 activeTextModel={activeTextModel}
                 onTextModelChange={onTextModelChange}
               />
-              <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)', marginBottom: 12 }}>LoRA 訓練</div>
-                <TrainingTab />
-              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* History panel */}
-      <div style={S.historyPanel}>
-        <div style={S.historyHeader}>
-          <span style={S.historyTitle}>
-            歷史記錄 ({history.length}/{_MAX_HISTORY})
-          </span>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {historyVisible && history.length > 0 && (
-              <button style={S.clearBtn} onClick={clearHistory}>清除全部</button>
-            )}
-            <button style={S.historyToggleBtn} onClick={toggleHistoryVisible}>
-              {historyVisible ? '隱藏 ▲' : '顯示 ▼'}
-            </button>
+      {/* LoRA training modal（與設定同層） */}
+      {trainingOpen && (
+        <div style={S.modalOverlay} onClick={e => e.target === e.currentTarget && setTrainingOpen(false)}>
+          <div style={{ ...S.modalBox, maxWidth: 660 }} role="dialog" aria-modal="true" aria-label="LoRA 訓練">
+            <div style={S.modalHeader}>
+              <span style={S.modalTitle}><Icon name="flask-conical" size={16} style={{ color: 'var(--muted)' }} />LoRA 訓練</span>
+              <button className="cf-link" style={S.iconBtn} onClick={() => setTrainingOpen(false)} aria-label="關閉"><Icon name="x" size={16} /></button>
+            </div>
+            <div style={S.modalBody}>
+              <TrainingTab />
+            </div>
           </div>
         </div>
-
-        {historyVisible && history.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
-            {[
-              { key: 'all', label: '全部' },
-              { key: 'process', label: '線稿' },
-              { key: 'generate', label: '生圖' },
-              { key: 'compose', label: '問答' },
-              { key: 'character', label: '角色' },
-            ].map(f => (
-              <button
-                key={f.key}
-                onClick={() => setHistoryFilter(f.key)}
-                style={{
-                  fontSize: 11, padding: '2px 10px', borderRadius: 20, cursor: 'pointer',
-                  border: historyFilter === f.key ? 'none' : '1px solid var(--border)',
-                  background: historyFilter === f.key ? 'var(--accent)' : 'transparent',
-                  color: historyFilter === f.key ? 'var(--accent-contrast)' : 'var(--muted)',
-                  fontWeight: historyFilter === f.key ? 600 : 400,
-                }}
-              >{f.label}</button>
-            ))}
-          </div>
-        )}
-
-        {historyVisible && (
-          (() => {
-            const filtered = historyFilter === 'all' ? history
-              : historyFilter === 'generate' ? history.filter(h => ['generate', 'i2i', 'controlnet', 'ipadapter'].includes(h.type))
-              : history.filter(h => h.type === historyFilter)
-            return filtered.length === 0
-              ? <span style={S.historyEmpty}>{history.length === 0 ? '尚無記錄，生成後圖片會保留在此' : '此類型無記錄'}</span>
-              : (
-              <div style={S.historyScroll}>
-                {filtered.map((item) => (
-                  <div key={item.id} style={S.historyItemWrap}>
-                    <button
-                      style={S.historyDeleteBtn}
-                      onClick={() => deleteHistory(item.id)}
-                      title="刪除"
-                    >×</button>
-                    <span style={{ ...S.badge, ..._badgeStyle(item.type, S) }}>
-                      {_badgeLabel(item.type)}
-                    </span>
-                    <img
-                      src={item.thumbnail ?? item.url}
-                      style={S.historyThumb}
-                      alt=""
-                      onClick={() => setLightboxItem(item)}
-                    />
-                    <div>
-                      <div style={S.historyMeta}>{formatTime(item.ts)}</div>
-                      {item.label && (
-                        <div style={S.historyMeta} title={item.label}>
-                          {item.label.length > 22 ? item.label.slice(0, 21) + '…' : item.label}
-                        </div>
-                      )}
-                      {item.model && (
-                        <div style={S.historyMetaSub} title={item.model}>
-                          {_shortModel(item.model)}
-                        </div>
-                      )}
-                      {item.params && (item.params.ipa != null || item.params.cn != null || item.params.cnMode) && (
-                        <div style={S.historyMetaSub}>
-                          {item.params.ipa != null ? `IPA ${Number(item.params.ipa).toFixed(2)}` : 'IPA off'}
-                          {' · '}
-                          {item.params.cn != null ? `CN ${Number(item.params.cn).toFixed(2)}` : 'CN off'}
-                          {item.params.cnMode ? ` (${item.params.cnMode})` : ''}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          })()
-        )}
-      </div>
+      )}
 
       {/* Lightbox */}
       {lightboxItem && (
         <div style={S.lightboxOverlay} onClick={() => setLightboxItem(null)}>
+          <button style={S.lightboxClose} onClick={() => setLightboxItem(null)} aria-label="關閉（Esc）"><Icon name="x" size={18} /></button>
           <div style={S.lightboxBox} onClick={e => e.stopPropagation()}>
-            <button style={S.lightboxClose} onClick={() => setLightboxItem(null)}>×</button>
-            {/* 2026-07-26：改為優先原圖。本次工作階段 item.url 是全解析度 blob，
-                原本寫 thumbnail ?? url 等於永遠拿 768px（舊版 300px）縮圖再放大到
-                80vw → 必糊。重整後 _saveHistory 已把 url 覆寫成縮圖，此處自動退回縮圖。 */}
+            {/* 優先原圖（本次工作階段的 blob）；重整後 url 已被換成縮圖 */}
             <img
               src={lightboxItem.url ?? lightboxItem.thumbnail}
               style={S.lightboxImg}
-              alt=""
+              alt={lightboxItem.label || ''}
             />
             <div style={S.lightboxFooter}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                   <span style={{ ...S.badge, position: 'static', ..._badgeStyle(lightboxItem.type, S) }}>
                     {_badgeLabel(lightboxItem.type)}
                   </span>
-                  <span style={{ fontSize: 13, color: 'var(--text)' }}>{formatTime(lightboxItem.ts)}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-2)', fontFamily: 'var(--font-mono)' }}>{formatTime(lightboxItem.ts)}</span>
                   {lightboxItem.model && (
-                    <span style={{ fontSize: 12, color: 'var(--muted)' }} title={lightboxItem.model}>
+                    <span style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--font-mono)' }} title={lightboxItem.model}>
                       {_shortModel(lightboxItem.model)}
                     </span>
                   )}
                 </div>
                 {lightboxItem.label && (
-                  <div style={{ fontSize: 13, color: 'var(--muted)', maxWidth: '60vw' }}>
+                  <div style={{ fontSize: 13, color: 'var(--text)', maxWidth: '60vw' }}>
                     {lightboxItem.label}
                   </div>
                 )}
                 {lightboxItem.params && (lightboxItem.params.ipa != null || lightboxItem.params.cn != null || lightboxItem.params.cnMode) && (
-                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
                     {lightboxItem.params.ipa != null ? `IPA ${Number(lightboxItem.params.ipa).toFixed(2)}` : 'IPA off'}
                     {' · '}
                     {lightboxItem.params.cn != null ? `CN ${Number(lightboxItem.params.cn).toFixed(2)}` : 'CN off'}
@@ -925,16 +899,14 @@ export default function App() {
               <a
                 href={lightboxItem.url}
                 download={lightboxItem.filename}
-                style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600, flexShrink: 0 }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--accent-contrast)', background: 'var(--accent)', padding: '7px 12px', borderRadius: 'var(--r)', textDecoration: 'none', fontWeight: 600, flexShrink: 0 }}
               >
-                下載
+                <Icon name="download" size={14} />下載
               </a>
             </div>
           </div>
         </div>
       )}
-      </div>
     </div>
   )
 }
-

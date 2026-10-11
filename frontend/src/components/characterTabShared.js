@@ -1,4 +1,4 @@
-// Craftflow CharacterTab 共用 helper/常數（2026-06-13 A2 增量3a 抽出）
+// CharacterTab 共用 helper／常數
 
 import { request } from '../api/client'
 

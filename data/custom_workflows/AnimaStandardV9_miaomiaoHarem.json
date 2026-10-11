@@ -1,7 +1,7 @@
 {
   "1": {
     "inputs": {
-      "unet_name": "anima_turboV11.safetensors",
+      "unet_name": "miaomiaoHarem_anima12.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -11,11 +11,11 @@
   },
   "3": {
     "inputs": {
-      "wildcard_text": "masterpiece, best quality, absurdres,1girl, solo, long hair, breasts, looking at viewer, blush, bangs, large breasts, simple background, long sleeves, white background, cleavage, very long hair, closed mouth, purple eyes, collarbone, ponytail, white hair, sidelocks, pov, halo, nightgown\nNegative prompt: worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name,\nSteps: 12, CFG scale: 1, Sampler: er_sde_simple, Seed: 1112819362967577, Model: anima_turboV10, width: 1024, height: 1536, Version: ComfyUI",
-      "populated_text": "masterpiece, best quality, absurdres,1girl, solo, long hair, breasts, looking at viewer, blush, bangs, large breasts, simple background, long sleeves, white background, cleavage, very long hair, closed mouth, purple eyes, collarbone, ponytail, white hair, sidelocks, pov, halo, nightgown\nNegative prompt: worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name,\nSteps: 12, CFG scale: 1, Sampler: er_sde_simple, Seed: 1112819362967577, Model: anima_turboV10, width: 1024, height: 1536, Version: ComfyUI",
+      "wildcard_text": "masterpiece, best quality, absurdres, safe, 1girl, solo, brown hair, short hair, short twintails, heterochromia, red eyes, green eyes, light smile, closed mouth, porcelain skin, grey jacket, military jacket, high collar, zipper, chest pocket, long sleeves, black shorts, thigh strap, thigh holster, black pantyhose, knee pads, grey sneakers, full body, standing, front view, looking at viewer, simple background, light red background",
+      "populated_text": "masterpiece, best quality, absurdres, safe, 1girl, solo, brown hair, short hair, short twintails, heterochromia, red eyes, green eyes, light smile, closed mouth, porcelain skin, grey jacket, military jacket, high collar, zipper, chest pocket, long sleeves, black shorts, thigh strap, thigh holster, black pantyhose, knee pads, grey sneakers, full body, standing, front view, looking at viewer, simple background, light red background",
       "mode": "populate",
       "seed": [
-        "31",
+        "24",
         0
       ],
       "Select to add Wildcard": "Select the Wildcard to add to the text"
@@ -27,11 +27,11 @@
   },
   "4": {
     "inputs": {
-      "wildcard_text": "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name,",
-      "populated_text": "worst quality, low quality, lowres, score_1, score_2, score_3, blurry, jpeg artifacts, bad anatomy, watermark, artist name,",
+      "wildcard_text": "worst quality, low quality, lowres, blurry, jpeg artifacts, chromatic aberration, bad anatomy, bad hands, watermark, artist name, child, toddler, chibi, multiple views, reference sheet, design sheet, multiple poses, chibi inset, inset image, drop shadow, cast shadow, floor, ground, reflection, detailed background, scenery",
+      "populated_text": "worst quality, low quality, lowres, blurry, jpeg artifacts, chromatic aberration, bad anatomy, bad hands, watermark, artist name, child, toddler, chibi, multiple views, reference sheet, design sheet, multiple poses, chibi inset, inset image, drop shadow, cast shadow, floor, ground, reflection, detailed background, scenery",
       "mode": "populate",
       "seed": [
-        "31",
+        "24",
         0
       ],
       "Select to add Wildcard": "Select the Wildcard to add to the text"
@@ -68,7 +68,7 @@
   "6": {
     "inputs": {
       "seed": [
-        "31",
+        "24",
         0
       ],
       "steps": [
@@ -80,11 +80,11 @@
         2
       ],
       "sampler_name": [
-        "41",
+        "27",
         0
       ],
       "scheduler": [
-        "40",
+        "26",
         0
       ],
       "denoise": [
@@ -96,15 +96,15 @@
         0
       ],
       "positive": [
-        "54",
+        "53",
         0
       ],
       "negative": [
-        "55",
+        "54",
         0
       ],
       "latent_image": [
-        "42",
+        "34",
         0
       ]
     },
@@ -146,11 +146,11 @@
       "time_format": "%Y-%m-%d-%H%M%S",
       "show_preview": true,
       "images": [
-        "43",
+        "35",
         0
       ],
       "metadata": [
-        "58",
+        "57",
         0
       ]
     },
@@ -176,7 +176,7 @@
       "Select to add LoRA": "Select the LoRA to add to the text",
       "Select to add Wildcard": "Select the Wildcard to add to the text",
       "model": [
-        "26",
+        "28",
         0
       ],
       "clip": [
@@ -188,11 +188,11 @@
         0
       ],
       "positive": [
-        "54",
+        "53",
         0
       ],
       "negative": [
-        "55",
+        "54",
         0
       ],
       "bbox_detector": [
@@ -220,12 +220,9 @@
   },
   "24": {
     "inputs": {
-      "seed": [
-        "31",
-        0
-      ],
-      "steps": 12,
-      "cfg": 1.0,
+      "seed": 1079398034664683,
+      "steps": 30,
+      "cfg": 4,
       "sampler": "er_sde",
       "scheduler": "simple",
       "denoise": 1
@@ -236,6 +233,32 @@
     }
   },
   "26": {
+    "inputs": {
+      "text": "simple",
+      "anything": [
+        "24",
+        4
+      ]
+    },
+    "class_type": "easy showAnything",
+    "_meta": {
+      "title": "Show Any"
+    }
+  },
+  "27": {
+    "inputs": {
+      "text": "er_sde",
+      "anything": [
+        "24",
+        3
+      ]
+    },
+    "class_type": "easy showAnything",
+    "_meta": {
+      "title": "Show Any"
+    }
+  },
+  "28": {
     "inputs": {
       "strength": 1,
       "model": [
@@ -248,16 +271,54 @@
       "title": "差分擴散"
     }
   },
-  "31": {
+  "34": {
     "inputs": {
-      "seed": 909749760542365
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "55",
+        0
+      ]
     },
-    "class_type": "SeedNode",
+    "class_type": "ImpactSwitch",
     "_meta": {
-      "title": "種子"
+      "title": "Switch (Any)"
     }
   },
   "35": {
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE 解碼"
+    }
+  },
+  "38": {
+    "inputs": {
+      "string_a": [
+        "43",
+        0
+      ],
+      "string_b": [
+        "3",
+        0
+      ],
+      "delimiter": ","
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "串接"
+    }
+  },
+  "39": {
     "inputs": {
       "value": 1536
     },
@@ -266,7 +327,42 @@
       "title": "Max Size"
     }
   },
-  "37": {
+  "40": {
+    "inputs": {
+      "string": [
+        "38",
+        0
+      ],
+      "regex_pattern": "^,|,$",
+      "replace": "",
+      "case_insensitive": true,
+      "multiline": false,
+      "dotall": false,
+      "count": 0
+    },
+    "class_type": "RegexReplace",
+    "_meta": {
+      "title": "正則表達式替換"
+    }
+  },
+  "42": {
+    "inputs": {
+      "string_a": [
+        "40",
+        0
+      ],
+      "string_b": [
+        "5",
+        3
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "串接"
+    }
+  },
+  "43": {
     "inputs": {
       "group_mode": true,
       "default_active": false,
@@ -287,7 +383,7 @@
       "title": "TriggerWord Toggle (LoraManager)"
     }
   },
-  "38": {
+  "44": {
     "inputs": {
       "value": 512
     },
@@ -296,7 +392,7 @@
       "title": "Guide Size"
     }
   },
-  "39": {
+  "45": {
     "inputs": {
       "value": 1024
     },
@@ -305,63 +401,7 @@
       "title": "Width"
     }
   },
-  "40": {
-    "inputs": {
-      "text": "simple",
-      "anything": [
-        "24",
-        4
-      ]
-    },
-    "class_type": "easy showAnything",
-    "_meta": {
-      "title": "Show Any"
-    }
-  },
-  "41": {
-    "inputs": {
-      "text": "er_sde",
-      "anything": [
-        "24",
-        3
-      ]
-    },
-    "class_type": "easy showAnything",
-    "_meta": {
-      "title": "Show Any"
-    }
-  },
-  "42": {
-    "inputs": {
-      "select": 1,
-      "sel_mode": false,
-      "input1": [
-        "56",
-        0
-      ]
-    },
-    "class_type": "ImpactSwitch",
-    "_meta": {
-      "title": "Switch (Any)"
-    }
-  },
-  "43": {
-    "inputs": {
-      "samples": [
-        "6",
-        0
-      ],
-      "vae": [
-        "23",
-        0
-      ]
-    },
-    "class_type": "VAEDecode",
-    "_meta": {
-      "title": "VAE 解碼"
-    }
-  },
-  "45": {
+  "47": {
     "inputs": {
       "value": 2.5
     },
@@ -370,48 +410,13 @@
       "title": "BBOX Crop Factor"
     }
   },
-  "46": {
-    "inputs": {
-      "string_a": [
-        "37",
-        0
-      ],
-      "string_b": [
-        "3",
-        0
-      ],
-      "delimiter": ","
-    },
-    "class_type": "StringConcatenate",
-    "_meta": {
-      "title": "串接"
-    }
-  },
-  "47": {
+  "48": {
     "inputs": {
       "value": 1536
     },
     "class_type": "easy int",
     "_meta": {
       "title": "Height"
-    }
-  },
-  "48": {
-    "inputs": {
-      "string": [
-        "46",
-        0
-      ],
-      "regex_pattern": "^,|,$",
-      "replace": "",
-      "case_insensitive": true,
-      "multiline": false,
-      "dotall": false,
-      "count": 0
-    },
-    "class_type": "RegexReplace",
-    "_meta": {
-      "title": "正則表達式替換"
     }
   },
   "50": {
@@ -425,23 +430,6 @@
   },
   "51": {
     "inputs": {
-      "string_a": [
-        "48",
-        0
-      ],
-      "string_b": [
-        "5",
-        3
-      ],
-      "delimiter": ""
-    },
-    "class_type": "StringConcatenate",
-    "_meta": {
-      "title": "串接"
-    }
-  },
-  "52": {
-    "inputs": {
       "value": 1
     },
     "class_type": "easy int",
@@ -449,10 +437,10 @@
       "title": "Batch Size"
     }
   },
-  "54": {
+  "53": {
     "inputs": {
       "text": [
-        "48",
+        "40",
         0
       ],
       "clip": [
@@ -465,7 +453,7 @@
       "title": "CLIP Text Encode (Positive Prompt)"
     }
   },
-  "55": {
+  "54": {
     "inputs": {
       "text": [
         "4",
@@ -481,18 +469,18 @@
       "title": "CLIP Text Encode (Negative Prompt)"
     }
   },
-  "56": {
+  "55": {
     "inputs": {
       "width": [
-        "39",
+        "45",
         0
       ],
       "height": [
-        "47",
+        "48",
         0
       ],
       "batch_size": [
-        "52",
+        "51",
         0
       ]
     },
@@ -501,7 +489,7 @@
       "title": "空白潛在影像"
     }
   },
-  "57": {
+  "56": {
     "inputs": {
       "id": 1,
       "widget_name": "unet_name",
@@ -514,14 +502,14 @@
       "title": "Widget To String"
     }
   },
-  "58": {
+  "57": {
     "inputs": {
       "modelname": [
-        "57",
+        "56",
         0
       ],
       "positive": [
-        "51",
+        "42",
         0
       ],
       "negative": [
@@ -529,15 +517,15 @@
         0
       ],
       "width": [
-        "39",
+        "45",
         0
       ],
       "height": [
-        "47",
+        "48",
         0
       ],
       "seed_value": [
-        "31",
+        "24",
         0
       ],
       "steps": [
@@ -549,11 +537,11 @@
         2
       ],
       "sampler_name": [
-        "41",
+        "27",
         0
       ],
       "scheduler_name": [
-        "40",
+        "26",
         0
       ],
       "denoise": [

@@ -1,29 +1,23 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { notifyDone } from '../notify.js'
+import { UI } from './sharedStyles'
 
 const API = '/api/v1/training'
 
 const S = {
   root: { display: 'flex', flexDirection: 'column', gap: 24 },
   section: { display: 'flex', flexDirection: 'column', gap: 12 },
-  sectionTitle: { fontSize: 13, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1 },
+  sectionTitle: { fontSize: 12, fontWeight: 600, color: 'var(--text)', letterSpacing: '.02em' },
   row: { display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' },
-  btn: {
-    padding: '7px 18px', borderRadius: 8, border: '1px solid var(--border)',
-    background: 'var(--surface2, var(--surface-2))', color: 'var(--text)', fontSize: 13,
-    cursor: 'pointer', transition: 'opacity .15s',
-  },
-  btnPrimary: { background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none' },
-  btnDanger: { background: 'var(--tint-red-bg)', color: 'var(--danger)', border: 'none' },
-  input: {
-    padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)',
-    background: 'var(--surface2, var(--surface-2))', color: 'var(--text)', fontSize: 13, outline: 'none',
-  },
-  label: { fontSize: 12, color: 'var(--muted)', display: 'flex', flexDirection: 'column', gap: 4 },
+  btn: { ...UI.btnSecondary, padding: '7px 14px' },
+  btnPrimary: { background: 'var(--accent)', color: 'var(--accent-contrast)', borderColor: 'transparent', fontWeight: 600 },
+  btnDanger: { color: 'var(--danger)' },
+  input: { ...UI.input, width: 'auto', fontSize: 13 },
+  label: { fontSize: 12, color: 'var(--text-2)', display: 'flex', flexDirection: 'column', gap: 6 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 },
   imgCard: {
-    background: 'var(--surface2, var(--surface-2))', border: '1px solid var(--border)',
-    borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+    background: 'var(--surface)', border: '1px solid var(--border)',
+    borderRadius: 'var(--r)', overflow: 'hidden', display: 'flex', flexDirection: 'column',
   },
   imgThumb: { width: '100%', aspectRatio: '1/1', objectFit: 'cover' },
   imgCaption: {
@@ -35,8 +29,8 @@ const S = {
   imgFooter: { display: 'flex', justifyContent: 'space-between', padding: '2px 6px 6px', alignItems: 'center' },
   delBtn: { fontSize: 11, color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' },
   jobCard: {
-    background: 'var(--surface2, var(--surface-2))', border: '1px solid var(--border)',
-    borderRadius: 8, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8,
+    background: 'var(--surface-2)', border: '1px solid var(--border)',
+    borderRadius: 'var(--r)', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8,
   },
   jobHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   jobName: { fontWeight: 600, fontSize: 14 },
@@ -45,7 +39,7 @@ const S = {
   progressFill: { height: '100%', borderRadius: 3, background: 'var(--accent)', transition: 'width .3s' },
   logBox: {
     background: 'var(--code-bg)', borderRadius: 6, padding: '8px 10px',
-    fontSize: 11, color: 'var(--tint-blue-fg)', fontFamily: 'monospace', maxHeight: 120, overflowY: 'auto',
+    fontSize: 11, color: 'var(--code-fg)', fontFamily: 'var(--font-mono)', maxHeight: 120, overflowY: 'auto',
     whiteSpace: 'pre-wrap', wordBreak: 'break-all',
   },
   formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 },

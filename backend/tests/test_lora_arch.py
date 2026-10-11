@@ -74,14 +74,14 @@ def _write_civitai_info(path, trained_words):
 def test_trigger_words_preserves_zero_width_space(tmp_path, monkeypatch):
     """核心回歸：觸發詞的 U+200B 是訓練 caption 的一部分，strip 掉就打不中。
 
-    實例 ***REDACTED***_style.safetensors 的 trainedWords 是 '***REDACTED*** style\u200b'，
+    實例：畫風 LoRA 的 trainedWords 尾端帶零寬空格（'Example style\u200b' 這種形式），
     使用者手打打不出零寬空格 —— 自動注入的價值就在這裡，正規化等於白做。
     """
     monkeypatch.setattr(wb, "COMFYUI_LORAS_DIR", tmp_path)
     wb._LORA_TRIGGER_CACHE.clear()
-    _write_civitai_info(tmp_path / "ba.civitai.info", ["***REDACTED*** style\u200b"])
+    _write_civitai_info(tmp_path / "ba.civitai.info", ["Example style\u200b"])
     out = wb.lora_trigger_words([{"model": "ba.safetensors", "weight": 0.8}])
-    assert out == ["***REDACTED*** style\u200b"]
+    assert out == ["Example style\u200b"]
     assert "\u200b" in out[0]          # 零寬空格必須還在
     assert out[0] != out[0].replace("\u200b", "")
 

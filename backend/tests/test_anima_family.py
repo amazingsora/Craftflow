@@ -7,8 +7,8 @@
   D'-2   cn_fallback="img2img" 與 _inject_img2img 注入鏈
   B-3'   _set_node_input 上游參數覆寫（採樣/解析度雙真相）
 
-⚠️ 本檔同時是 **Standard_V37 定版零回歸鎖**：V37 相關斷言若失敗，代表 Anima 適配
-   污染了已定版的 V37 路徑，必須回頭修，不可改斷言就當過關。
+⚠️ 本檔同時是 **illustrious 家族路徑鎖**（SYNC-007 前為 Standard_V37 定版鎖，V37 退役後改指 V38）：
+   相關斷言若失敗，代表 Anima 適配污染了 SDXL/illustrious 路徑，必須回頭修，不可改斷言就當過關。
 
 執行：cd backend && pytest tests/test_anima_family.py -v
 """
@@ -49,9 +49,6 @@ def test_anima_style_config_golden():
     assert c.quality_prefix == (
         "masterpiece, best quality, absurdres, ultra detailed, high contrast"
     )
-    # 決策①：family 不做 safety 分級
-    for tag in ("safe", "sensitive", "explicit"):
-        assert tag not in c.quality_prefix
     # 決策②：光影組不寫死在 family
     for tag in ("bokeh", "depth of field", "backlighting", "light particles"):
         assert tag not in c.quality_prefix
@@ -228,10 +225,10 @@ def test_anima_workflow_capability_all_false():
     assert c["models"] is None
 
 
-# ── Standard_V37 定版零回歸鎖 ────────────────────────────────────────────────
+# ── illustrious 家族路徑鎖（SYNC-007：原「Standard_V37 定版鎖」，V37 已不在磁碟、改指 V38）──
 
-def test_v37_capability_unchanged():
-    wf = _load("Standard_V37.json")
+def test_illustrious_path_capability_unchanged():
+    wf = _load("Standard_V38.json")
     c = cap.resolve_capability(wf, cap.extract_checkpoint_from_wf(wf))
     assert c["family"] == "illustrious"
     assert c["ipa_supported"] is True
@@ -240,58 +237,33 @@ def test_v37_capability_unchanged():
     assert c["models"] is not None
 
 
-def test_v37_illustrious_style_config_unchanged():
-    """V37 的 prompt 由 prompt_profiles.yml 決定，但 family 仍是 fallback 底線。"""
+def test_illustrious_style_config_unchanged():
+    """illustrious 的 prompt 由 prompt_profiles.yml families 決定，STYLE_CONFIG 是 fallback 底線。"""
     c = STYLE_CONFIG[PromptStyle.ILLUSTRIOUS]
     assert c.quality_prefix == "masterpiece, best quality, amazing quality, absurdres"
     assert c.negative.startswith("worst quality, low quality, lowres, bad anatomy")
 
 
-def test_v37_profile_registered_and_anima_not():
-    """AC-3：AnimaStandardV7 刻意不登錄 workflow profile（避免與 family 兩份真相）。"""
+# ── anima 家族 prompt 鎖（SYNC-007：原 AnimaStandardV8 檔名鎖改為家族鎖）──────────
+# 官方 model card：Aesthetic／Turbo 版正負向都不要用 score_* tags。
+# （原 test_v8_negative_drops_score_tags_only 另鎖「與 STYLE_CONFIG 差異僅 score_*」，
+#  09-21 後兩者已刻意分岔、基線即失敗，SYNC-007 以官方約束取代該過時關係。）
+
+def test_anima_family_configured_and_live_workflow_is_aesthetic():
     from app.services.ai.workflow_builder import _load_prompt_profiles
-    profiles = _load_prompt_profiles()
-    assert "Standard_V37.json" in profiles
-    assert "AnimaStandardV7.json" not in profiles
-
-
-# ── AnimaStandardV8（Aesthetic v1.1）prompt 鎖 ───────────────────────────────
-# 2026-08-17：V8 底模改用 anima_aestheticV11。官方 model card 對 Aesthetic 版明文
-# 「正負向都不要用 score_* tags」，而 family(ANIMA) 的 negative 是為 base 版而設、
-# 含 score_1/2/3 → 必須在 workflow profile 這層拿掉。
-# 本組斷言鎖的是「唯一差異就是 score_*」——防的是日後改 family negative 時忘了同步
-# 這份副本（prompt_profiles.yml 只有整段取代語義，沒有「移除單項」，副本無可避免）。
-
-def test_v8_profile_registered_and_matches_checkpoint():
-    from app.services.ai.workflow_builder import _load_prompt_profiles
-    profiles = _load_prompt_profiles()
-    assert "AnimaStandardV8.json" in profiles
-    wf = _load("AnimaStandardV8.json")
+    assert "anima" in _load_prompt_profiles()
+    wf = _load("AnimaStandardV9_aesthetic.json")
     ckpt = cap.extract_checkpoint_from_wf(wf)
-    assert "aesthetic" in ckpt.lower(), f"V8 底模已非 aesthetic（{ckpt}），本組斷言的前提失效"
+    assert "aesthetic" in ckpt.lower(), f"底模已非 aesthetic（{ckpt}），本組斷言的前提失效"
     assert cap.resolve_family(ckpt) == "anima"
 
 
-def test_v8_negative_drops_score_tags_only():
-    """官方明令：Aesthetic 版正負向皆不得含 score_*。且與 family 的差異僅止於此。"""
+def test_anima_family_has_no_score_tags():
     from app.services.ai.workflow_builder import _load_prompt_profiles
-    v8 = _load_prompt_profiles()["AnimaStandardV8.json"]["negative"]
-    fam = STYLE_CONFIG[PromptStyle.ANIMA].negative
-
-    def toks(x):
-        return [t.strip() for t in x.split(",") if t.strip()]
-
-    assert not [t for t in toks(v8) if t.startswith("score_")]
-    assert [t for t in toks(fam) if t not in toks(v8)] == ["score_1", "score_2", "score_3"]
-    assert [t for t in toks(v8) if t not in toks(fam)] == []
-
-
-def test_v8_quality_prefix_falls_back_to_family():
-    """quality_prefix 刻意不登錄（family 現值已不含 score_*，符合官方）。
-    若哪天有人在 V8 profile 補了 quality_prefix，這條會提醒他順便檢查 score_*。"""
-    from app.services.ai.workflow_builder import _load_prompt_profiles
-    prefix = _load_prompt_profiles()["AnimaStandardV8.json"].get("quality_prefix")
-    assert prefix is None or "score_" not in prefix
+    fam = _load_prompt_profiles()["anima"]
+    for field in ("quality_prefix", "negative"):
+        toks = [t.strip() for t in fam[field].split(",") if t.strip()]
+        assert not [t for t in toks if t.startswith("score_")], field
     assert "score_" not in STYLE_CONFIG[PromptStyle.ANIMA].quality_prefix
 
 
@@ -692,10 +664,10 @@ def test_set_node_input_missing_node():
     assert ops._set_node_input({}, "nope", "steps", 1) is False
 
 
-def test_v37_resolution_override_reaches_metadata():
+def test_illustrious_path_resolution_override_reaches_metadata():
     """V37 的 width/height 同樣是 easy int 參照，且同時餵 EmptyLatentImage 與 Image Saver。
     改動後兩者同源 —— 出圖尺寸不變，metadata 由『恆記工作流內建值』修正為實際值。"""
-    wf = _load("Standard_V37.json")
+    wf = _load("Standard_V38.json")
     el = next(k for k, v in wf.items()
               if isinstance(v, dict) and v.get("class_type") == "EmptyLatentImage")
     w_ref = wf[el]["inputs"]["width"]
@@ -724,8 +696,13 @@ def test_fullbody_suffix_is_single_illustration():
     low = suffix.lower()
     for banned in ("design sheet", "reference sheet", "multiple views"):
         assert banned not in low, banned
-    assert "character illustration" in low
-    assert "full body portrait" in low
+    # [CN-097] SYNC-005 軌 S（2026-09-21）：D1 刻意拔掉這兩個泛詞，斷言反轉。
+    # 這**不是**「改斷言充當通過」—— 是使用者核可的行為變更（AGENT_SYNC §2.5），
+    # 原斷言 `assert "character illustration" in low` / `"full body portrait" in low`
+    # 已不成立。回滾 D1 時本處兩行也要一併改回。
+    assert "character illustration" not in low
+    assert "portrait" not in low, "CN-070：portrait 壓低臉部佔比，正向不得再出現"
+    assert "full body" in low
     assert "solo" in low
     assert "front view" in low
     assert low.endswith(", light red background")
@@ -781,39 +758,7 @@ def test_strip_sheet_tags_preserves_legit_character_tags():
     assert _strip_sheet_tags(p) == p
 
 
-# ── G-1 / G-2：V37 profile 品質段（2026-07-26）────────────────────────────────
-
-def test_v37_profile_quality_prefix_and_suffix_golden():
-    """G-5 golden：profile 層（非 family 層）的品質段定版鎖。
-    2026-08-12 R4-C/D/E 改版 —— 回滾 G-1 美學加權段、停用 G-2 尾綴、negative 去 sketch。"""
-    from app.services.ai.workflow_builder import _load_prompt_profiles
-    p = _load_prompt_profiles()["Standard_V37.json"]
-    # R4-C：樸素三段，不含美學/年份 tag
-    assert p["quality_prefix"] == "masterpiece, best quality, absurdres"
-    for tag in ("newest", "very aesthetic", "highres"):
-        assert tag not in p["quality_prefix"]
-    # R4-D：尾綴美學段停用 → 該欄位不得登錄（登錄空字串也算停用，見 _workflow_profile_overrides）
-    assert not p.get("quality_suffix")
-    # R4-E：sketch 與 clean lineart 訴求對衝 → 移除。tag 級比對避免子字串誤判
-    neg_tags = {t.strip() for t in p["negative"].split(",")}
-    assert "sketch" not in neg_tags
-    # P1-1：環境/投影抑制（R3）；裸 shadow 刻意不加，避免壓掉角色 shading
-    for tag in ("drop shadow", "cast shadow", "floor", "ground", "reflection"):
-        assert tag in neg_tags
-    assert "shadow" not in neg_tags
-    # 人設圖 profile 仍禁用場景細節
-    assert "detailed background" in p["negative"]
-
-
-def test_v37_profile_overrides_reach_compiler_kwargs():
-    """profile → compile_prompt kwargs 的欄位對映（只驗登錄欄位有轉成 *_override）。"""
-    from app.services.ai.workflow_builder import _workflow_profile_overrides
-    ov = _workflow_profile_overrides("Standard_V37.json")
-    assert ov["quality_prefix_override"] == "masterpiece, best quality, absurdres"
-    assert ov["negative_override"].startswith("worst quality, low quality, lowres")
-    # R4-D：未登錄欄位不佔位，讓 compile() 的 family fallback 維持有效
-    assert "quality_suffix_override" not in ov
-
+# ── 權重群組展開機制（原 G-1／G-2 V37 配方鎖已隨 SYNC-007 移除，機制測試保留）──────
 
 def test_weight_group_expansion_still_works():
     """權重群組語法要能展開進 banned_tags，否則 LLM 重複吐 highres/absurdres/
@@ -833,7 +778,7 @@ def test_weight_group_expansion_still_works():
 
 # ── H-3：Image Saver metadata prompt 與實跑同源（2026-07-26）──────────────────
 
-@pytest.mark.parametrize("wf_name", ["Standard_V37.json", "AnimaStandardV7.json"])
+@pytest.mark.parametrize("wf_name", ["Standard_V38.json", "AnimaStandardV7.json"])
 def test_saver_metadata_prompt_matches_injected(wf_name):
     """注入後 saver 的 positive/negative 必須是實際送出值，不再是內建 wildcard 鏈參照。"""
     wf = _load(wf_name)
@@ -858,7 +803,7 @@ def test_saver_metadata_sync_is_noop_without_saver():
 
 def test_inject_prompts_still_writes_clip_text_encode():
     """H-3 零回歸：saver 同步不得取代原本的 CLIPTextEncode 注入。"""
-    wf = _load("Standard_V37.json")
+    wf = _load("Standard_V38.json")
     ops._inject_prompts(wf, "POS_ACTUAL", "NEG_ACTUAL")
     texts = {n["inputs"].get("text") for n in wf.values()
              if isinstance(n, dict) and n.get("class_type") == "CLIPTextEncode"}
@@ -991,7 +936,7 @@ def test_capability_falls_back_to_img2img_when_lllite_unavailable(monkeypatch):
     assert out2["lllite_weight"] == "anima-lllite-any-test-like-v2.safetensors"
 
 
-def test_v37_capability_unaffected_by_lllite(monkeypatch):
+def test_illustrious_path_capability_unaffected_by_lllite(monkeypatch):
     """零回歸鎖：SDXL/V37 路徑 cn_supported=True，根本不該走進候選鏈解析。"""
     from app.services.ai import capability as cap
     called = {"n": 0}
@@ -1001,8 +946,115 @@ def test_v37_capability_unaffected_by_lllite(monkeypatch):
         return "should-not-be-used.safetensors"
     monkeypatch.setattr(cap, "_resolve_lllite_weight", _spy)
 
-    wf = _load("Standard_V37.json")
+    wf = _load("Standard_V38.json")
     out = cap.resolve_capability(wf, cap.extract_checkpoint_from_wf(wf))
     assert out["cn_supported"] is True
     assert out["cn_fallback"] is None and out["lllite_weight"] is None
     assert called["n"] == 0, "V37 不該觸發 LLLite 偵測（多打一次 ComfyUI API）"
+
+
+# ── SYNC-005 軌 S｜平塗算子攔截（2026-09-21）──────────────────────────────────
+
+def test_flat_style_operators_banned_for_anima_only():
+    """C2：算子清單只掛 ANIMA，不得污染 Illustrious 的軌 S 對照組。"""
+    from app.services.ai.prompt_engine.styles import (
+        STYLE_CONFIG, PromptStyle, _FLAT_STYLE_OPERATOR_TAGS,
+    )
+    assert _FLAT_STYLE_OPERATOR_TAGS <= STYLE_CONFIG[PromptStyle.ANIMA].banned_tags
+    for other in (PromptStyle.ILLUSTRIOUS, PromptStyle.SDXL, PromptStyle.NOOBAI):
+        leaked = _FLAT_STYLE_OPERATOR_TAGS & STYLE_CONFIG[other].banned_tags
+        assert not leaked, f"{other} 不該帶平塗算子（軌 S 對照組會被污染）: {leaked}"
+
+
+def test_flat_style_operators_actually_stripped_from_llm_output():
+    """C1：**真的跑** sanitizer，不是只驗清單有沒有那幾個字串。
+
+    對應 CLAUDE.md 編程檢查點 1（曾因只驗欄位、沒真的執行而上線即 500）。
+    """
+    from app.services.ai.prompt_engine.compiler import _sanitize_to_list
+    from app.services.ai.prompt_engine.styles import STYLE_CONFIG, PromptStyle
+    banned = STYLE_CONFIG[PromptStyle.ANIMA].banned_tags
+
+    # ⚠️ 存活標記刻意用 brown hair / short hair，**不可用 1girl / solo** ——
+    #    `_SUBJECT_COUNT_TAGS` 本身就含 1girl 與 solo（styles.py），它們一樣會被剝除。
+    out = _sanitize_to_list(
+        "brown hair, flat color, cel shading, saturated colors, short hair", banned)
+    assert out == ["brown hair", "short hair"]
+
+    # 權重寫法：compiler.py:561 的正規化已能處理，本測試固定住該前提
+    # （若哪天它退化，這裡會紅，而不是靜默放行算子）。
+    for variant in ("(flat color:1.2)", "flat color:1.2", "(flat color:1.2",
+                    "FLAT COLOR", "(flat color, cel shading:1.2)"):
+        assert _sanitize_to_list(f"brown hair, {variant}, short hair", banned) \
+            == ["brown hair", "short hair"], variant
+
+    # 複數／同義變體：由 _FLAT_STYLE_OPERATOR_TAGS 收尾（精確字串比對，故逐一列舉）
+    for variant in ("flat colors", "flat coloring", "cel shaded", "vibrant colors",
+                    "thick outlines", "bold clean outlines"):
+        assert _sanitize_to_list(f"brown hair, {variant}, short hair", banned) \
+            == ["brown hair", "short hair"], variant
+
+
+def test_nested_weight_syntax_is_known_leak():
+    """已知漏洞，**本輪不修**，先固定現況（AGENT_SYNC §2.4 5-2）。
+
+    `((flat color:0.5):1.2)` → `.strip("()")` 剝掉頭尾所有括號得
+    `flat color:0.5):1.2`，尾段正則只去掉 `:1.2` ⇒ 正規化成 `flat color:0.5)`，
+    不命中 banned_set。LLM 不會自發吐出這種寫法（那是 prompt_profiles.yml 繞
+    per-tag 權重用的），故風險低。**哪天要修這個洞，本測試會提醒同步更新。**
+    """
+    from app.services.ai.prompt_engine.compiler import _sanitize_to_list
+    from app.services.ai.prompt_engine.styles import STYLE_CONFIG, PromptStyle
+    out = _sanitize_to_list("brown hair, ((flat color:0.5):1.2), short hair",
+                            STYLE_CONFIG[PromptStyle.ANIMA].banned_tags)
+    assert out == ["brown hair", "((flat color:0.5):1.2)", "short hair"]
+# ── SYNC-005 軌 S｜範例洩漏與泛用風格詞（2026-09-21，項目 2/3）────────────────
+
+def test_anima_template_examples_are_traceable():
+    """項目2：EXAMPLES 的每個 Output tag 都要能對回 Input，且不得含專案角色特徵。
+
+    根因（generation_history #750 實錘）：角色的「外貌」欄位**零服裝描述**，
+    prompt 卻吐出 `grey combat suit, tactical vest` —— 逐字來自舊 EXAMPLES 第二例。
+    而 `_DANBOORU_COMMON_RULES` 明寫 `STRICT: Do NOT add clothing ... NOT mentioned
+    in the input`，三個舊範例卻全部在示範加料。**規則說一套、範例示範另一套，
+    LLM 學範例不學規則。**
+    """
+    from app.services.ai.prompt_engine.styles import _ANIMA_TEMPLATE
+    ex = _ANIMA_TEMPLATE.split("[EXAMPLES]")[1].split("[INPUT]")[0]
+    # 舊範例的加料字串，一個都不准回來
+    for leaked in ("tactical vest", "grey combat suit", "robe", "serious expression",
+                   "closed mouth", "looking at viewer"):
+        assert leaked not in ex, f"EXAMPLES 又在示範加料: {leaked}"
+    # 不得與專案角色特徵重合（LLM 會分不清自己是在翻譯還是在抄）
+    for overlap in ("heterochromia", "brown hair", "異色瞳", "戰鬥服"):
+        assert overlap not in ex, f"EXAMPLES 與專案角色重合: {overlap}"
+    assert "TRACEABILITY" in _ANIMA_TEMPLATE
+
+
+def test_anima_template_still_renders():
+    """**真的跑** .format() —— CLAUDE.md 檢查點 1。
+
+    歷史事故：f-string 雙層大括號沒展開，上線即 500。本測試確保模板改動後
+    `{prompt}` 仍是唯一的 format 佔位符，且不會丟 KeyError／IndexError。
+    """
+    from app.services.ai.prompt_engine.styles import _ANIMA_TEMPLATE
+    rendered = _ANIMA_TEMPLATE.format(prompt="測試輸入：金色短髮的少女")
+    assert "測試輸入：金色短髮的少女" in rendered
+    assert "{prompt}" not in rendered
+    assert "[EXAMPLES]" in rendered and "[RESULT]" in rendered
+
+
+def test_generic_style_tags_banned_for_anima_only():
+    """項目3：泛用風格詞只掛 ANIMA，且真的會被剝除。"""
+    from app.services.ai.prompt_engine.compiler import _sanitize_to_list
+    from app.services.ai.prompt_engine.styles import (
+        STYLE_CONFIG, PromptStyle, _GENERIC_STYLE_TAGS,
+    )
+    assert _GENERIC_STYLE_TAGS <= STYLE_CONFIG[PromptStyle.ANIMA].banned_tags
+    for other in (PromptStyle.ILLUSTRIOUS, PromptStyle.SDXL):
+        assert not (_GENERIC_STYLE_TAGS & STYLE_CONFIG[other].banned_tags), other
+
+    banned = STYLE_CONFIG[PromptStyle.ANIMA].banned_tags
+    for variant in ("anime style", "character illustration", "digital art", "illustration"):
+        assert _sanitize_to_list(f"brown hair, {variant}, short hair", banned) \
+            == ["brown hair", "short hair"], variant

@@ -1,9 +1,4 @@
-"""FastAPI 進入點 — logging 設定、16 個 router 掛載、啟動健檢、全域例外處理。
-
-log 落檔在 repo-root 的 `data/logs/backend.log`（刻意在 backend/ 之外，避免 uvicorn --reload
-的 watchfiles 每寫一行就洗版）。啟動時 `_startup_healthcheck` 檢查預期 workflow 在位。
-路由清單見 doc/MODULE_MAP.md §2。
-"""
+"""FastAPI 進入點 — logging 設定、16 個 router 掛載、啟動健檢、全域例外處理 [FD-116]"""
 import logging
 import logging.handlers
 from pathlib import Path
@@ -28,7 +23,7 @@ logging.basicConfig(level=logging.INFO,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.core.config import API_PREFIX, APP_TITLE, APP_VERSION
+from app.core.config import API_PREFIX, APP_TITLE, APP_VERSION, CORS_ORIGINS
 from app.core.backup import backup_loop
 from app.core.database import init_db
 from app.api import projects, chapters, volumes, characters, illustrations, analysis, ai_text, ai_art, status, art_generate, factions, settings, art_styles, training, export, generation_history
@@ -45,6 +40,10 @@ def _startup_healthcheck():
                     CUSTOM_WORKFLOWS_DIR, ", ".join(missing))
     else:
         log.info("[healthcheck] 預期工作流齊備（%d 檔）", len(expected))
+    from app.core import config as cfg
+    # [CN-133] 實際採用的 GPU 等級與補進環境的預設鍵（.env 已寫的鍵不會出現在這裡）
+    log.info("[gpu-tier] %s（%s）preset=%s hires=%s",
+             cfg.GPU_TIER, cfg.GPU_TIER_SOURCE, cfg.GPU_TIER_PRESET_APPLIED or "無", cfg.HIRES_ENABLED)
 
 
 @asynccontextmanager
@@ -61,7 +60,7 @@ app = FastAPI(title=APP_TITLE, version=APP_VERSION, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Phase 1: local only, tighten in Phase 4
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

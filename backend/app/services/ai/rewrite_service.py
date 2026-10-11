@@ -1,8 +1,4 @@
-"""
-Rewrite suggestion engine — calls Ollama to produce rewritten paragraph suggestions.
-Never modifies source text; output is always written to a separate report.
-Ported from tools/Craftflow/rewrite_engine.py.
-"""
+"""Rewrite suggestion engine — calls Ollama to produce rewritten paragraph suggestions [FD-087]"""
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -6,13 +6,6 @@
 執行（本機，ComfyUI 要開著）：
     cd backend && python tools/vram_probe.py               # 每 2 秒取樣，Ctrl-C 結束
     cd backend && python tools/vram_probe.py --interval 1 --csv probe.csv
-
-判讀方式：
-    1. 重啟 ComfyUI → 跑本探針 → 記下 baseline reserved（應接近 0）
-    2. 用 Standard_V37（內嵌 fabricatedXL_v70）生一張 → reserved 停在 A
-    3. 把全域 checkpoint 切成別的模型再生一張 → reserved 停在 B
-       B ≈ A          → 只快取一個，會換出換入
-       B ≈ A + 單模型  → **雙模型同時駐留**，即 16.2G 的來源
 """
 from __future__ import annotations
 

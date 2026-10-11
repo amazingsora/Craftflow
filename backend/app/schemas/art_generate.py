@@ -1,8 +1,4 @@
-"""art_generate request models。
-
-自 api/art_generate.py 下沉（2026-06-13 A1 Step 4）：
-解除 services 對 api 層型別的依賴（_build_txt2img 吃 GenerateRequest）。
-"""
+"""art_generate request models（放在 schemas 讓 services 不依賴 api 層）。"""
 from __future__ import annotations
 
 from typing import Optional
@@ -24,7 +20,19 @@ class GenerateRequest(BaseModel):
     steps: int = 20
     seed: int = -1
     art_style_id: Optional[int] = None
+    character_id: Optional[int] = None  # 「以此角色生圖」帶入時有值 → 未成年護欄依角色年齡判定
 
 
 class GenerateAsyncRequest(GenerateRequest):
     batch_size: int = 1  # 1~8，>1 時同 seed 批次出多張（挑圖用）
+
+
+class CustomTagEntry(BaseModel):
+    label: str = ""
+    tag: str
+
+
+class CustomTagsPayload(BaseModel):
+    """[CN-131] tag 管理整份覆寫；正規化與上限檢查在 custom_tags.save_custom_tags"""
+    series: list[CustomTagEntry] = []
+    artists: list[CustomTagEntry] = []

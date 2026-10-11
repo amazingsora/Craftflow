@@ -1,14 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""
-Prompt style definitions — one config per model family.
-
-Each style defines:
-  quality_prefix  — prepended to final prompt (e.g. score tags for Pony)
-  negative        — model-appropriate negative prompt
-  banned_tags     — tags stripped from LLM output before quality_prefix is added
-                    The StyleConfig validator automatically adds quality_prefix tags here.
-  llm_template    — few-shot prompt sent to Ollama
-"""
+"""Prompt style definitions — one config per model family [FD-084]"""
 from __future__ import annotations
 
 import re
@@ -39,11 +30,7 @@ class StyleConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sync_banned_tags(self) -> StyleConfig:
-        """Automatically add quality_prefix tags to banned_tags to prevent duplication.
-
-        P2：先展開 SD 權重群組語法（見 _WEIGHT_GROUP_RE），再逐一 split，避免權重寫法
-        把 tag 拆爛成不會命中 banned_set 的破碎字串。
-        """
+        """Automatically add quality_prefix tags to banned_tags to prevent duplication [FD-085]"""
         if self.quality_prefix:
             expanded = _WEIGHT_GROUP_RE.sub(r'\1', self.quality_prefix)
             extra_banned = {t.strip() for t in expanded.split(",") if t.strip()}
@@ -76,7 +63,6 @@ _QUALITY_TAGS_ILLUSTRIOUS = {
 # [CN-025] Anima 蒼白 tag 待用清單：刻意不進 banned_tags，僅文件化保留
 
 _YEAR_TAGS = {"newest", "recent", "mid", "early", "old"}
-_RATING_TAGS_ANYTHINGXL = set()
 
 _QUALITY_TAGS_ANYTHINGXL = {
     "masterpiece", "best quality", "great quality", "good quality",
@@ -90,6 +76,30 @@ _LINEART_ARTIFACT_RE = re.compile(
     r'|pencil sketch|sketch style|sketch outline|monochrome sketch',
     re.IGNORECASE,
 )
+
+# ── 平塗算子：疊在原生平塗的底模上會過驅動（高光炸開）。僅擋 LLM 輸出、僅 ANIMA；
+# banned_set 是精確比對，故列出同義／複數變體。手動指定的畫風 tag 不受影響。
+_FLAT_STYLE_OPERATOR_TAGS = {
+    # 上色方式
+    "flat color", "flat colors", "flat colour", "flat colours",
+    "flat coloring", "flat colouring", "flat cel shaded coloring",
+    "flat cel shaded colouring", "anime coloring", "anime colouring",
+    # 陰影形式
+    "cel shading", "cel-shading", "celshading", "cel shaded", "cel-shaded",
+    "flat shading",
+    # 線條強度
+    "bold clean outlines", "bold outlines", "clean outlines", "thick outlines",
+    # 飽和度
+    "saturated colors", "saturated colours", "saturated color", "saturated colour",
+    "vibrant colors", "vibrant colours",
+}
+
+# ── 泛用風格詞：對動漫底模是無效資訊，只稀釋描述性 tag（僅 ANIMA）
+_GENERIC_STYLE_TAGS = {
+    "anime style", "anime style illustration", "anime illustration", "anime art",
+    "character illustration", "character design", "character sheet illustration",
+    "digital art", "digital illustration", "illustration",
+}
 
 _SD_SYNTAX_TAGS = {
     "masterpiece", "best quality", "score_9", "ultra detailed",
@@ -111,8 +121,10 @@ _COLOR_RULES = (
 
 _DANBOORU_COMMON_RULES = f"""- FORMAT: Output ONLY comma-separated tags. NO key-value pairs (e.g., no "name:", no "age:").
 - GENDER: Always start with a gender tag (1boy, 1girl, 2boys, etc.) based on the input.
+- NAMES: A character's personal name (e.g. the name at the start of the input) is NOT a tag. Omit it. NEVER romanize or transliterate a Chinese name into Latin letters.
 - NO-GO: No "Output:" prefix, No "Tags:" prefix, No explanations, No capital letters.
-- CONFLICT: "外貌與個性" (Priority Traits) and "服裝設定" (Outfit Setting) ALWAYS override "視覺參考特徵" (Visual Traits). (a) If Visual says "pink jacket" but Outfit Setting says "grey combat suit", output ONLY the Outfit Setting outfit — discard the Visual outfit entirely. (b) If Visual says "purple eyes" but Priority Traits says "brown hair" / "異色瞳", use Priority Traits only.
+- MERGE: "外貌與個性" (Priority Traits) and "服裝設定" (Outfit Setting) decide colours and identity. "視覺參考特徵" (Visual Traits) adds the structure they leave out: each garment piece, hairstyle shape, pose and expression. Output the settings' colours together with the Visual pieces. Only when a Visual phrase directly contradicts the settings (another colour, another hair length, another kind of garment) drop that Visual phrase and keep the settings.
+- GARMENTS: One tag per garment piece. When the Visual lists the pieces of an outfit, output those pieces instead of a single whole-outfit word.
 - MODIFIERS: Pay extreme attention to hair length and style modifiers. "短雙馬尾" = "short hair, short twin tails" or "short hair, short ponytail".
 - HETEROCHROMIA: If "異色瞳" is present, output "heterochromia" plus BOTH eye colors as PLURAL danbooru tags. Example: 左眼紅右眼綠 → heterochromia, red eyes, green eyes. NEVER write a side in parentheses (no "red eye (left)") — parentheses are weight syntax and corrupt the prompt.
 - PASSTHROUGH: English tags already present in the input MUST be copied to the output verbatim, unchanged.
@@ -252,8 +264,8 @@ Convert Chinese descriptions into anime semantic tags for Illustrious XL.
 Input: 白色長捲髮，金色眼睛，天使氣質的少女
 Output: 1girl, solo, white hair, long hair, curly hair, golden eyes, angel, angelic, gentle expression
 
-Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮，灰色戰鬥服
-Output: 1girl, solo, heterochromia, red eyes, green eyes, brown hair, short hair, grey combat suit, tactical vest
+Input: 黑色短髮的少女，服裝設定：深藍色水手服，視覺參考特徵（草圖結構）：短袖上衣，百褶裙，領巾，樂福鞋，雙手背在身後，閉眼微笑
+Output: 1girl, solo, black hair, short hair, navy blue serafuku, short sleeves, pleated skirt, neckerchief, loafers, arms behind back, closed eyes, smile
 
 Input: 銀髮紫瞳的魔法師少年
 Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
@@ -272,18 +284,25 @@ Convert Chinese descriptions into anime danbooru tags for Anima (Cosmos-Predict2
 - VOCABULARY: Use standard danbooru anime tags. Anima is trained on danbooru-style captions.
 - ANTI-LEAK: Translate ONLY what the input states. NEVER copy vocabulary, props, or settings
   from the EXAMPLES below into your output unless the input itself mentions them.
-{_SKIN_SCOPE_RULES}- NO-SAFETY: Do NOT add rating tags (safe, sensitive, questionable, explicit). Handled elsewhere.
+- TRACEABILITY: Every tag you output must trace back to a specific phrase in the [INPUT].
+  The EXAMPLES below follow this strictly — each output tag maps to one input phrase.
 {_DANBOORU_COMMON_RULES}
 
 [EXAMPLES]
 Input: 藍色長髮雙馬尾，藍色眼睛的少女，微笑
-Output: 1girl, solo, blue hair, long hair, twintails, blue eyes, smile, closed mouth, looking at viewer
+Output: 1girl, solo, blue hair, long hair, twintails, blue eyes, smile
 
-Input: 左眼為紅色，右眼為綠色的異色瞳少女，短褐色頭髮，灰色戰鬥服
-Output: 1girl, solo, heterochromia, red eyes, green eyes, brown hair, short hair, grey combat suit, tactical vest
+Input: 金色短髮、琥珀色眼睛的女學生，穿著水手服
+Output: 1girl, solo, blonde hair, short hair, amber eyes, serafuku
 
-Input: 銀髮紫瞳的魔法師少年
-Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
+Input: 銀髮紫瞳的魔法師少年，戴著尖頂帽
+Output: 1boy, solo, silver hair, purple eyes, mage, wizard hat
+
+Input: 莉莉絲，黑色長髮、紫色眼睛的少女，微笑
+Output: 1girl, solo, black hair, long hair, purple eyes, smile
+
+Input: 黑色短髮的少女，服裝設定：深藍色水手服，視覺參考特徵（草圖結構）：短袖上衣，百褶裙，領巾，樂福鞋，雙手背在身後，閉眼微笑
+Output: 1girl, solo, black hair, short hair, navy blue serafuku, short sleeves, pleated skirt, neckerchief, loafers, arms behind back, closed eyes, smile
 
 [INPUT]
 {{prompt}}
@@ -295,7 +314,7 @@ Output: 1boy, solo, silver hair, purple eyes, mage, robe, serious expression
 
 STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
     PromptStyle.SDXL: StyleConfig(
-        # 2026-06-23：對齊實測有效組合（amazing quality, absurdres）；原 high quality 偏弱。
+        # 實測有效組合；high quality 效果偏弱
         quality_prefix="masterpiece, best quality, amazing quality, absurdres",
         # 補強手指/解剖/壓縮假影防護（原版缺 bad hands/fingers/jpeg → 爛手與死白膚色擋不住）。
         negative=(
@@ -338,7 +357,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
         banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_ILLUSTRIOUS | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
         llm_template=_ILLUSTRIOUS_TEMPLATE,
     ),
-    # [CN-030] Anima 配方來自附件二實測基準，非官方 prompt（官方那組追了會洗白）；三項決策見 CODE_NOTES
+    # [CN-030] Anima 配方採實測基準而非官方 prompt（官方組會洗白）
     PromptStyle.ANIMA: StyleConfig(
         quality_prefix="masterpiece, best quality, absurdres, ultra detailed, high contrast",
         # [CN-031] Anima 負向三段結構；刻意不加裸 shadow（會壓掉角色身上的 shading）
@@ -348,7 +367,10 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
             "drop shadow, cast shadow, floor, ground, reflection, "
             "overexposed, washed out, faded, low contrast, blown out highlights, pale"
         ),
-        banned_tags=_QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS,
+        banned_tags=(
+            _QUALITY_TAGS_GENERIC | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS
+            | _FLAT_STYLE_OPERATOR_TAGS | _GENERIC_STYLE_TAGS
+        ),
         llm_template=_ANIMA_TEMPLATE,
     ),
     PromptStyle.ANYTHINGXL: StyleConfig(
@@ -360,7 +382,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
             "blurry, artist name"
         ),
         banned_tags=(
-            _QUALITY_TAGS_ANYTHINGXL | _YEAR_TAGS | _RATING_TAGS_ANYTHINGXL
+            _QUALITY_TAGS_ANYTHINGXL | _YEAR_TAGS 
             | _QUALITY_TAGS_SCORE | _SUBJECT_COUNT_TAGS
         ),
         llm_template=_ANYTHINGXL_TEMPLATE,
@@ -368,7 +390,7 @@ STYLE_CONFIG: dict[PromptStyle, StyleConfig] = {
 }
 
 
-# [CN-032] booru upsampler system prompt 移植自 V37；措辭以 G1-1 手動 A/B 結果為準
+# [CN-032] booru upsampler system prompt；措辭以手動 A/B 結果為準
 UPSAMPLE_SYSTEM_PROMPT = """[TASK]
 You are a Danbooru tag upsampler for anime Stable Diffusion. Expand the given SHORT tag list
 into a denser, richer set of danbooru tags that describe the SAME subject and scene.

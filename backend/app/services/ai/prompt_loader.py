@@ -1,20 +1,4 @@
-"""
-Prompt file loader with hardcoded fallback defaults.
-
-Usage:
-    from app.services.ai.prompt_loader import load_prompt
-
-    # No variables — returns raw text:
-    prompt = load_prompt("art/sketch_critique")
-
-    # With variables — uses str.format_map():
-    prompt = load_prompt("character/generate_summary", name="Alice", raw_notes="...")
-
-File convention:
-    Prompt files live in backend/app/prompts/{key}.txt
-    Variables use {var_name} syntax.
-    Literal braces in JSON examples must be doubled: {{ and }}
-"""
+"""Prompt file loader with hardcoded fallback defaults [FD-086]"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -109,6 +93,9 @@ Translate the sketch into Stable Diffusion tags. Hard rules:
 2. For clothing, describe the actual silhouette objectively (e.g. vest, hoodie, sleeveless). Never invent unrelated styles (suit, gown, jacket).
 3. Default background: white background, simple background. Do NOT invent complex scenes.
 4. Output format: comma-separated English tags only. No natural language sentences.
+5. Each tag is one definite Danbooru tag (1-3 words). If two options seem possible, choose the more likely one and write only that.
+6. Only name things that ARE present; anything absent is simply left out.
+7. Each tag appears once.
 """,
 
     "art/composition_analysis": """\
@@ -127,6 +114,9 @@ Translate the sketch into Stable Diffusion tags. Hard rules:
 2. For clothing, describe the actual silhouette objectively (e.g. vest, hoodie, sleeveless). Never invent unrelated styles (suit, gown, jacket).
 3. Default background: white background, simple background. Do NOT invent complex scenes.
 4. Output format: comma-separated English tags only. No natural language sentences.
+5. Each tag is one definite Danbooru tag (1-3 words). If two options seem possible, choose the more likely one and write only that.
+6. Only name things that ARE present; anything absent is simply left out.
+7. Each tag appears once.
 """,
 
     "art/describe_illustration": """\

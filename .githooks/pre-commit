@@ -1,0 +1,12 @@
+#!/bin/sh
+# Privacy gate for the public repo. Enable once per clone:
+#   git config core.hooksPath .githooks
+# Details: tools/check_oss.py (rules) / doc/reference/CODE_NOTES.md CN-135
+ROOT="$(git rev-parse --show-toplevel)"
+for PY in python python3 py; do
+  if command -v "$PY" >/dev/null 2>&1; then
+    exec "$PY" "$ROOT/tools/check_oss.py" --staged
+  fi
+done
+echo "[check-oss] python not found; commit blocked. Install Python or use --no-verify knowingly." >&2
+exit 1

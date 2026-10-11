@@ -1,15 +1,7 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""所有環境變數旋鈕的單一入口（讀專案根 .env）。
-
-分區：路徑 / AI 服務位址 / LoRA 訓練 / 資料安全（快照·備份）/ VRAM Guardian /
-Personal Style / Prompt 擴寫 / 生圖微調。
-
-慣例：
-  - 每個旋鈕都要有預設值，缺 .env 也能啟動。
-  - 新增旋鈕時預設值必須是「零行為變更」，需要實驗的功能預設關閉。
-  - 執行期可切換的設定（checkpoint/workflow/模型）不在這裡，在 core/state.py。
-"""
+"""所有環境變數旋鈕的單一入口（讀專案根 .env） [FD-028]"""
 import os
+import subprocess
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -18,11 +10,80 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent  # backend/
 
 # 本機執行時自動載入 .env（Docker 執行時 env 已由 docker-compose 注入，此行無害）
 load_dotenv(BASE_DIR.parent / ".env")
+
+# ── GPU 分級（4g／8g／16g）──────────────────────────────────────────────
+# [CN-133] 分級預設只補「.env 沒寫的鍵」再交給下方各旋鈕讀取 ⇒ 顯式 .env 永遠優先；16g＝現行預設、零變更
+GPU_TIERS = ("4g", "8g", "16g")
+GPU_TIER_DEFAULT = "16g"
+# auto 判級門檻（總顯存 GB ≥ 門檻取該級；取最高一級）。8G 卡實報約 7.99、12G 卡歸 8g（CN+IPA 需 ~14G）
+GPU_TIER_MIN_GB = (("4g", 0.0), ("8g", 7.5), ("16g", 14.0))
+GPU_TIER_ENV_DEFAULTS: dict[str, dict[str, str]] = {
+    "4g": {
+        "COMFYUI_REQUIRED_VRAM_GB": "3.5",
+        "OLLAMA_REQUIRED_VRAM_GB": "3",
+        "COMFYUI_RESIDENT_MIN_FREE_GB": "2",
+        "VRAM_COEXIST_ENABLED": "false",
+        "FULLBODY_CANVAS_STD": "832x1216",
+        "CRAFTFLOW_PRE_REF_EXPAND": "0",
+    },
+    "8g": {
+        "COMFYUI_REQUIRED_VRAM_GB": "7",
+        "OLLAMA_REQUIRED_VRAM_GB": "5",
+        "COMFYUI_RESIDENT_MIN_FREE_GB": "5",
+        "VRAM_COEXIST_ENABLED": "false",
+    },
+    "16g": {},
+}
+_NVIDIA_SMI_TIMEOUT_SEC = 5
+
+
+def _detect_gpu_total_gb() -> float | None:
+    """nvidia-smi 讀第一張卡總顯存（GB）；無 NVIDIA 驅動／逾時／格式不符 → None"""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=_NVIDIA_SMI_TIMEOUT_SEC, check=True,
+        ).stdout
+        return int(out.split()[0]) / 1024
+    except Exception:
+        return None
+
+
+def tier_for_vram_gb(total_gb: float) -> str:
+    """總顯存 → 等級（純函式）"""
+    tier = GPU_TIER_MIN_GB[0][0]
+    for name, min_gb in GPU_TIER_MIN_GB:
+        if total_gb >= min_gb:
+            tier = name
+    return tier
+
+
+def resolve_gpu_tier(raw: str | None, detect=_detect_gpu_total_gb) -> tuple[str, str]:
+    """GPU_TIER 設定值 → (等級, 來源說明) [FD-129]"""
+    value = (raw or "auto").strip().lower()
+    if value in GPU_TIERS:
+        return value, ".env"
+    if value != "auto":
+        return GPU_TIER_DEFAULT, f"無效值 {value!r} → {GPU_TIER_DEFAULT}"
+    total = detect()
+    if total is None:
+        return GPU_TIER_DEFAULT, f"auto：偵測不到 NVIDIA 顯存 → {GPU_TIER_DEFAULT}"
+    return tier_for_vram_gb(total), f"auto：nvidia-smi {total:.1f} GB"
+
+
+GPU_TIER, GPU_TIER_SOURCE = resolve_gpu_tier(os.getenv("GPU_TIER"))
+# 實際補進環境的鍵（啟動 log 用）；.env 已寫的鍵不在此列
+GPU_TIER_PRESET_APPLIED = {k: v for k, v in GPU_TIER_ENV_DEFAULTS[GPU_TIER].items() if k not in os.environ}
+os.environ.update(GPU_TIER_PRESET_APPLIED)
+
 UPLOAD_DIR = BASE_DIR / "uploads"
 DB_PATH = BASE_DIR / "craftflow.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 API_PREFIX = "/api/v1"
+# 允許跨來源呼叫 API 的前端位址（逗號分隔）；前端經 Vite proxy 走同源，不需要放寬
+CORS_ORIGINS = [o.strip() for o in os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
 APP_TITLE = "Craftflow API"
 APP_VERSION = "0.1.0"
 
@@ -44,6 +105,13 @@ TRAINING_IMAGES_DIR = Path(os.getenv("TRAINING_IMAGES_DIR", str(BASE_DIR.parent 
 COMFYUI_LORAS_DIR = Path(os.getenv("COMFYUI_LORAS_DIR", r"C:\ComfyUI\models\loras"))
 
 CUSTOM_WORKFLOWS_DIR = Path(os.getenv("CUSTOM_WORKFLOWS_DIR", str(BASE_DIR.parent / "data" / "custom_workflows")))
+# [CN-122] 客製化標籤（作品／繪師）清單：只存本機檔，不進 git、不進 DB
+CUSTOM_TAGS_FILE = Path(os.getenv("CUSTOM_TAGS_FILE", str(BASE_DIR.parent / "data" / "custom_tags.json")))
+CUSTOM_TAGS_MAX_PER_KIND = int(os.getenv("CUSTOM_TAGS_MAX_PER_KIND", "1000"))            # 每類上限（下拉選單可用性）
+CUSTOM_TAGS_IMPORT_MAX_BYTES = int(os.getenv("CUSTOM_TAGS_IMPORT_MAX_BYTES", str(1024 * 1024)))
+# [CN-131] Danbooru 標籤字典 CSV（唯讀，只供 tag 管理搜尋）；空字串＝停用
+TAG_DICTIONARY_CSV = os.getenv("TAG_DICTIONARY_CSV", "").strip()
+TAG_DICTIONARY_SEARCH_LIMIT = int(os.getenv("TAG_DICTIONARY_SEARCH_LIMIT", "50"))
 
 # ── 資料安全（章節版本快照 + DB 備份）──────────────────────────────────────
 CHAPTER_REVISIONS_KEEP = int(os.getenv("CHAPTER_REVISIONS_KEEP", "20"))  # 每章保留快照數
@@ -65,11 +133,9 @@ COMFYUI_JOB_TIMEOUT_SEC = int(os.getenv("COMFYUI_JOB_TIMEOUT_SEC", "1200"))
 # [CN-005] /free 是非同步排程，送出後須 poll 到 reserved 真的下降，否則量到的必是舊值
 VRAM_FREE_WAIT_SEC: float = float(os.getenv("VRAM_FREE_WAIT_SEC", "5"))
 VRAM_FREE_POLL_SEC: float = float(os.getenv("VRAM_FREE_POLL_SEC", "0.25"))
-# true = ComfyUI 沒讓出顯存就**不轉移 focus 到 ollama**（request_focus 回 False）。
-# 預設 false：現行呼叫端都忽略回傳值，維持零行為變更，先讓 log 累積實證再決定開不開。
+# true＝ComfyUI 沒讓出顯存就不轉移 focus 到 ollama（request_focus 回 False）
 VRAM_STRICT_FREE: bool = os.getenv("VRAM_STRICT_FREE", "false").lower() == "true"
-# 2026-09-21 訂正：舊版只要 reserved 有「下降」就算成功，實測 15.2G 只還 0.1G
-# 也被判定為 True —— 那不是釋放，是量測雜訊。改為要求最低歸還量。
+# 釋放判定的最低歸還量（小幅下降是量測雜訊，不算釋放）
 VRAM_FREE_MIN_DROP_GB: float = float(os.getenv("VRAM_FREE_MIN_DROP_GB", "1.0"))
 # reserved / total 超過此比例 ⇒ 顯卡已經塞滿、極可能正在用共享系統記憶體。
 # 這個狀態**不會自己恢復**（被換出的頁不會自動搬回 VRAM），只能重啟 ComfyUI。
@@ -81,23 +147,44 @@ OLLAMA_KEEP_ALIVE_SEC: int = int(os.getenv("OLLAMA_KEEP_ALIVE_SEC", "0"))
 # [CN-007] sysmem fallback 在 ComfyUI 端完全無聲，只能靠耗時警戒補 log。0=停用
 COMFYUI_SLOW_JOB_WARN_SEC: int = int(os.getenv("COMFYUI_SLOW_JOB_WARN_SEC", "150"))
 
-# [CN-008] 本組 .env 是全域基準線＋總開關，非唯一來源；PERSONAL_STYLE_ENABLED 不節制 yml
-PERSONAL_STYLE_ENABLED: bool = os.getenv("PERSONAL_STYLE_ENABLED", "false").lower() == "true"
-PERSONAL_STYLE_EXTRA_TAGS: str = os.getenv("PERSONAL_STYLE_EXTRA_TAGS", "")
+# [CN-122] 個人畫風標籤（舊 PERSONAL_STYLE_*）已由角色「客製化標籤」取代；.env 只留個人負向
 PERSONAL_NEGATIVE_ENABLED: bool = os.getenv("PERSONAL_NEGATIVE_ENABLED", "false").lower() == "true"
 PERSONAL_NEGATIVE: str = os.getenv("PERSONAL_NEGATIVE", "")
 # [CN-009] 畫風 tags 加權係數：!=1.0 時包成 (tag:w) 並前置到 identity；1.0=末端 append
 PERSONAL_STYLE_WEIGHT: float = float(os.getenv("PERSONAL_STYLE_WEIGHT", "1.0"))
 
+# [CN-115] 分家族個人負向 PERSONAL_NEGATIVE_EXTRA_<家族大寫>：疊加語義、留空＝關閉；呼叫時才讀
+PERSONAL_KIND_NEGATIVE = "NEGATIVE"
+# 測試隔離用（tests/conftest.py 依此清掉使用者 .env 的家族個人負向）
+PERSONAL_FAMILY_KEY_PREFIXES = (f"PERSONAL_{PERSONAL_KIND_NEGATIVE}_EXTRA_",)
+
+
+def personal_family_extra(kind: str, family: str) -> str:
+    """讀 `.env` 的 PERSONAL_<kind>_EXTRA_<FAMILY>；未設或家族為空 → ""。"""
+    if not family:
+        return ""
+    return (os.getenv(f"PERSONAL_{kind}_EXTRA_{family.upper()}") or "").strip()
+
 # [CN-010] prompt 擴寫 stage2，預設關閉（需先手動 A/B 驗證），FLUX 不套用
 PROMPT_UPSAMPLE_ENABLED: bool = os.getenv("PROMPT_UPSAMPLE_ENABLED", "false").lower() == "true"
 PROMPT_UPSAMPLE_MODEL: str = os.getenv("PROMPT_UPSAMPLE_MODEL", "")  # 空 = 沿用 compile() 的 text model
-# 擴寫後 body tag 數上限（token 預算，G1-4）：擴寫會膨脹 tags，超限時從擴寫尾端砍，
-# 受保護的原始翻譯 tags（identity/subject）一律保留。0（預設）= 停用。
+# 擴寫後 body tag 上限：超限從擴寫尾端砍、原始 tag 保留；0＝停用
 PROMPT_MAX_BODY_TAGS: int = int(os.getenv("PROMPT_MAX_BODY_TAGS", "0"))
 
 # [CN-011] 編譯快取：命中則完全不呼叫 Ollama，省掉整段 11GB 卸載/重載。預設 0=停用
 PROMPT_CACHE_TTL_SEC: int = int(os.getenv("PROMPT_CACHE_TTL_SEC", "0"))
+
+# ── 內容安全（NSFW 護欄，見 services/ai/prompt_engine/content_guard.py）────────────
+# true（預設）＝一般情境剝除露骨 tag、負向補 nsfw；false＝成人內容不過濾（debug 用）。
+# 未成年情境（角色 <18 或正向含 child 等標記）不受此旋鈕影響，永遠強制過濾。
+NSFW_GUARD_ENABLED: bool = os.getenv("NSFW_GUARD_ENABLED", "true").lower() == "true"
+# [CN-134] Hires 第二段放大重繪：預設關（參數待 ComfyUI A/B 定案）；倍率／denoise 依家族在 gen_profile
+HIRES_ENABLED: bool = os.getenv("HIRES_ENABLED", "false").lower() == "true"
+# 放大模型檔名（ComfyUI models/upscale_models/）；空字串或 ComfyUI 查無此檔 ⇒ 改用 latent 放大
+HIRES_UPSCALE_MODEL: str = os.getenv("HIRES_UPSCALE_MODEL", "4x-AnimeSharp.safetensors").strip()
+
+# true＝回傳給前端的 PNG 去除內嵌 prompt／workflow（分享圖片不外洩）；生成資訊仍存在 DB
+PNG_STRIP_METADATA: bool = os.getenv("PNG_STRIP_METADATA", "true").lower() == "true"
 
 # ── 生圖微調旋鈕 ──────────────────────────────────────────────
 # flat_draft(線稿/平塗概念圖)當 IPA 參考會把成像拉平 → 自動把 IPA 權重乘此係數(下限0.1)。1.0=不降。

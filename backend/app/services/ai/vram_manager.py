@@ -1,13 +1,9 @@
-"""
-VRAM Guardian — Dynamic GPU memory management for RTX 5000/4000 series.
-Coordinates memory usage between Ollama (LLM) and ComfyUI (Diffusion).
-"""
+"""VRAM Guardian — Dynamic GPU memory management for RTX 5000/4000 series [FD-092]"""
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-import requests
 from typing import Literal
 
 from starlette.concurrency import run_in_threadpool
@@ -51,17 +47,8 @@ class VRAMGuardian:
         return self._current_owner
 
     async def request_focus(self, tool: ServiceType, exclusive: bool = False) -> bool:
-        """
-        Request GPU focus for a specific tool.
-        Unloads the other tool's models if necessary to free up VRAM.
-
-        2026-07-07 P3：singleton 無鎖時，兩個 async job 同時呼叫會各自讀到
-        舊的 _current_owner 並行卸載/轉移 focus，導致另一種 VRAM 爆法。
-        用 asyncio.Lock 序列化整個 focus 切換流程（含 VRAM 查詢與卸載）。
-
-        exclusive=True：下一個 job 會載入遠大於現駐留量的模型（如 Flux 2 17GB），
-        絕不可與另一方共存。跳過 coexist 短路，一律卸載另一方獨佔顯卡。
-        """
+        """取得 GPU focus，必要時卸載另一方的模型；以 asyncio.Lock 序列化切換流程。
+        exclusive=True：即將載入超大模型，跳過共存判定、一律卸載另一方。"""
         async with self._lock:
             if self._current_owner == tool and not exclusive:
                 return True
@@ -81,8 +68,7 @@ class VRAMGuardian:
                 if tool == "comfyui":
                     await self._unload_ollama()
                 elif tool == "ollama":
-                    # SYNC-006 N14（2026-09-20）：這個方向以前是「送出就算數」。
-                    # 現在要等 ComfyUI 真的讓出顯存；沒讓出就不該把 9B 硬塞進去。
+                    # 等 ComfyUI 真的讓出顯存，才載入 Ollama 模型
                     if not await self._unload_comfyui() and VRAM_STRICT_FREE:
                         logger.error(
                             "VRAM: ComfyUI 未讓出顯存且 VRAM_STRICT_FREE=true "
@@ -105,11 +91,7 @@ class VRAMGuardian:
                 int(dev.get("vram_total", 0)))
 
     def _can_coexist(self, tool: ServiceType) -> bool:
-        """
-        Check live VRAM stats to decide whether `tool` can run without
-        evicting the other service.  Conservative: any query failure → False
-        (falls back to the legacy unload behaviour).
-        """
+        """依即時 VRAM 判斷 tool 能否與另一方共存 [FD-093]"""
         try:
             if tool == "comfyui":
                 return self._comfyui_can_coexist()
@@ -125,25 +107,7 @@ class VRAMGuardian:
             return False
 
     def _comfyui_can_coexist(self) -> bool:
-        """ComfyUI 端的共存判定。
-
-        2026-07-27 修正（實測 log 佐證）：舊版寫成
-
-            if torch_reserved >= _COMFYUI_RESIDENT_BYTES: return True
-            return gpu_free >= COMFYUI_REQUIRED_VRAM_GB * _GIB
-
-        短路在 gpu_free 檢查「之前」，方向與風險相反 —— **reserved 越高越判定安全**，
-        但 reserved 高 + free 低正是最危險的狀態。實測出現 free=0.1G / reserved=16.2G
-        仍回報「記憶體足夠」，且第二行的 gpu_free 檢查形同虛設（reserved 幾乎恆 ≥4G）。
-
-        新規則，順序即優先序：
-          1. torch_reserved > gpu_total → 已溢出到系統 RAM（Windows WDDM 共享記憶體），
-             必然變慢數倍，直接拒絕共存。
-          2. gpu_free 足夠跑一次完整載入 → 共存。
-          3. checkpoint 已駐留 → 需求降為「增量」（CN/preprocessor/latent/activations），
-             但仍要求 gpu_free ≥ COMFYUI_RESIDENT_MIN_FREE_GB。**不再無視 free。**
-          4. 其餘 → 不共存，卸載另一方。
-        """
+        """ComfyUI 端共存判定，依序 [FD-094]"""
         gpu_free, torch_reserved, gpu_total = self._comfyui_vram()
         overcommit = bool(gpu_total) and torch_reserved > gpu_total
         logger.info(
@@ -201,26 +165,9 @@ class VRAMGuardian:
         return await run_in_threadpool(self._unload_comfyui_sync)
 
     def _unload_comfyui_sync(self) -> bool:
-        """請 ComfyUI 釋放 VRAM，並**等到**回讀確認 reserved 真的下降才返回。
-
-        2026-07-27 修正：舊版只送 ``unload_models``。ComfyUI 的 unload_models 只卸掉
-        模型物件，**torch caching allocator 的保留區不會歸還作業系統** → torch_vram_total
-        幾乎恆 ≥4G，剛好讓舊的 coexist 短路永遠命中，整條共存檢查等同沒作用。
-        必須同時送 ``free_memory``（觸發 soft_empty_cache）才會真的降 reserved。
-
-        2026-09-20 修正（SYNC-006 N14）：payload 是對的，**量測時機是錯的**。
-        舊版送出 /free 後立刻回讀，實測 backend.log 的間隔只有 2~3 毫秒 —— ComfyUI
-        的 /free 是把卸載排進 prompt executor thread 後就回 200，2ms 量到的必然是舊值。
-        於是 21:04~21:15 的 7 次切換 7 次都印「reserved 未下降」的假警報，然後照樣
-        放行 Ollama 去載 9B，當下 free 只有 0.0~0.9G：
-            free=0.3/reserved=12.9 → free=0.0/reserved=15.2 → free=0.9/reserved=12.9
-        驅動為了擠出空間，把 ComfyUI 的權重頁搬進 Windows 共享系統記憶體；卸掉 Ollama
-        也**不會**搬回來，下一輪主 KSampler 每個 step 走 PCIe → 2.64 it/s 掉到
-        12.69 s/it（33×），單張從 44s 變成 >6 分鐘。
-
-        回傳 True = ComfyUI 確實讓出了顯存；False = 逾時仍未下降（呼叫端可據此決定
-        要不要放行，見 VRAM_STRICT_FREE）。
-        """
+        """請 ComfyUI 釋放 VRAM（unload_models＋free_memory），輪詢到 reserved 真的下降才返回。
+        /free 是非同步排程，送出後立即回讀量到的是舊值，故需等待。
+        回傳 False＝逾時仍未下降（見 VRAM_STRICT_FREE）。"""
         try:
             before = self._comfyui_vram()
         except Exception:
@@ -252,8 +199,7 @@ class VRAMGuardian:
                 after = self._comfyui_vram()
             except Exception:
                 break
-            # 2026-09-21：要求「有意義的歸還量」。實測 reserved 15.2G 只降 0.1G
-            # 也會讓舊條件成立 —— 那是量測雜訊，不是釋放。
+            # 要求最低歸還量，小幅下降視為量測雜訊
             if (before[1] - after[1]) >= VRAM_FREE_MIN_DROP_GB * _GIB:
                 logger.info(
                     "VRAM: ComfyUI freed → free=%.1fG reserved=%.1fG（%.1fG 已歸還，等待 %.2fs）",
@@ -277,14 +223,7 @@ class VRAMGuardian:
 
     @staticmethod
     def _warn_if_stuck(stats: tuple[int, int, int]) -> None:
-        """reserved 逼近卡容量 ⇒ 已經在用共享系統記憶體，且**不會自己恢復**。
-
-        2026-09-21 實測：被驅動換出到共享記憶體的權重頁，即使之後卸掉 Ollama、
-        即使 /free 成功，也不會搬回 VRAM。同一個 ComfyUI 行程接下來每一張都慢
-        （實測連續三張 732s / 251s / 267s，基準 44~56s）。唯一的復原方式是
-        **重啟 ComfyUI 讓 reserved 歸零**，所以這裡直接把話講明，不要讓使用者
-        以為再跑一張就會好。
-        """
+        """reserved 逼近卡容量＝權重已換出到共享記憶體，不會自行恢復，只能重啟 ComfyUI。"""
         gpu_free, reserved, total = stats
         if not total or reserved < VRAM_STUCK_RATIO * total:
             return

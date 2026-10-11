@@ -1,4 +1,4 @@
-"""生圖歷史查詢 API（P3-2）— 供前端「還原參數重跑」。"""
+"""生圖歷史查詢 API（供前端還原參數重跑）。"""
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status

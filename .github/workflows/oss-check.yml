@@ -1,0 +1,21 @@
+# Public-repo privacy gate (CN-135). Personal terms live only in local .env / custom_tags.json,
+# so CI runs the generic rules: forbidden paths, credentials, home paths, emails, all-interface binds.
+name: oss-check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check-oss:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python tools/check_oss.py

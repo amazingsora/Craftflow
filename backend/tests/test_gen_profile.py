@@ -119,8 +119,10 @@ def test_lllite_strength_scale_defaults_to_one_everywhere():
     當輪的 A/B 會變成雙變因。要掃描請一次只改一個 family 的值，並在當日開發記錄
     寫下掃了哪些值 —— 不要靠這裡的預設值偷渡。
     """
+    # 訂正（2026-09-25，SYNC-009／CN-120）：anima 依 ComfyUI F2 定案改 1.47（滑桿 0.85 → 1.25），其餘仍鎖 1.0
     for family, prof in gp.GEN_PROFILE.items():
-        assert prof.lllite_strength_scale == 1.0, family
+        expected = 1.47 if family == "anima" else 1.0
+        assert prof.lllite_strength_scale == expected, family
 
 
 def test_lllite_scale_is_a_multiplier_not_a_clamp():
@@ -131,6 +133,6 @@ def test_lllite_scale_is_a_multiplier_not_a_clamp():
     """
     p = gp.get_profile("anima")
     slider = 0.6
-    assert round(slider * p.lllite_strength_scale, 3) == 0.6      # scale 1.0 = 現況
+    assert round(slider * p.lllite_strength_scale, 3) == 0.882    # anima scale 1.47（CN-120）
     assert round(slider * 1.7, 3) == 1.02                          # 掃描檔位：過 1.0
     assert round(slider * 2.2, 3) == 1.32

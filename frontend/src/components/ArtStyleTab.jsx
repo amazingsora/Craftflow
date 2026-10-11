@@ -1,97 +1,63 @@
 import { useState, useEffect, useRef } from 'react'
 import { notifyDone } from '../notify.js'
+import { FitImage } from './ImageViewer'
+import { UI } from './sharedStyles'
+import { Icon } from './Icon.jsx'
+import { Empty } from './ui.jsx'
 
-const BASE_STYLES = ['sdxl', 'pony', 'flux', 'noobai', 'illustrious', 'anythingxl']
+// 與後端 PromptStyle enum 同步（styles.py）
+const BASE_STYLES = ['sdxl', 'pony', 'flux', 'noobai', 'illustrious', 'anythingxl', 'anima']
 
 const S = {
-  root: { display: 'flex', flexDirection: 'column', gap: 20 },
-  toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 15, fontWeight: 600, color: 'var(--text)' },
-  btn: {
-    padding: '8px 16px', borderRadius: 8, border: 'none',
-    background: 'var(--accent)', color: 'var(--accent-contrast)',
-    fontSize: 13, fontWeight: 600, cursor: 'pointer',
-  },
-  btnSecondary: {
-    padding: '8px 16px', borderRadius: 8,
-    border: '1px solid var(--border)', background: 'transparent',
-    color: 'var(--text)', fontSize: 13, cursor: 'pointer',
-  },
-  btnDanger: {
-    padding: '8px 16px', borderRadius: 8, border: 'none',
-    background: 'var(--tint-red-bg)', color: 'var(--danger)', fontSize: 13, cursor: 'pointer',
-  },
-  btnIcon: {
-    padding: '4px 8px', borderRadius: 6, border: 'none',
-    background: 'var(--tint-red-bg)', color: 'var(--danger)', fontSize: 12, cursor: 'pointer',
-  },
-  list: { display: 'flex', flexDirection: 'column', gap: 8 },
+  root: { display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 980 },
+  toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+  title: { fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-.02em' },
+  btn: { ...UI.btnPrimary, padding: '8px 14px', fontSize: 13 },
+  btnSecondary: UI.btnSecondary,
+  btnDanger: { ...UI.btnSecondary, color: 'var(--danger)' },
+  btnIcon: { ...UI.btnIcon, color: 'var(--muted)', flexShrink: 0 },
+  list: { ...UI.panel, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   card: {
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    padding: '12px 16px', borderRadius: 10,
-    border: '1px solid var(--border)', background: 'var(--bg)',
-    cursor: 'pointer', transition: 'border-color .15s',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+    padding: '14px 16px', borderTop: '1px solid var(--border)', background: 'var(--surface)',
+    cursor: 'pointer', transition: 'background .12s',
   },
   cardName: { fontSize: 14, fontWeight: 600, color: 'var(--text)' },
-  cardMeta: { fontSize: 12, color: 'var(--muted)', marginTop: 2 },
+  cardMeta: { fontSize: 12.5, color: 'var(--muted)', marginTop: 2 },
   badge: {
-    fontSize: 11, borderRadius: 4, padding: '2px 7px',
-    background: 'var(--surface)', color: 'var(--muted)', border: '1px solid var(--border)',
+    fontFamily: 'var(--font-mono)', fontSize: 11, borderRadius: 3, padding: '1px 6px',
+    background: 'var(--surface-2)', color: 'var(--text-2)', border: '1px solid var(--border)',
   },
   empty: { color: 'var(--muted)', fontSize: 13, padding: '20px 0' },
-  form: { display: 'flex', flexDirection: 'column', gap: 16 },
+  form: { ...UI.panel, display: 'flex', flexDirection: 'column', gap: 18, padding: 20 },
   row: { display: 'flex', gap: 14 },
-  field: { display: 'flex', flexDirection: 'column', gap: 6, flex: 1 },
-  label: { fontSize: 12, color: 'var(--muted)' },
-  labelHint: { fontSize: 11, color: 'var(--muted)', fontWeight: 400, marginLeft: 6 },
-  input: {
-    background: 'var(--surface)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '8px 10px',
-    fontSize: 14, outline: 'none', fontFamily: 'inherit',
-  },
-  textarea: {
-    background: 'var(--surface)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '8px 10px',
-    fontSize: 13, outline: 'none', fontFamily: 'inherit', resize: 'vertical',
-  },
-  select: {
-    background: 'var(--surface)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '8px 10px',
-    fontSize: 14, outline: 'none',
-  },
-  sectionTitle: { fontSize: 13, fontWeight: 600, color: 'var(--muted)', marginBottom: 8 },
+  field: { display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 },
+  label: { fontSize: 12, fontWeight: 500, color: 'var(--text-2)' },
+  labelHint: { fontSize: 11.5, color: 'var(--faint)', fontWeight: 400, marginLeft: 8 },
+  input: UI.input,
+  textarea: { ...UI.textarea, fontFamily: 'var(--font-mono)', fontSize: 13, minHeight: 0 },
+  select: UI.select,
+  sectionTitle: { fontSize: 12, fontWeight: 600, color: 'var(--text-2)' },
   loraList: { display: 'flex', flexDirection: 'column', gap: 8 },
   loraRow: { display: 'flex', gap: 8, alignItems: 'center' },
-  loraModel: {
-    flex: 1, background: 'var(--surface)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '7px 10px',
-    fontSize: 13, outline: 'none', fontFamily: 'inherit',
-  },
-  loraWeight: {
-    width: 70, background: 'var(--surface)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '7px 10px',
-    fontSize: 13, outline: 'none', textAlign: 'right',
-  },
+  loraModel: { ...UI.select, flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12.5 },
+  loraWeight: { ...UI.input, width: 76, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 13 },
   formActions: { display: 'flex', gap: 10, paddingTop: 4 },
-  divider: { height: 1, background: 'var(--border)', margin: '4px 0' },
+  divider: { height: 1, background: 'var(--border)', margin: '0 -20px' },
   spinner: {
-    width: 18, height: 18, border: '2px solid var(--border)',
-    borderTop: '2px solid var(--accent)', borderRadius: '50%',
-    animation: 'spin 0.9s linear infinite', display: 'inline-block',
+    width: 16, height: 16, border: '2px solid currentColor', borderTopColor: 'transparent',
+    borderRadius: '50%', animation: 'spin 0.8s linear infinite', display: 'inline-block',
   },
-  spinnerLg: {
-    width: 36, height: 36, border: '3px solid var(--border)',
-    borderTop: '3px solid var(--accent)', borderRadius: '50%',
-    animation: 'spin 0.9s linear infinite',
-  },
-  testSection: { display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 4 },
-  testTitle: { fontSize: 13, fontWeight: 600, color: 'var(--muted)' },
-  testImg: { width: '100%', borderRadius: 10, border: '1px solid var(--border)', display: 'block' },
+  spinnerLg: UI.spinner,
+  testSection: { display: 'flex', flexDirection: 'column', gap: 12 },
+  testTitle: { fontSize: 13, fontWeight: 600, color: 'var(--text)' },
+  testImg: { width: '100%', borderRadius: 'var(--r)', border: '1px solid var(--border)', display: 'block' },
   testPlaceholder: {
-    minHeight: 180, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    border: '2px dashed var(--border)', borderRadius: 10, color: 'var(--muted)', fontSize: 13,
+    minHeight: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: '1px dashed var(--border-strong)', borderRadius: 'var(--r-lg)', color: 'var(--muted)', fontSize: 13,
+    background: 'var(--surface-2)',
   },
-  testMeta: { fontSize: 11, color: 'var(--muted)', wordBreak: 'break-all' },
+  testMeta: { fontSize: 11.5, color: 'var(--muted)', wordBreak: 'break-all', fontFamily: 'var(--font-mono)' },
 }
 
 const emptyStyle = {
@@ -208,7 +174,7 @@ export default function ArtStyleTab() {
       const style = genRes.headers.get('X-Style') ?? compiled.style
       const blob = await genRes.blob()
       const url = URL.createObjectURL(blob)
-      setTestResult({ url, prompt: compiled.positive, style, seed })
+      setTestResult({ url, prompt: compiled.positive, negative: compiled.negative ?? '', style, seed })
       notifyDone('生成完成', '畫風測試圖')
       setTimeout(() => testImgRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50)
     } catch (e) {
@@ -265,15 +231,18 @@ export default function ArtStyleTab() {
     return (
       <div style={S.root}>
         <div style={S.toolbar}>
-          <span style={S.title}>畫風管理</span>
-          <button style={S.btn} onClick={openNew}>+ 新增</button>
+          <div>
+            <h1 style={S.title}>畫風管理</h1>
+            <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>可重用的 prompt 配方：基底 Style、品質前綴、負向與 LoRA</p>
+          </div>
+          <button style={S.btn} onClick={openNew}><Icon name="plus" size={14} />新增畫風</button>
         </div>
         {styles.length === 0
-          ? <div style={S.empty}>尚無畫風，點擊「新增」建立第一個。</div>
+          ? <Empty icon="palette" title="尚無畫風">點擊「新增畫風」建立第一個。</Empty>
           : (
             <div style={S.list}>
-              {styles.map(s => (
-                <div key={s.id} style={S.card} onClick={() => openEdit(s)}>
+              {styles.map((s, i) => (
+                <div key={s.id} className="cf-nav-item" style={{ ...S.card, ...(i === 0 ? { borderTop: 'none' } : {}) }} onClick={() => openEdit(s)}>
                   <div>
                     <div style={S.cardName}>{s.name}</div>
                     <div style={S.cardMeta}>
@@ -285,6 +254,7 @@ export default function ArtStyleTab() {
                     {s.loras?.length > 0 && (
                       <span style={S.badge}>LoRA ×{s.loras.length}</span>
                     )}
+                    <Icon name="chevron-right" size={15} style={{ color: 'var(--faint)', marginLeft: 4 }} />
                   </div>
                 </div>
               ))}
@@ -299,8 +269,10 @@ export default function ArtStyleTab() {
   return (
     <div style={S.root}>
       <div style={S.toolbar}>
-        <button style={S.btnSecondary} onClick={() => setView('list')}>← 返回</button>
-        <span style={S.title}>{editing ? `編輯：${editing.name}` : '新增畫風'}</span>
+        <div>
+          <button className="cf-link" style={{ ...UI.btnGhost, color: 'var(--muted)', padding: '2px 4px', margin: '0 -4px' }} onClick={() => setView('list')}><Icon name="arrow-left" size={13} />畫風管理</button>
+          <h1 style={{ ...S.title, marginTop: 4 }}>{editing ? editing.name : '新增畫風'}</h1>
+        </div>
         <div />
       </div>
 
@@ -392,7 +364,7 @@ export default function ArtStyleTab() {
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <span style={S.sectionTitle}>LoRA 模型</span>
-            <button style={S.btnSecondary} onClick={addLora}>+ 新增 LoRA</button>
+            <button style={UI.btnSm} onClick={addLora}><Icon name="plus" size={13} />新增 LoRA</button>
           </div>
           {form.loras.length === 0
             ? <div style={{ ...S.empty, padding: '10px 0' }}>尚無 LoRA，點擊「新增 LoRA」加入。</div>
@@ -427,7 +399,7 @@ export default function ArtStyleTab() {
                       onChange={e => setLora(idx, 'weight', parseFloat(e.target.value) || 0)}
                       title="Weight (0–2)"
                     />
-                    <button style={S.btnIcon} onClick={() => removeLora(idx)}>✕</button>
+                    <button style={S.btnIcon} onClick={() => removeLora(idx)} title="移除" aria-label="移除 LoRA"><Icon name="x" size={14} /></button>
                   </div>
                 ))}
               </div>
@@ -486,11 +458,12 @@ export default function ArtStyleTab() {
               )}
               {testResult ? (
                 <div ref={testImgRef} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <img src={testResult.url} alt="test result" style={S.testImg} />
+                  <FitImage src={testResult.url} alt="test result" maxHeight="min(60vh, 520px)" style={{ border: '1px solid var(--border)', borderRadius: 10 }} />
                   <div style={S.testMeta}>
-                    style: {testResult.style} · seed: {testResult.seed}
+                    style: {testResult.style} · seed: {testResult.seed} · 點圖看原尺寸
                   </div>
-                  <div style={{ ...S.testMeta, opacity: 0.7 }}>{testResult.prompt}</div>
+                  <div style={{ ...S.testMeta, opacity: 0.7 }}><strong>正向：</strong>{testResult.prompt}</div>
+                  <div style={{ ...S.testMeta, opacity: 0.7 }}><strong>負向（實際送出）：</strong>{testResult.negative || '（空）'}</div>
                 </div>
               ) : !testGenerating && (
                 <div style={S.testPlaceholder}>輸入描述後點擊「測試生成」</div>

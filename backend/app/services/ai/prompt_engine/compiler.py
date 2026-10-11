@@ -1,18 +1,5 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""
-Prompt Compiler — 中文描述 → 對應模型的最終 prompt
-
-流程：
-  1. 依 style 選擇 LLM template
-  2. Ollama 翻譯生成 raw tags / 描述
-  3. Sanitizer：移除 banned_tags
-  3.6 服飾防幻覺與情緒召回過濾器（草稿強化核心）
-  4. Anchor Extraction：從原始中文抽取髮色/眼色/長度
-  5. Semantic Cleaning：移除與 Anchor 衝突的標籤
-  6. Reordering & Weighting：按類別排序標籤，並對 Anchor 加權
-  7. 拼接 quality_prefix
-  8. 回傳 (positive_prompt, negative_prompt)
-"""
+"""Prompt Compiler — 中文描述 → 對應模型的最終 prompt [FD-076]"""
 from __future__ import annotations
 
 import inspect
@@ -20,7 +7,6 @@ import logging
 import re
 import threading
 import time
-from typing import List, Set
 
 from app.core.config import (
     PROMPT_UPSAMPLE_ENABLED,
@@ -35,17 +21,15 @@ from app.services.ai.prompt_engine.styles import (
     UPSAMPLE_SYSTEM_PROMPT,
     _WEIGHT_GROUP_RE,
     _LINEART_ARTIFACT_RE,
+    _SUBJECT_COUNT_TAGS,
 )
 from app.services.ai.prompt_engine import lexicon
-
+from app.services.ai.prompt_engine.content_guard import  nsfw_guard_enabled
 logger = logging.getLogger(__name__)
 
 
 def _extract_color_anchors(text: str, anchor_source: str = "") -> list[str]:
-    """
-    Deterministically extract hair/eye traits from Chinese text.
-    Returns English SD tags like ["white hair", "short hair", "golden eyes"].
-    """
+    """Deterministically extract hair/eye traits from Chinese text [FD-077]"""
     def _scan(src: str) -> list[str]:
         seen: set[str] = set()
         result: list[str] = []
@@ -107,17 +91,7 @@ _EYE_TAIL_RE = re.compile(r'^(?P<mods>.+?)\s+eyes?$', re.IGNORECASE)
 
 
 def _is_eye_color_tag(tag: str) -> bool:
-    """`tag` 是否為「眼睛顏色」類 tag（→ 應被權威雙色取代）。
-
-    判定：形如 `<修飾語> eye(s)`，且修飾語中**沒有任何一個詞**落在 _EYE_SHAPE_KEEP。
-      "pale eyes"          → True （清掉）
-      "light colored eyes" → True （清掉）
-      "red eyes"           → True （清掉後由 wanted 重新前置）
-      "big eyes"           → False（保留，眼型）
-      "half-closed eyes"   → False（保留，表情）
-      "slender eye shape"  → False（不以 eye(s) 結尾，不匹配）
-      "heterochromia"      → False（不匹配）
-    """
+    """`tag` 是否為「眼睛顏色」類 tag（→ 應被權威雙色取代） [FD-078]"""
     core = tag.lower().strip("() ").strip()
     m = _EYE_TAIL_RE.match(core)
     if not m:
@@ -128,11 +102,7 @@ def _is_eye_color_tag(tag: str) -> bool:
 
 
 def _normalize_directional_eye_tags(tags: list[str]) -> list[str]:
-    """把 `{color} eye (left/right)` 就地換成 danbooru 複數 `{color} eyes`，並去重。
-
-    LLM 受舊 few-shot 影響或自行幻覺時仍會產出括號格式；在此統一收斂，避免壞語法
-    流進 CLIPTextEncode（見 _DIRECTIONAL_EYE_RE 上方說明）。
-    """
+    """把 `{color} eye (left/right)` 就地換成 danbooru 複數 `{color} eyes`，並去重 [FD-079]"""
     out: list[str] = []
     seen = {t.lower().strip("() ") for t in tags if not _DIRECTIONAL_EYE_RE.search(t)}
     for t in tags:
@@ -148,10 +118,7 @@ def _normalize_directional_eye_tags(tags: list[str]) -> list[str]:
 
 
 def _inject_heterochromia(tags: list[str], text: str, anchor_source: str = "") -> list[str]:
-    """
-    Detect 異色瞳 in source text and guarantee correct heterochromia tags are present.
-    Runs after LLM translation so it's model-agnostic.
-    """
+    """Detect 異色瞳 in source text and guarantee correct heterochromia tags are present [FD-080]"""
     combined = f"{text} {anchor_source}"
     if not _HETERO_DETECT_RE.search(combined):
         return tags
@@ -162,8 +129,7 @@ def _inject_heterochromia(tags: list[str], text: str, anchor_source: str = "") -
     if "heterochromia" not in tag_lowers:
         to_prepend.append("heterochromia")
 
-    # 2026-08-05 S6'：輸出 danbooru 標準複數 tag，不再用 `{color} eye (left)` 括號格式
-    # （會被 CLIPTextEncode 當權重群組解析，綁定失效＋方向詞污染構圖，詳見上方註解）。
+    # 輸出 danbooru 標準 tag；括號格式會被 CLIPTextEncode 當權重群組解析
     wanted: list[str] = []
     for side_re in (_LEFT_EYE_RE, _RIGHT_EYE_RE):
         m = side_re.search(combined)
@@ -186,26 +152,24 @@ def _inject_heterochromia(tags: list[str], text: str, anchor_source: str = "") -
 
 
 def _recall_dropped_outfit_terms(tags: list[str], source_text: str) -> list[str]:
-    """A3 P3-1（2026-08-22）：服裝關鍵詞召回——不是 Group A 的一部分，是獨立新機制。
-
-    lexicon.apply_personal_term_map() 在 compile() 一開頭已把 personal_term_map.yml
-    的英文 tag（含服裝詞彙，如「戰術背心」→"tactical vest"）確定性替換進送給 LLM 的
-    文字，但 LLM 翻譯/重寫時仍可能把它漏掉（規劃書 D0-1 樣本矩陣：tactical vest 時有
-    時無，同一輸入兩次編譯結果不同）。這裡只做「有塞進 LLM 輸入、輸出卻沒有 → 補回」
-    的最小召回：逐一檢查詞庫 tag 是否原文有出現，若有但輸出 tags 缺漏，補回末尾。
-
-    刻意不做的事（避免變成 Group A 复活）：不猜測未登錄詞彙、不做語意腦補、不移除
-    任何既有 tag——只在「本該在、卻不在」時補，零詞庫收錄的輸入完全不受影響。
-    """
+    """個人詞庫 tag 已替換進 LLM 輸入、輸出卻漏掉時補回末尾。
+    只補不刪、不猜未登錄詞彙。"""
     src_lower = source_text.lower()
     tag_lowers = {t.lower().strip("() ") for t in tags}
     to_append: list[str] = []
     for term in lexicon.personal_term_map_tags():
         term_lower = term.lower().strip()
-        if term_lower and term_lower in src_lower and term_lower not in tag_lowers:
+        if term_lower and term_lower in src_lower and not _term_in_tags(term_lower, tag_lowers):
             to_append.append(term)
             tag_lowers.add(term_lower)
     return tags + to_append if to_append else tags
+
+
+def _term_in_tags(term_lower: str, tag_lowers: set[str]) -> bool:
+    """[CN-117] 詞庫 tag 以「整詞」出現在任一輸出 tag 內即算已翻出：修飾語併入後 LLM 會吐
+    `black pencil skirt`，只比完全相等會再補一個重複的 `pencil skirt`。"""
+    pat = re.compile(rf"(?<![a-z]){re.escape(term_lower)}(?![a-z])")
+    return any(pat.search(t) for t in tag_lowers)
 
 
 def _clean_clothing_hallucinations(tags: list[str], text_to_check: str) -> list[str]:
@@ -256,12 +220,7 @@ _FAIR_SKIN_CANON = "porcelain skin"
 
 
 def _canonicalize_fair_skin(tags: list[str], style) -> list[str]:
-    """把白皙系膚色 tag 統一成 porcelain skin，並去除重複變體。
-
-    命中時留 log —— 這是 08-12 建立的蒼白 tag 可觀測性的承接者（原 _warn_pale_tags
-    為死碼，已於 2026-09-21 移除）。沒有這條訊號，下一輪回饋又會退回「圖看起來
-    還是白的」這種無法歸因的描述。
-    """
+    """把白皙系膚色 tag 統一成 porcelain skin 並去重；命中時留 log 供歸因。"""
     result: list[str] = []
     hits: list[str] = []
     emitted = False
@@ -294,12 +253,7 @@ _CONTEXT_BLOCKERS: list[tuple[set[str], set[str], str]] = [
 
 
 def _inject_traits(tags: list[str], text: str, anchor_source: str = "") -> tuple[list[str], str]:
-    """
-    Detect semantic traits in source text, guarantee correct positive tags,
-    and return extra negative tags for hallucination suppression.
-
-    Returns: (updated_positive_tags, extra_negative_str)
-    """
+    """Detect semantic traits in source text, guarantee correct positive tags [FD-081]"""
     combined = f"{text} {anchor_source}"
     tag_lowers = {t.lower().strip("() ") for t in tags}
     to_prepend: list[str] = []
@@ -326,13 +280,8 @@ def _inject_traits(tags: list[str], text: str, anchor_source: str = "") -> tuple
 def _upsample_tags(
     base_tags: list[str], model: str, banned_set: set[str]
 ) -> list[str]:
-    """
-    G1-2 擴寫 stage2：把稀疏 tags 擴寫成更密的 danbooru tags（V37 booru upsampler 規則）。
-
-    - additive 合併：base_tags 為 identity 錨，一律保留在前、不可被覆蓋，只補新增的 tag。
-    - 輸出經同一 _sanitize_to_list + banned_tags 守門，與主流程共用護欄。
-    - resilient：擴寫呼叫失敗（Ollama error）直接回原 tags，不讓生圖流程 crash。
-    """
+    """擴寫 stage2：把稀疏 tags 擴寫成更密的 danbooru tags。
+    base_tags 一律保留在前、只補新增；呼叫失敗回原 tags。"""
     if not base_tags:
         return base_tags
 
@@ -360,11 +309,8 @@ def _upsample_tags(
 def _apply_body_budget(
     tags: list[str], max_tags: int, protected: int
 ) -> list[str]:
-    """
-    G1-4 token 預算：擴寫後 body tags 超過 max_tags 時，從尾端（擴寫新增部分）砍。
-    protected = 擴寫前的原始 tag 數（identity/subject），一律保留，優先級高於預算。
-    max_tags<=0 或未超限時不動。
-    """
+    """token 預算：超過 max_tags 時從尾端（擴寫新增部分）砍；前 protected 個一律保留。
+    max_tags<=0 時不動。"""
     if max_tags <= 0 or len(tags) <= max_tags:
         return tags
     return tags[: max(max_tags, protected)]
@@ -379,13 +325,17 @@ def _compile_impl(
     negative_override: str | None = None,
     quality_suffix_override: str | None = None,
     negative_extra_override: str | None = None,
+    keep_subject: bool = False,
 ) -> tuple[str, str]:
-    """
-    Main entrypoint to compile Chinese creative text into fine-tuned SD prompts.
-    """
-    # 0. (P3) 個人詞庫：LLM 翻譯前對原始中文做確定性替換，降低特定詞彙誤譯/幻覺機率
-    # （如「***REDACTED***」→ "***REDACTED***"）。未登錄詞彙不受影響，text 原樣通過（零回歸）。
-    text = lexicon.apply_personal_term_map(text)
+    """中文創作文字 → SD prompt。
+    keep_subject：保留主體 tag（1girl, solo…）並移到最前；人設圖由 gender_prefix 補主體故傳 False，
+    文字→生圖沒有補主體步驟必須傳 True。"""
+    # 0. 個人詞庫：LLM 翻譯前做確定性替換，降低專有詞誤譯
+    _mapped = lexicon.apply_personal_term_map(text)
+    if _mapped != text:
+        # [CN-117] UI 的「中文描述」是替換前；這行才是實際送進 LLM 的文字（診斷詞庫切字問題用）
+        logger.info("[prompt-log] term-map 後送 LLM: %s", _mapped)
+    text = _mapped
 
     config = STYLE_CONFIG[style]
 
@@ -395,6 +345,8 @@ def _compile_impl(
     if _ov:
         _expanded = _WEIGHT_GROUP_RE.sub(r"\1", _ov)
         banned = banned | {t.strip().lower() for t in _expanded.split(",") if t.strip()}
+    if keep_subject:
+        banned = banned - _SUBJECT_COUNT_TAGS
 
     # 1. 構建 Prompt 並呼叫 LLM
     prompt = config.llm_template.format(prompt=text)
@@ -402,7 +354,7 @@ def _compile_impl(
         prompt,
         model=model,
         options={"num_predict": 250, "temperature": 0.3},
-        keep_alive=0,  # 2026-06-21：編完即退 VRAM，避免 9b 殘留餓死 ComfyUI 主 pass（16GB 上主 pass 80s→~35s 穩定）。代價：每次編譯冷載 ~3-5s。
+        keep_alive=0,  # 編完即退 VRAM，避免文字模型殘留拖慢 ComfyUI 主 pass
     )
     if raw_response.startswith("["):
         raise RuntimeError(raw_response)
@@ -423,7 +375,7 @@ def _compile_impl(
     if style is not PromptStyle.FLUX:
         combined_text = f"{text} {anchor_text} {extracted}"
         
-        # [CN-016] [停用] Group A 內容腦補類過濾（A1-A4）——還原碼與停用理由見 CODE_NOTES
+        # [CN-016] 內容腦補類過濾已停用（還原方式見 CODE_NOTES）
         if not _HETERO_DETECT_RE.search(f"{text} {anchor_text}"):
             cleaned_tags = [
                 t for t in cleaned_tags
@@ -431,16 +383,20 @@ def _compile_impl(
                 and not _DIRECTIONAL_EYE_RE.search(t)
             ]
         cleaned_tags = _inject_heterochromia(cleaned_tags, text, anchor_source=anchor_text)
-        # S6'（2026-08-05）：無論有無異色瞳來源，最後統一收斂殘留的括號格式眼色 tag
-        # （LLM 可能對非異色瞳角色也吐出 "blue eye (left)"），確保不留壞語法給 CLIP。
+        # 收斂殘留的括號格式眼色 tag（LLM 對非異色瞳角色也可能吐出）
         cleaned_tags = _normalize_directional_eye_tags(cleaned_tags)
 
         # [CN-017] 服裝關鍵詞召回：只補詞庫已塞進輸入卻漏掉的 tag，不做腦補；必須放管線最後
         cleaned_tags = _recall_dropped_outfit_terms(cleaned_tags, text)
 
-        # 白皙系膚色統一詞（2026-09-21）：pale skin / fair skin → porcelain skin。
-        # 放在 tag 清理管線最末，確保 LLM 輸出與召回補回的 tag 都被收斂。
+        # 白皙系膚色統一詞；放在管線最末，召回補回的 tag 也會被收斂
         cleaned_tags = _canonicalize_fair_skin(cleaned_tags, style)
+
+        # keep_subject：主體放 body 最前（Anima 官方順序 quality/safety → 主體 → 其餘；
+        # 異色瞳注入會把眼色 prepend 到最前，不重排主體就會被擠到後面）。
+        if keep_subject:
+            _subj = [t for t in cleaned_tags if t.lower() in _SUBJECT_COUNT_TAGS]
+            cleaned_tags = _subj + [t for t in cleaned_tags if t.lower() not in _SUBJECT_COUNT_TAGS]
 
         # [CN-018] [停用] Group B Anchor 系統（抽色→清衝突→重排加權）——還原碼見 CODE_NOTES
 
@@ -465,7 +421,12 @@ def _compile_impl(
     if _extra_neg:
         negative = f"{negative}, {_extra_neg}" if negative else _extra_neg
 
-    return positive.strip(", "), negative
+    # [CN-127] 設定檔 prefix／suffix 可能自帶尾逗號 → 拼接出空 tag `, ,`
+    return _tidy_tags(positive), _tidy_tags(negative)
+
+
+def _tidy_tags(text: str) -> str:
+    return re.sub(r"(?:\s*,)+\s*", ", ", text or "").strip(", ")
 
 
 def _extract_output(raw: str) -> str:
@@ -490,7 +451,7 @@ _INLINE_DASH_RE = re.compile(r'\s+-\s+.+$')
 # Meta-label：以 `:` 結尾（e.g. "Conflict Resolution:", "Note:"）→ 丟棄整個 tag
 _META_LABEL_RE = re.compile(r':\s*$')
 
-# 數字年齡短語（"10 year old", "5 years old"）= 由 _age_body_tags 確定性處理；
+# 數字年齡短語（"10 year old", "5 years old"）不進生圖（CN-128：年齡只當背景敘述）；
 # LLM 翻譯版本會與 body_prefix 衝突，且可能產生不適當的外觀描述
 _AGE_PHRASE_RE = re.compile(r'\b\d+\s+years?\s+old\b', re.IGNORECASE)
 
@@ -499,12 +460,6 @@ _AGE_PHRASE_RE = re.compile(r'\b\d+\s+years?\s+old\b', re.IGNORECASE)
 _CJK_RE = re.compile(r'[぀-ヿ㐀-䶿一-鿿ｦ-ﾟ]')
 
 
-_NSFW_BANNED = frozenset({
-    "nude", "naked", "nudity", "topless", "bottomless", "nsfw", "explicit",
-    "nipples", "nipple", "areola", "areolae", "pubic hair", "pussy", "vagina",
-    "penis", "genitalia", "genitals", "cameltoe", "sex", "cum", "nude body",
-    "bare breasts", "exposed breasts", "naked body",
-})
 
 
 def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
@@ -547,15 +502,14 @@ def _sanitize_to_list(tag_string: str, banned_set: set[str]) -> list[str]:
         if _META_LABEL_RE.search(t_clean):
             continue
 
-        # 數字年齡短語 → 由 _age_body_tags 確定性處理，LLM 版本一律丟棄
+        # 數字年齡短語 → 年齡不進生圖（CN-128），LLM 版本一律丟棄
         if _AGE_PHRASE_RE.search(t_clean):
             continue
 
-        # P2：banned_set 內的 tag 經 styles._sync_banned_tags 已剝除 SD 權重語法
-        # （如 "(highres:0.8)" → "highres"）；比對鍵同步剝除，避免權重殘留造成誤判漏放行。
+        # banned_set 已剝除權重語法，比對鍵也須剝除才會命中
         normalized = re.sub(r':[\d.]+$', '', t_clean.lower().strip("()")).strip()
 
-        if _LINEART_ARTIFACT_RE.search(t_clean):            
+        if _LINEART_ARTIFACT_RE.search(t_clean):
             continue
 
         if normalized in banned_set or normalized in seen:
@@ -631,14 +585,8 @@ def _compile_cache_key(args, kwargs) -> str:
 
 
 def prompt_cache_hit(*args, **kwargs) -> bool:
-    """compile(*args, **kwargs) 現在會不會命中快取？供呼叫端決定要不要先搶 Ollama 的
-    VRAM focus —— 命中就不必搶，ComfyUI 的模型可以整段留在顯卡上。
-
-    快取停用時恆為 False ⇒ 呼叫端行為與改動前完全相同。
-
-    margin：預留 5 秒安全邊際。避免「探測時還沒過期、幾毫秒後 compile 卻剛好過期」
-    導致沒搶 focus 就去呼叫 Ollama（那會讓 9b 模型跟 ComfyUI 搶 16G 顯存）。
-    """
+    """compile 是否會命中快取（命中就不必搶 Ollama VRAM focus）；快取停用時恆為 False。
+    預留 margin 秒，避免探測後剛好過期而未搶 focus 就呼叫 Ollama。"""
     if PROMPT_CACHE_TTL_SEC <= 0:
         return False
     try:
@@ -653,10 +601,7 @@ def prompt_cache_hit(*args, **kwargs) -> bool:
 
 
 def compile(*args, **kwargs) -> tuple[str, str]:
-    """Main entrypoint to compile Chinese creative text into fine-tuned SD prompts.
-
-    薄快取層；實際編譯在 _compile_impl。失敗（Ollama 回錯 → RuntimeError）不入快取。
-    """
+    """Main entrypoint to compile Chinese creative text into fine-tuned SD prompts [FD-082]"""
     if PROMPT_CACHE_TTL_SEC <= 0:
         return _compile_impl(*args, **kwargs)
 

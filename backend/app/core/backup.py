@@ -1,8 +1,4 @@
-"""
-SQLite 定時備份 — VACUUM INTO 產生一致性快照至 BACKUP_DIR。
-啟動時備份一次，之後每 BACKUP_INTERVAL_HOURS 一次（0 = 停用）。
-備份失敗只記 log，不影響 app 運作（resilient errors）。
-"""
+"""SQLite 定時備份 — VACUUM INTO 產生一致性快照至 BACKUP_DIR [FD-027]"""
 from __future__ import annotations
 
 import asyncio

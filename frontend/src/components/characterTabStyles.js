@@ -1,189 +1,169 @@
-// Craftflow CharacterTab 樣式（2026-06-13 A2 增量1：自 CharacterTab.jsx 抽出，純靜態）
+// CharacterTab 樣式（純靜態）；共用元件樣式來自 sharedStyles.UI
+
+import { UI } from './sharedStyles.js'
 
 export const S = {
-  root: { display: 'flex', flexDirection: 'column', gap: 16 },
-  toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  toolbarTitle: { fontSize: 16, fontWeight: 700, color: 'var(--text)' },
-  breadcrumb: { fontSize: 13, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 },
-  breadSep: { color: 'var(--border)' },
-  breadLink: { color: 'var(--accent)', cursor: 'pointer', textDecoration: 'none' },
+  root: { display: 'flex', flexDirection: 'column', gap: 20 },
+  toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, minHeight: 34 },
+  toolbarTitle: { fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-.02em' },
+  breadcrumb: { fontSize: 13, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  breadSep: { color: 'var(--faint)' },
+  breadLink: { color: 'var(--muted)', cursor: 'pointer', textDecoration: 'none', padding: '2px 4px', margin: '0 -4px', borderRadius: 'var(--r-sm)' },
+  backBar: { position: 'sticky', top: 0, zIndex: 6, display: 'flex', alignItems: 'center', gap: 14, marginBottom: -8, background: 'var(--bg)', borderBottom: '1px solid var(--border)' },
+  backBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', flexShrink: 0, border: '1px solid var(--accent-border)', borderRadius: 'var(--r)', background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' },
+  backCrumb: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 13, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
 
-  addBtn: {
-    padding: '8px 18px', borderRadius: 8, border: 'none',
-    background: 'var(--accent)', color: 'var(--accent-contrast)', fontSize: 14,
-    fontWeight: 600, cursor: 'pointer',
-  },
-  backBtn: {
-    padding: '6px 14px', borderRadius: 8,
-    border: '1px solid var(--border)', background: 'transparent',
-    color: 'var(--muted)', fontSize: 13, cursor: 'pointer',
-  },
-  btnRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  addBtn: { ...UI.btnPrimary, padding: '7px 14px', fontSize: 13 },
+  backBtn: { ...UI.btnGhost, color: 'var(--muted)' },
+  btnRow: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
 
   // Project grid
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
   card: {
-    background: 'var(--surface-2)', border: '1px solid var(--border)',
-    borderRadius: 12, padding: 18, cursor: 'pointer',
-    transition: 'border-color .15s', display: 'flex', flexDirection: 'column', gap: 8,
+    ...UI.panel,
+    padding: 20, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 176,
   },
-  cardTitle: { fontSize: 15, fontWeight: 700, color: 'var(--text)' },
-  cardMeta: { fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 },
-  badge: {
-    display: 'inline-block', fontSize: 11, borderRadius: 4,
-    padding: '2px 7px', fontWeight: 600, alignSelf: 'flex-start',
-  },
-  genreBadge: {
-    display: 'inline-block', fontSize: 11, borderRadius: 4,
-    padding: '2px 7px', background: 'var(--surface)',
-    border: '1px solid var(--border)', color: 'var(--muted)',
-  },
-  charCount: { fontSize: 12, color: 'var(--muted)', marginTop: 'auto' },
+  cardTitle: { fontSize: 17, fontWeight: 700, color: 'var(--text)', letterSpacing: '-.01em' },
+  cardMeta: { fontSize: 13, color: 'var(--text-2)', lineHeight: 1.65 },
+  badge: { ...UI.badge, alignSelf: 'flex-start' },
+  genreBadge: { ...UI.badge, fontWeight: 500, background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-2)' },
+  charCount: { fontSize: 12, color: 'var(--muted)', marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--border)' },
 
   // Character + Faction mixed grid
-  charGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 },
+  charGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(176px, 1fr))', gap: 16 },
   charCard: {
-    background: 'var(--surface-2)', border: '1px solid var(--border)',
-    borderRadius: 10, padding: 14, cursor: 'pointer',
-    transition: 'border-color .15s', display: 'flex', flexDirection: 'column', gap: 8,
+    ...UI.panel,
+    padding: 0, overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 0,
   },
   portrait: {
-    width: '100%', aspectRatio: '1/1', borderRadius: 8,
-    background: 'var(--border)', overflow: 'hidden',
+    width: '100%', aspectRatio: '3/4',
+    background: 'var(--canvas)', overflow: 'hidden',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     color: 'var(--muted)', fontSize: 12,
   },
-  charName: { fontSize: 14, fontWeight: 700, color: 'var(--text)' },
-  charTraits: { fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 },
+  charName: { fontSize: 14, fontWeight: 600, color: 'var(--text)' },
+  charTraits: { fontSize: 12, color: 'var(--muted)', lineHeight: 1.55, padding: '0 12px', margin: '0 0 12px' },
 
   // Faction tile (same size as char card, distinct style)
   factionTile: {
-    background: 'var(--surface-2)', border: '2px dashed var(--border)',
-    borderRadius: 10, padding: 14, cursor: 'pointer',
-    transition: 'border-color .15s', display: 'flex', flexDirection: 'column', gap: 8,
+    ...UI.panel,
+    padding: 0, overflow: 'hidden', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 0,
   },
   factionThumb: {
-    width: '100%', aspectRatio: '1/1', borderRadius: 8,
-    background: 'var(--surface)', overflow: 'hidden',
+    width: '100%', aspectRatio: '3/4',
+    background: 'var(--surface-2)', overflow: 'hidden',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 30, color: 'var(--muted)',
+    color: 'var(--faint)',
   },
-  factionName: { fontSize: 14, fontWeight: 700, color: 'var(--accent)' },
-  factionMeta: { fontSize: 11, color: 'var(--muted)' },
+  factionName: { fontSize: 14, fontWeight: 600, color: 'var(--text)', padding: '10px 12px 0' },
+  factionMeta: { fontSize: 12, color: 'var(--muted)' },
 
   // Color picker
-  colorRow: { display: 'flex', alignItems: 'center', gap: 10 },
+  colorRow: { display: 'flex', alignItems: 'center', gap: 8, height: 36 },
   colorPicker: {
-    width: 38, height: 34, padding: 2, borderRadius: 6,
-    border: '1px solid var(--border)', cursor: 'pointer', background: 'none',
+    width: 36, height: 36, padding: 3, borderRadius: 'var(--r)',
+    border: '1px solid var(--border-strong)', cursor: 'pointer', background: 'var(--surface)',
   },
-  colorCode: { fontFamily: 'monospace', fontSize: 13, color: 'var(--muted)' },
-  colorDot: { width: 10, height: 10, borderRadius: '50%', flexShrink: 0 },
+  colorCode: { fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--text-2)' },
+  colorDot: { width: 10, height: 10, borderRadius: 3, flexShrink: 0, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.12)' },
 
   // Faction chips (in char detail)
   factionChip: {
-    display: 'inline-flex', alignItems: 'center', gap: 5,
-    fontSize: 12, borderRadius: 20, padding: '3px 10px',
-    background: 'var(--surface)', border: '1px solid var(--accent)',
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    fontSize: 12.5, fontWeight: 500, borderRadius: 'var(--r)', padding: '3px 6px 3px 10px',
+    background: 'var(--accent-soft)', border: '1px solid var(--accent-border)',
     color: 'var(--accent)', cursor: 'default',
   },
   chipX: {
-    cursor: 'pointer', color: 'var(--muted)', fontSize: 13,
-    lineHeight: 1, padding: '0 2px',
+    cursor: 'pointer', color: 'var(--accent)', fontSize: 14, opacity: .7,
+    lineHeight: 1, padding: '0 3px',
   },
 
   // Delete confirm box
   deleteBox: {
     background: 'var(--tint-red-bg)', border: '1px solid var(--tint-red-bg)',
-    borderRadius: 10, padding: 16, display: 'flex', flexDirection: 'column', gap: 10,
+    borderRadius: 'var(--r-lg)', padding: 16, display: 'flex', flexDirection: 'column', gap: 10,
   },
   deletePrompt: { fontSize: 13, color: 'var(--danger)', margin: 0 },
 
   // Forms
-  form: { display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 },
-  label: { fontSize: 12, color: 'var(--muted)', marginBottom: 3, display: 'block' },
-  input: {
-    width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-    fontSize: 14, outline: 'none', boxSizing: 'border-box',
-  },
-  select: {
-    width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-    fontSize: 14, outline: 'none', boxSizing: 'border-box',
-  },
-  textarea: {
-    width: '100%', background: 'var(--surface-2)', border: '1px solid var(--border)',
-    borderRadius: 8, color: 'var(--text)', padding: '9px 12px',
-    fontSize: 14, resize: 'vertical', fontFamily: 'inherit',
-    outline: 'none', minHeight: 80, boxSizing: 'border-box',
-  },
-  btn: {
-    padding: '10px 0', borderRadius: 8, border: 'none',
-    background: 'var(--accent)', color: 'var(--accent-contrast)',
-    fontSize: 15, fontWeight: 600, cursor: 'pointer',
-  },
-  btnSm: {
-    padding: '6px 14px', borderRadius: 8,
-    border: '1px solid var(--border)', background: 'transparent',
-    color: 'var(--text)', fontSize: 13, cursor: 'pointer',
-  },
-  btnDanger: {
-    padding: '6px 14px', borderRadius: 8,
-    border: '1px solid var(--tint-red-bg)', background: 'transparent',
-    color: 'var(--danger)', fontSize: 13, cursor: 'pointer',
-  },
-  error: { color: 'var(--danger)', fontSize: 13 },
+  form: { display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 600 },
+  label: UI.label,
+  input: UI.input,
+  select: UI.select,
+  textarea: UI.textarea,
+  btn: { ...UI.btnPrimary, padding: '9px 16px' },
+  btnSm: UI.btnSm,
+  btnDanger: UI.btnDanger,
+  error: UI.error,
   muted: { color: 'var(--muted)', fontSize: 13 },
 
   // Variant tab bar
-  varTabBar: { display: 'flex', gap: 4, margin: '4px 0 0', borderBottom: '1px solid var(--border)', paddingBottom: 0 },
+  varTabBar: { display: 'flex', gap: 0, borderBottom: '1px solid var(--border)' },
   varTab: {
-    padding: '7px 16px', border: 'none', background: 'transparent',
-    color: 'var(--muted)', fontSize: 13, cursor: 'pointer',
-    borderBottom: '2px solid transparent', marginBottom: -1, borderRadius: '6px 6px 0 0',
-    display: 'flex', alignItems: 'center', gap: 5, transition: 'color .12s',
+    position: 'relative', padding: '8px 12px 9px', border: 'none', background: 'transparent',
+    color: 'var(--muted)', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+    borderBottom: '2px solid transparent', marginBottom: -1, borderRadius: 'var(--r) var(--r) 0 0',
+    display: 'flex', alignItems: 'center', gap: 6,
   },
-  varTabActive: { color: 'var(--text)', borderBottom: '2px solid var(--accent)', fontWeight: 600, background: 'var(--accent-soft)' },
+  varTabActive: { color: 'var(--text)', borderBottom: '2px solid var(--accent)', fontWeight: 600 },
   tabEditBtn: {
-    width: 16, height: 16, border: 'none', background: 'transparent',
-    color: 'var(--muted)', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1,
-    display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 3,
+    width: 18, height: 18, border: 'none', background: 'transparent',
+    color: 'var(--faint)', cursor: 'pointer', padding: 0, fontSize: 11, lineHeight: 1,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--r-sm)',
     flexShrink: 0,
   },
 
-  // Detail layout
-  detail: { display: 'flex', gap: 20, alignItems: 'flex-start' },
-  detailLeft: { flex: '0 0 290px', display: 'flex', flexDirection: 'column', gap: 14 },
-  detailRight: { flex: 1, display: 'flex', flexDirection: 'column', gap: 14 },
+  // Detail layout：舞台｜資料｜生成面板（窄螢幕自動換行）
+  detail: { display: 'grid', columnGap: 24, rowGap: 20, alignItems: 'start' },   // 欄寬見 index.css .cf-detail
+  detailStage: { display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 },
+  detailSummary: { minWidth: 0 },   // 寬螢幕時 sticky，見 index.css .cf-detail
+  detailRight: { display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 },
+  inspector: {
+    ...UI.panel,
+    padding: 0, overflow: 'hidden',
+    display: 'flex', flexDirection: 'column', minWidth: 0,
+  },
+  inspectorHead: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+    padding: '12px 14px', borderBottom: '1px solid var(--border)',
+  },
+  inspectorTitle: { fontSize: 13, fontWeight: 600, color: 'var(--text)' },
+  inspectorBody: { padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 12 },
+  inspectorFoot: { padding: 12, borderTop: '1px solid var(--border)', background: 'var(--surface-2)' },
+
   summaryCard: {
-    background: 'var(--surface-2)', border: '1px solid var(--border)',
-    borderRadius: 10, padding: '14px 16px',
-    fontSize: 13, lineHeight: 1.9, whiteSpace: 'pre-wrap',
-    color: 'var(--text)', minHeight: 120,
+    background: 'var(--surface)', border: '1px solid var(--border)',
+    borderRadius: 'var(--r-lg)', padding: '14px 16px',
+    fontSize: 13.5, lineHeight: 1.85, whiteSpace: 'pre-wrap',
+    color: 'var(--text-2)',
   },
   summaryPlaceholder: {
-    background: 'var(--surface-2)', border: '2px dashed var(--border)',
-    borderRadius: 10, padding: '20px 16px',
+    background: 'var(--surface-2)', border: '1px dashed var(--border-strong)',
+    borderRadius: 'var(--r-lg)', padding: '18px 16px',
     color: 'var(--muted)', fontSize: 13, textAlign: 'center',
   },
   dropzone: {
-    border: '2px dashed var(--border)', borderRadius: 10,
+    border: '1px dashed var(--border-strong)', borderRadius: 'var(--r-lg)',
     minHeight: 180, display: 'flex', alignItems: 'center',
-    justifyContent: 'center', cursor: 'pointer',
-    overflow: 'hidden', transition: 'border-color .2s', textAlign: 'center',
+    justifyContent: 'center', cursor: 'pointer', background: 'var(--surface-2)',
+    overflow: 'hidden', transition: 'border-color .15s', textAlign: 'center',
   },
   dropzoneActive: { borderColor: 'var(--accent)' },
   portraitImg: { width: '100%', objectFit: 'cover', maxHeight: 220, display: 'block' },
-  genImg: { width: '100%', borderRadius: 10, display: 'block', marginTop: 8 },
+  genImg: { width: '100%', borderRadius: 'var(--r)', display: 'block', marginTop: 8, background: 'var(--canvas)' },
   spinner: {
-    display: 'inline-block', width: 16, height: 16,
-    border: '2px solid var(--border)', borderTop: '2px solid var(--accent)',
-    borderRadius: '50%', animation: 'spin 0.9s linear infinite',
-    verticalAlign: 'middle', marginRight: 5,
+    display: 'inline-block', width: 14, height: 14,
+    border: '2px solid currentColor', borderTopColor: 'transparent', opacity: .8,
+    borderRadius: '50%', animation: 'spin 0.8s linear infinite',
+    verticalAlign: 'middle', marginRight: 6, flexShrink: 0,
   },
-  sectionLabel: { fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 },
+  sectionLabel: { ...UI.sectionLabel, marginBottom: 8 },
+  // 「會影響生圖」標記（取代舊的 ✦ 字元）
+  genMark: { display: 'inline-block', width: 6, height: 6, borderRadius: 1, background: 'var(--accent)', transform: 'rotate(45deg)', margin: '0 8px 1px 1px', verticalAlign: 'middle' },
+  sectionHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 10, minHeight: 26 },
+  hint: { ...UI.hint, fontSize: 12, marginTop: 6 },
   divider: { borderColor: 'var(--border)', margin: '4px 0' },
   row: { display: 'flex', gap: 12 },
-  fieldGroup: { flex: 1, display: 'flex', flexDirection: 'column', gap: 4 },
+  fieldGroup: { flex: 1, display: 'flex', flexDirection: 'column', gap: 0, minWidth: 0 },
 }

@@ -1,9 +1,5 @@
-"""ComfyUI WebSocket 進度監聽（2026-06-13 B1）。
-
-best-effort 疊加層：連 ComfyUI 的 /ws，把取樣步數進度透過 on_event 回報。
-全程容錯——ws 套件缺 / 連線失敗 / 解析錯，皆靜默降級，不影響生成主流程
-（完成與輸出仍以 comfyui_client.wait_for_result 的 HTTP 輪詢為唯一真實來源）。
-"""
+"""ComfyUI WebSocket 進度監聽（best-effort）：失敗皆靜默降級；
+完成與輸出以 comfyui_client.wait_for_result 的 HTTP 輪詢為準。"""
 from __future__ import annotations
 
 import asyncio
@@ -22,13 +18,7 @@ def _ws_url(client_id: str) -> str:
 
 
 async def stream_progress(client_id, prompt_id, on_event, *, timeout: float = 600.0) -> None:
-    """連 ComfyUI ws，把進度事件回報給 on_event(dict)。
-
-    on_event 事件格式：
-      {"type":"progress","value":v,"max":m,"pct":p}
-      {"type":"node","node":id} / {"type":"done"} / {"type":"error","message":...}
-    任何例外都吞掉（best-effort，不可影響生成）。
-    """
+    """連 ComfyUI ws，把進度事件回報給 on_event(dict) [FD-049]"""
     try:
         import websockets  # 延後 import：未安裝即整段降級
     except Exception:

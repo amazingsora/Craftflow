@@ -1,9 +1,5 @@
-"""執行期全域設定。
-
-2026-06-13 A4：改為持久化到 data/runtime_state.json，重啟不遺失（原為純記憶體、重啟重置）。
-公開 API（get_*/set_*）不變；setter 變更後即落檔，import 時自動載入。
-落檔/讀檔皆容錯：失敗只記 warning，不可讓設定流程 crash（Resilient errors）。
-"""
+"""執行期全域設定，持久化到 data/runtime_state.json（import 時載入、setter 即落檔）。
+讀寫失敗只記 warning，不中斷流程。"""
 import json
 import logging
 from pathlib import Path

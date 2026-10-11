@@ -1,11 +1,4 @@
-"""
-Art Style API:
-  GET    /api/v1/art-styles          — list all styles
-  POST   /api/v1/art-styles          — create style
-  GET    /api/v1/art-styles/{id}     — get style
-  PUT    /api/v1/art-styles/{id}     — update style
-  DELETE /api/v1/art-styles/{id}     — delete style
-"""
+"""Art Style API [FD-014]"""
 from __future__ import annotations
 
 from typing import Annotated

@@ -1,28 +1,17 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""
-Runtime settings endpoints (in-memory, reset on restart):
-  GET  /api/v1/settings/checkpoints   — list available checkpoints from ComfyUI
-  GET  /api/v1/settings/checkpoint    — active checkpoint name
-  POST /api/v1/settings/checkpoint    — switch active checkpoint
-  GET  /api/v1/settings/workflows     — list workflow JSON files
-  GET  /api/v1/settings/workflow      — active workflow filename
-  POST /api/v1/settings/workflow      — switch active workflow
-  GET  /api/v1/settings/capabilities  — IPA/CN capability for current mode+checkpoint
-  GET  /api/v1/settings/loras         — list LoRA models + active global LoRA
-  GET  /api/v1/settings/lora          — active global LoRA {name, strength}
-  POST /api/v1/settings/lora          — set global LoRA
-"""
+"""Runtime settings endpoints (in-memory, reset on restart) [FD-022]"""
 from __future__ import annotations
 
 import json
 from pathlib import Path
-import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import COMFYUI_BASE, OLLAMA_BASE, CUSTOM_WORKFLOWS_DIR, DEFAULT_VISION_MODEL, DEFAULT_TEXT_MODEL
+from app.core import config as _cfg
 from app.core import state
-from app.services.ai.wf_node_ops import _wf_has_controlnet
+from app.services.ai.gen_profile import get_profile
+from app.services.ai.wf_node_ops import _wf_has_controlnet, _wf_has_ipa as _wf_dict_has_ipa
 from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
 from app.services.http_local import SESSION
 
@@ -34,14 +23,21 @@ if not _SYSTEM_DIR.exists():
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-def _fetch_checkpoints() -> list[str]:
+_COMFY_OBJECT_INFO_TIMEOUT = 8
+
+
+def _fetch_comfy_choices(node_class: str, input_name: str, what: str) -> list[str]:
+    """讀 ComfyUI /object_info/<node_class> 某個下拉輸入的選項；失敗 → 503。"""
     try:
-        r = SESSION.get(f"{COMFYUI_BASE}/object_info/CheckpointLoaderSimple", timeout=8)
+        r = SESSION.get(f"{COMFYUI_BASE}/object_info/{node_class}", timeout=_COMFY_OBJECT_INFO_TIMEOUT)
         r.raise_for_status()
-        data = r.json()
-        return data["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0]
+        return r.json()[node_class]["input"]["required"][input_name][0]
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"無法從 ComfyUI 取得模型清單：{e}")
+        raise HTTPException(status_code=503, detail=f"無法從 ComfyUI 取得{what}：{e}")
+
+
+def _fetch_checkpoints() -> list[str]:
+    return _fetch_comfy_choices("CheckpointLoaderSimple", "ckpt_name", "模型清單")
 
 
 @router.get("/checkpoints", summary="列出 ComfyUI 可用 checkpoint")
@@ -67,24 +63,10 @@ def set_checkpoint(req: SetCheckpointRequest):
     return {"checkpoint": state.get_checkpoint()}
 
 
-_IPA_NODE_TYPES = {"IPAdapterAdvanced", "IPAdapter"}
-
-
 def _wf_has_ipa(name: str) -> bool:
     """Return True if the workflow JSON contains any IP-Adapter node."""
-    for base in (_CUSTOM_DIR, _SYSTEM_DIR):
-        path = base / name
-        if path.exists():
-            try:
-                with open(path, encoding="utf-8") as f:
-                    wf = json.load(f)
-                return any(
-                    isinstance(n, dict) and n.get("class_type") in _IPA_NODE_TYPES
-                    for n in wf.values()
-                )
-            except Exception:
-                return False
-    return False
+    wf = _wf_load_dict(name)
+    return isinstance(wf, dict) and _wf_dict_has_ipa(wf)
 
 
 # UI 格式（ComfyUI「Save」匯出，非「Save (API format)」）含頂層 "nodes" 陣列，
@@ -97,16 +79,8 @@ _UI_FORMAT_HINT = (
 
 def _wf_is_ui_format(name: str) -> bool:
     """Return True if the workflow JSON is a ComfyUI UI-format export (invalid for /prompt)."""
-    for base in (_CUSTOM_DIR, _SYSTEM_DIR):
-        path = base / name
-        if path.exists():
-            try:
-                with open(path, encoding="utf-8") as f:
-                    wf = json.load(f)
-                return isinstance(wf.get("nodes"), list)
-            except Exception:
-                return False
-    return False
+    wf = _wf_load_dict(name)
+    return isinstance(wf, dict) and isinstance(wf.get("nodes"), list)
 
 
 def _wf_load_dict(name: str) -> dict:
@@ -139,10 +113,7 @@ def list_workflows():
 
 @router.get("/capabilities", summary="取得目前 checkpoint/workflow 的 IPA/CN 能力")
 def get_capabilities():
-    """
-    回傳目前生效的 checkpoint + workflow 能力組合。
-    前端切換 checkpoint / workflow / 生成模式後應重抓此端點。
-    """
+    """回傳目前生效的 checkpoint + workflow 能力組合 [FD-023]"""
     # [CN-111] 改讀工作流實際生效的模型：舊寫法在 Anima 下誤判 sdxl → UI 顯示可用、後端靜默丟棄
     wf_name = state.get_workflow()
     ckpt = resolve_checkpoint_for_workflow(wf_name)
@@ -151,10 +122,15 @@ def get_capabilities():
     return {
         "ipa_supported": cap["ipa_supported"],
         "cn_supported":  cap["cn_supported"],
-        # D'-2：CN 不支援但有替代路徑時回傳其名稱（目前僅 "img2img"，Anima 用）。
-        # 前端據此保留「草圖引導」控制項並改標示，而非隱藏。
+        # CN 不支援時的替代路徑名稱；前端據此保留「草圖引導」控制項並改標示
         "cn_fallback":   cap.get("cn_fallback"),
+        # 「增強臉部輪廓」開關是否顯示（家族 profile 有開且 workflow 可注入 FaceDetailer）
+        "face_detailer_supported": bool(cap.get("face_detailer_supported")),
         "family":        cap["family"],
+        # [CN-133] GPU 分級與 hires 實際是否生效（全域開關 × 家族 profile × 分級），狀態列顯示用
+        "gpu_tier":      _cfg.GPU_TIER,
+        "gpu_tier_source": _cfg.GPU_TIER_SOURCE,
+        "hires_enabled": bool(_cfg.HIRES_ENABLED and get_profile(cap["family"]).hires_scale),
     }
 
 
@@ -277,14 +253,8 @@ def set_text_model(req: SetTextModelRequest):
 
 @router.get("/loras", summary="列出 ComfyUI 可用 LoRA 模型")
 def list_loras():
-    try:
-        r = SESSION.get(f"{COMFYUI_BASE}/object_info/LoraLoader", timeout=8)
-        r.raise_for_status()
-        data = r.json()
-        loras = data["LoraLoader"]["input"]["required"]["lora_name"][0]
-        return {"loras": loras, "active": state.get_lora()}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"無法從 ComfyUI 取得 LoRA 清單：{e}")
+    loras = _fetch_comfy_choices("LoraLoader", "lora_name", " LoRA 清單")
+    return {"loras": loras, "active": state.get_lora()}
 
 
 @router.get("/lora", summary="取得目前全局 LoRA 設定")

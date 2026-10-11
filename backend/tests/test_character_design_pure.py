@@ -81,10 +81,16 @@ def test_coverage_badge_cn_off():
 
 @pytest.fixture
 def _no_env_style(monkeypatch):
-    """基準：.env 畫風全關，確認每層測試互不干擾。"""
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", False)
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "")
+    """基準：.env 權重固定 1.0，確認每層測試互不干擾。"""
     monkeypatch.setattr(cds, "PERSONAL_STYLE_WEIGHT", 1.0)
+
+
+def test_resolve_style_extra_ignores_legacy_env_style_keys(_no_env_style, monkeypatch):
+    """[CN-122] .env 舊畫風鍵（全域／分家族）已移除：設了也不得進畫風段。"""
+    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("", None))
+    for k in ("PERSONAL_STYLE_ENABLED", "PERSONAL_STYLE_EXTRA_TAGS", "PERSONAL_STYLE_EXTRA_ANIMA"):
+        monkeypatch.setenv(k, "true" if k.endswith("ENABLED") else "example series")
+    assert _resolve_style_extra(None, "AnimaStandardV9_miaomiaoHarem.json") == ("", 1.0)
 
 
 def test_resolve_style_extra_none_registered_returns_empty(_no_env_style, monkeypatch):
@@ -95,32 +101,11 @@ def test_resolve_style_extra_none_registered_returns_empty(_no_env_style, monkey
     assert weight == 1.0
 
 
-def test_resolve_style_extra_env_fallback_when_enabled(_no_env_style, monkeypatch):
-    """無 DB、無 profile → 落回 .env（ENABLED=true 時才生效）。"""
-    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("", None))
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", True)
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "***REDACTED***")
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_WEIGHT", 1.2)
-    tag, weight = _resolve_style_extra(None, "text_to_image.json")
-    assert tag == "***REDACTED***"
-    assert weight == 1.2
-
-
-def test_resolve_style_extra_env_disabled_stays_empty(_no_env_style, monkeypatch):
-    """ENABLED=false 是總開關 —— 即使 .env 字串有值也不生效。"""
-    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("", None))
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "***REDACTED***")
-    tag, weight = _resolve_style_extra(None, "text_to_image.json")
-    assert tag == ""
-
-
 def test_resolve_style_extra_profile_beats_env(_no_env_style, monkeypatch):
     """profile 登錄時贏過 .env（即便 .env 也開著且有值）。"""
     monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("flat color, thick outlines", 1.2))
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", True)
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "***REDACTED***")
     monkeypatch.setattr(cds, "PERSONAL_STYLE_WEIGHT", 9.9)
-    tag, weight = _resolve_style_extra(None, "Standard_V37.json")
+    tag, weight = _resolve_style_extra(None, "Standard_V38.json")
     assert tag == "flat color, thick outlines"
     assert weight == 1.2  # profile weight 也贏過 .env
 
@@ -129,7 +114,7 @@ def test_resolve_style_extra_profile_weight_absent_falls_back_to_env(_no_env_sty
     """profile 只登錄 style_extra、未登錄 weight → weight 落回 .env（tag 與 weight 各自獨立判斷）。"""
     monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("flat color", None))
     monkeypatch.setattr(cds, "PERSONAL_STYLE_WEIGHT", 2.0)
-    tag, weight = _resolve_style_extra(None, "AnimaStandardV8.json")
+    tag, weight = _resolve_style_extra(None, "AnimaStandardV9_aesthetic.json")
     assert tag == "flat color"
     assert weight == 2.0
 
@@ -137,22 +122,10 @@ def test_resolve_style_extra_profile_weight_absent_falls_back_to_env(_no_env_sty
 def test_resolve_style_extra_db_beats_everything(_no_env_style, monkeypatch):
     """art_style.extra_tags（DB，單一角色專屬）優先序最高，蓋過 profile 與 .env。"""
     monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("flat color", 1.2))
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", True)
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "***REDACTED***")
     st = ArtStyle(name="s", extra_tags=" vibrant colors, cel shading ")
-    tag, weight = _resolve_style_extra(st, "Standard_V37.json")
+    tag, weight = _resolve_style_extra(st, "Standard_V38.json")
     assert tag == "vibrant colors, cel shading"
     # DB 只決定 tag，不決定 weight —— weight 仍照 profile > .env 判斷（此處 profile 有登錄）。
-    assert weight == 1.2
-
-
-def test_resolve_style_extra_unregistered_workflow_zero_regression(_no_env_style, monkeypatch):
-    """未登錄 workflow → _workflow_style_extra 真實回傳 ("", None)（不 mock），確認端到端零回歸。"""
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_ENABLED", True)
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_EXTRA_TAGS", "***REDACTED***")
-    monkeypatch.setattr(cds, "PERSONAL_STYLE_WEIGHT", 1.2)
-    tag, weight = _resolve_style_extra(None, "text_to_image.json")
-    assert tag == "***REDACTED***"
     assert weight == 1.2
 
 
@@ -208,3 +181,35 @@ def test_wf_checkpoint_falls_back_to_global_when_not_embedded(monkeypatch):
     """system workflow 未內嵌模型名 → 退回全域（零回歸：等同改動前行為）。"""
     monkeypatch.setattr(cds.state, "get_checkpoint", lambda: "global.safetensors")
     assert cds._wf_checkpoint({"3": {"class_type": "KSampler", "inputs": {}}}) == "global.safetensors"
+
+
+# ── [CN-115] SYNC-007 軌 P：.env 分家族個人標籤（疊加語義）──────────────────────
+# tests/conftest.py 已清掉使用者真實 .env 的分家族鍵；以下各自 setenv。
+
+from app.services.ai import workflow_builder as _wb
+from app.services.ai.character_design_service import _with_personal_negative
+from app.services.ai.prompt_engine import PromptStyle
+
+
+def _family(monkeypatch, style):
+    monkeypatch.setattr(_wb, "_detect_style", lambda _w: style)
+
+
+def test_personal_style_absent_is_zero_regression(_no_env_style, monkeypatch):
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("soft shading", 1.0))
+    assert _resolve_style_extra(None, "Standard_V38.json") == ("soft shading", 1.0)
+
+
+def test_personal_negative_appends_to_any_base(monkeypatch):
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    assert _with_personal_negative("worst quality", "Standard_V38.json") == "worst quality"
+    monkeypatch.setenv("PERSONAL_NEGATIVE_EXTRA_ILLUSTRIOUS", "halo")
+    assert _with_personal_negative("worst quality", "Standard_V38.json") == "worst quality, halo"
+    assert _with_personal_negative("", "Standard_V38.json") == "halo"
+
+
+def test_personal_negative_does_not_leak_across_families(monkeypatch):
+    _family(monkeypatch, PromptStyle.ILLUSTRIOUS)
+    monkeypatch.setenv("PERSONAL_NEGATIVE_EXTRA_ANIMA", "(halo:1.5)")
+    assert _with_personal_negative("worst quality", "Standard_V38.json") == "worst quality"

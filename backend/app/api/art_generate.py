@@ -1,23 +1,17 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""
-ComfyUI image generation endpoints:
-  POST /api/v1/art/compile-prompt  — 中文 → model-aware prompt (自動偵測 checkpoint style)
-  POST /api/v1/art/lineart         — upload sketch → lineart PNG (ControlNet)
-  POST /api/v1/art/generate        — text prompt → image PNG (SDXL txt2img)
-  POST /api/v1/art/compose         — sketch + question → advice text + reference image (JSON)
-  POST /api/v1/art/img-guide       — reference image + prompt → image (i2i / controlnet modes)
-"""
+"""ComfyUI image generation endpoints [FD-005]"""
 from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import random
 import time
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -32,17 +26,26 @@ from app.services.ai.vram_manager import guardian
 from app.services.ai.generation_recorder import record_generation
 from app.services.ai import generation_jobs
 from app.services.ai import character_design_service
+from app.core.config import CUSTOM_TAGS_IMPORT_MAX_BYTES
+from app.services.ai.custom_tags import (
+    TAG_KINDS, CustomTagsError, import_custom_tags, load_custom_tags, save_custom_tags,
+)
+from app.services.ai import tag_dictionary
+from app.services.ai.appearance_cards import list_body_groups, list_cards
 from app.services.ai import image_edit_service
 from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
+from app.services.ai.gen_profile import resolve_profile_for_workflow
 from app.schemas.art_generate import (
     CompilePromptRequest,
+    CustomTagsPayload,
     GenerateRequest,
     GenerateAsyncRequest,
 )
 from app.services.ai.workflow_builder import (
     _build_txt2img,
+    _collect_loras,
     _style_prompts,
-    _compile_overrides,
+    _resolve_prompt_overrides,
     _detect_style,
     _extra_tags,
     _inject_loras,
@@ -53,16 +56,21 @@ from app.services.ai.workflow_builder import (
 )
 from app.services.ai.image_ops import (
     _clamp_dim,
+    _fit_to_canvas,
     _image_dimensions,
     _letterbox_to_aspect,
 )
 from app.services.ai.wf_node_ops import (
+    hires_params,
     _CN_APPLY_TYPES,
     _bypass_controlnet_nodes,
     _bypass_ipa_nodes,
-    _inject_controlnet_compose,
     _inject_controlnet_image,
+    _inject_img2img,
     _inject_ipa_cn_nodes,
+    _inject_lllite,
+    _find_main_ksampler_id,
+    _set_node_input,
     _inject_ipa_image,
     _inject_prompts,
     _wf_has_controlnet,
@@ -76,11 +84,7 @@ router = APIRouter(tags=["art-generate"])
 
 
 def _current_capability(wf_name: str | None = None) -> dict:
-    """B5 守門用：取得目前 checkpoint + workflow 的能力。
-
-    wf_name 預設使用 state.get_workflow()；caller 可傳入實際要用的 workflow 名稱。
-    若 workflow 無法載入（檔案不存在）則以空 dict 計算，僅依家族查表。
-    """
+    """能力守門用：取得目前 checkpoint + workflow 的能力 [FD-006]"""
     # [CN-109] checkpoint 改由工作流內嵌值解析，與 gen_profile 走同一函式，避免 UI 與生成端 family 不一致
     name = wf_name or state.get_workflow()
     ckpt = resolve_checkpoint_for_workflow(name)
@@ -95,20 +99,15 @@ def _current_capability(wf_name: str | None = None) -> dict:
 
 @router.post("/art/compile-prompt", summary="AI 編譯提示詞 (中文 → 模型對應格式)")
 async def compile_prompt_endpoint(req: CompilePromptRequest, db: Session = Depends(get_db)):
-    """
-    Detect current checkpoint style from text_to_image.json,
-    then compile Chinese description into the correct prompt format.
-
-    Returns:
-      positive  — compiled positive prompt (ready for ComfyUI)
-      negative  — model-appropriate negative prompt
-      style     — detected style (sdxl / pony / flux / ...)
-    """
+    """Detect current checkpoint style from text_to_image.json [FD-007]"""
     art_style = db.get(ArtStyle, req.art_style_id) if req.art_style_id else None
     style = _resolve_style(art_style)
     await guardian.request_focus("ollama")
     try:
-        positive, negative = compile_prompt(req.prompt, style=style, model=req.model or state.get_text_model(), **_compile_overrides(art_style))
+        positive, negative = compile_prompt(
+            req.prompt, style=style, model=req.model or state.get_text_model(),
+            keep_subject=True, **_resolve_prompt_overrides(art_style, state.get_workflow()),
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=f"Ollama 文字模型失敗：{e}")
     extra = _extra_tags(art_style)
@@ -120,12 +119,6 @@ async def compile_prompt_endpoint(req: CompilePromptRequest, db: Session = Depen
         "style": style.value,
         "art_style_id": req.art_style_id,
     }
-
-
-# Keep old endpoint as alias for backward compatibility
-@router.post("/art/optimize-prompt", summary="[deprecated] 請改用 /art/compile-prompt")
-async def optimize_prompt_compat(req: CompilePromptRequest):
-    return await compile_prompt_endpoint(req)
 
 
 @router.post("/art/lineart", summary="草稿→線稿 (ComfyUI ControlNet)")
@@ -147,10 +140,7 @@ async def lineart(file: Annotated[UploadFile, File(description="草稿圖片 (JP
 
 @router.post("/art/generate", summary="文字→圖片 (SDXL txt2img)")
 async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
-    """
-    Generate an illustration from a text prompt via ComfyUI.
-    If negative_prompt is empty, uses the model-appropriate preset (or art_style override).
-    """
+    """Generate an illustration from a text prompt via ComfyUI [FD-008]"""
     wf, seed, style, prompt, negative, lora_list = _build_txt2img(req, db)
     await guardian.request_focus("comfyui")
     image_bytes = await _run_comfyui(wf)
@@ -165,6 +155,7 @@ async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
         params={
             "width": req.width, "height": req.height, "steps": req.steps,
             "loras": lora_list, "art_style_id": req.art_style_id,
+            "hires": hires_params(wf),
         },
     )
     return Response(
@@ -182,10 +173,7 @@ async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
 
 @router.post("/art/generate-async", summary="文字→圖片（非同步 job + 批次）")
 async def generate_async(req: GenerateAsyncRequest, db: Session = Depends(get_db)):
-    """
-    立即回傳 job_id，背景執行生成（避免 two-pass / 高解析度 / 批次撞 HTTP 逾時）。
-    輪詢 GET /art/jobs/{job_id}，完成後 GET /art/jobs/{job_id}/result?index=N 取圖。
-    """
+    """立即回傳 job_id，背景執行生成（避免 two-pass / 高解析度 / 批次撞 HTTP 逾時） [FD-009]"""
     batch_size = max(1, min(8, req.batch_size))
     wf, seed, style, prompt, negative, lora_list = _build_txt2img(req, db, batch_size=batch_size)
     job = generation_jobs.create_job(meta={
@@ -205,6 +193,7 @@ async def generate_async(req: GenerateAsyncRequest, db: Session = Depends(get_db
             "width": req.width, "height": req.height, "steps": req.steps,
             "loras": lora_list, "art_style_id": req.art_style_id,
             "batch_size": batch_size, "async": True,
+            "hires": hires_params(wf),
         },
     )
     asyncio.create_task(generation_jobs.run_txt2img_job(job, wf, record_kwargs))
@@ -251,6 +240,24 @@ def get_generation_job_result(job_id: str, index: int = 0):
 
 
 
+@router.get("/art/jobs/{job_id}/progress", summary="生圖 job 進度（SSE）")
+async def stream_generation_job_progress(job_id: str):
+    """前端 GenerateTab.streamJobProgress 訂閱此端點；事件 event ∈ snapshot|progress|node|done|error [FD-010]"""
+    job = generation_jobs.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found（可能已逾時淘汰）")
+
+    async def event_stream():
+        async for ev in generation_jobs.stream_job_events(job):
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/art/inpaint", summary="局部重繪（白色遮罩區 = 重繪區）")
 async def inpaint(
     file: Annotated[UploadFile, File(description="原圖 (JPEG/PNG)")],
@@ -275,25 +282,32 @@ async def inpaint(
         image_edit_service.to_inpaint_workflow(wf, canvas_name, mask_name, denoise, grow_mask)
     except image_edit_service.WorkflowShapeError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    return await _run_image_edit(
+        db, wf, endpoint="inpaint", style=style, pos=pos, neg=neg, seed=actual_seed, steps=steps,
+        params={"denoise": denoise, "steps": steps, "grow_mask": grow_mask, "art_style_id": art_style_id},
+        headers={"X-Denoise": str(denoise)},
+    )
+
+
+async def _run_image_edit(db: Session, wf: dict, *, endpoint: str, style, pos: str, neg: str,
+                          seed: int, steps: int, params: dict, headers: dict) -> Response:
+    """inpaint／upscale 共用：注入 prompt 與 seed/steps → 執行 → 記錄歷史 → 回傳 PNG。"""
     _inject_prompts(wf, pos, neg)
     for node in wf.values():
         if isinstance(node, dict) and node.get("class_type") == "KSampler":
-            node["inputs"]["seed"] = actual_seed
+            node["inputs"]["seed"] = seed
             node["inputs"]["steps"] = steps
-    _replace_negative_seeds(wf, actual_seed)
+    _replace_negative_seeds(wf, seed)
 
     await guardian.request_focus("comfyui")
     image_bytes = await _run_comfyui(wf)
     hist_id = record_generation(
-        db, endpoint="inpaint", seed=actual_seed, workflow=state.get_workflow(),
-        style=style.value, positive=pos, negative=neg,
-        params={"denoise": denoise, "steps": steps, "grow_mask": grow_mask,
-                "art_style_id": art_style_id},
+        db, endpoint=endpoint, seed=seed, workflow=state.get_workflow(),
+        style=style.value, positive=pos, negative=neg, params=params,
     )
     return Response(
         content=image_bytes, media_type="image/png",
-        headers={"X-Seed": str(actual_seed), "X-Denoise": str(denoise),
-                 "X-History-Id": str(hist_id) if hist_id else ""},
+        headers={"X-Seed": str(seed), **headers, "X-History-Id": str(hist_id) if hist_id else ""},
     )
 
 
@@ -319,26 +333,16 @@ async def upscale(
         image_edit_service.to_upscale_workflow(wf, image_name, scale, denoise)
     except image_edit_service.WorkflowShapeError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    _inject_prompts(wf, pos, neg)
-    for node in wf.values():
-        if isinstance(node, dict) and node.get("class_type") == "KSampler":
-            node["inputs"]["seed"] = actual_seed
-            node["inputs"]["steps"] = steps
-    _replace_negative_seeds(wf, actual_seed)
+    return await _run_image_edit(
+        db, wf, endpoint="upscale", style=style, pos=pos, neg=neg, seed=actual_seed, steps=steps,
+        params={"scale": scale, "denoise": denoise, "steps": steps, "art_style_id": art_style_id},
+        headers={"X-Scale": str(scale)},
+    )
 
-    await guardian.request_focus("comfyui")
-    image_bytes = await _run_comfyui(wf)
-    hist_id = record_generation(
-        db, endpoint="upscale", seed=actual_seed, workflow=state.get_workflow(),
-        style=style.value, positive=pos, negative=neg,
-        params={"scale": scale, "denoise": denoise, "steps": steps,
-                "art_style_id": art_style_id},
-    )
-    return Response(
-        content=image_bytes, media_type="image/png",
-        headers={"X-Seed": str(actual_seed), "X-Scale": str(scale),
-                 "X-History-Id": str(hist_id) if hist_id else ""},
-    )
+
+_COMPOSE_BODY_TAGS = "full body, complete character, all limbs visible"
+_COMPOSE_LINEART_TAGS = "white background, monochrome, greyscale, lineart, clean lines"
+_COMPOSE_LINEART_NEG = "shading, color, complex background"
 
 
 @router.post("/art/compose", summary="草圖問答 → 構圖意見 + 參考圖")
@@ -352,12 +356,13 @@ async def compose(
     use_cn: bool = Form(False, description="以草圖作為 ControlNet hint"),
     cn_weight: float = Form(0.85, ge=0.1, le=1.5, description="ControlNet 強度"),
 ):
-    # B5 能力守門：前端隱藏選項時不應送旗標，但後端雙重確認，避免家族不支援時意外注入
+    # 能力守門：後端再確認一次，避免家族不支援時意外注入
     _cap = _current_capability()
     if not _cap["ipa_supported"]:
         use_sketch_as_ref = False
         character_ref = None
-    if not _cap["cn_supported"]:
+    # [CN-125] 無原生 CN 但有替代鏈（LLLite／img2img）時仍保留，交給 _apply_cn_guide
+    if not _cap["cn_supported"] and not _cap.get("cn_fallback"):
         use_cn = False
 
     image_bytes = await file.read()
@@ -374,6 +379,7 @@ async def compose(
     active_wf = state.get_workflow()
     style = _detect_style(active_wf)
     negative = STYLE_CONFIG[style].negative
+    mechanism = None
 
     # Cap generation to 1024px max (preserve aspect ratio from original sketch)
     _MAX_COMPOSE_DIM = 1024
@@ -389,13 +395,15 @@ async def compose(
 
     await guardian.request_focus("comfyui")
 
-    # CN：草圖 letterbox 後上傳作為 ControlNet hint
     uploaded_cn: str | None = None
-    if use_cn:
-        sketch_lb = _letterbox_to_aspect(image_bytes, gen_w, gen_h)
-        uploaded_cn = comfyui_client.upload_image_bytes(sketch_lb, "compose_cn_ref.png")
-
     if use_sketch_as_ref or character_ref is not None:
+        # IPA 只在 SDXL 家族可用，CN 走原生節點：草圖 letterbox 後上傳作為 ControlNet hint
+        if use_cn and _cap["cn_supported"]:
+            sketch_lb = _letterbox_to_aspect(image_bytes, gen_w, gen_h)
+            uploaded_cn = comfyui_client.upload_image_bytes(sketch_lb, "compose_cn_ref.png")
+            mechanism = "controlnet"
+        else:
+            use_cn = False
         # IP-Adapter 模式：以草圖（或外部參考圖）作為外觀基準
         if character_ref is not None:
             ref_bytes = await character_ref.read()
@@ -404,7 +412,7 @@ async def compose(
             ref_bytes = image_bytes
             ref_filename = "sketch_ref.png"
         uploaded_ref = comfyui_client.upload_image_bytes(ref_bytes, ref_filename)
-        final_prompt = sdxl_prompt.rstrip(", ") + ", full body, complete character, all limbs visible"
+        final_prompt = art_service.sanitize_tags(sdxl_prompt + ", " + _COMPOSE_BODY_TAGS)
         wf = _load_workflow("ipadapter_txt2img.json")
 
         # CN 注入 / bypass
@@ -431,30 +439,23 @@ async def compose(
         _inject_ipa_image(wf, uploaded_ref)
     else:
         # txt2img / CN-only 模式
-        final_prompt = sdxl_prompt.rstrip(", ") + ", full body, complete character, all limbs visible, white background, monochrome, lineart, clean lines, no shading, no color"
+        # [CN-126] 否定詞放負向：tag 模型把 no shading 讀成 shading 的正向訊號
+        final_prompt = art_service.sanitize_tags(
+            sdxl_prompt + ", " + _COMPOSE_BODY_TAGS + ", " + _COMPOSE_LINEART_TAGS)
+        negative = art_service.sanitize_tags(negative + ", " + _COMPOSE_LINEART_NEG, drop_negations=False)
         wf = _load_workflow(active_wf)
 
         # IPA bypass（若 workflow 有殘留 IPA 節點）
         if _wf_has_ipa(wf):
             _bypass_ipa_nodes(wf)
-
-        # CN 注入 / bypass
-        if use_cn and not _wf_has_controlnet(wf):
-            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True, models=_cap["models"])
-        elif not use_cn and _wf_has_controlnet(wf):
+        if _wf_has_controlnet(wf) and not (use_cn and _cap["cn_supported"]):
             _bypass_controlnet_nodes(wf)
 
         _inject_prompts(wf, final_prompt, negative)
-        for node in wf.values():
-            if not isinstance(node, dict):
-                continue
-            ct = node.get("class_type")
-            inputs = node.get("inputs", {})
-            if ct == "EmptyLatentImage":
-                inputs["width"] = gen_w
-                inputs["height"] = gen_h
-            elif ct == "KSampler":
-                inputs["seed"] = seed
+        _set_main_sampler(wf, seed=seed, width=gen_w, height=gen_h)
+        if use_cn:
+            profile, _fam = resolve_profile_for_workflow(active_wf)
+            mechanism, _ = _apply_cn_guide(wf, _cap, profile, image_bytes, gen_w, gen_h, cn_weight, "compose")
 
     # CN 圖片注入 + 強度設定
     if use_cn and uploaded_cn and _wf_has_controlnet(wf):
@@ -470,13 +471,28 @@ async def compose(
     return {
         "advice": advice,
         "suggested_prompt": final_prompt,
+        "negative_prompt": negative,
         "image": encoded_image,
         "seed": seed,
         "style": style.value,
+        "mechanism": mechanism,
     }
 
 
-# ── Character Design Sheet Generation(主流程已下沉 character_design_service,A1 Step 3)──
+# ── Character Design Sheet Generation（主流程見 character_design_service）──
+
+@router.get("/characters/{character_id}/identity-prompt", summary="角色識別段英文 prompt（以此角色生圖）")
+async def get_character_identity_prompt(character_id: int, db: Session = Depends(get_db)):
+    """依角色目前欄位即時編譯（不取歷史）；Ollama 失敗回 source=fallback＋不含名字的中文。"""
+    return await character_design_service.build_identity_prompt(character_id, db)
+
+
+def _gate_design_flags(use_ipa: bool, use_controlnet: bool) -> tuple[bool, bool]:
+    """能力守門：家族不支援時關閉 IPA／CN；CN 有替代路徑（cn_fallback）時保留，否則替代路徑永遠不會執行。"""
+    cap = _current_capability()
+    return (use_ipa and cap["ipa_supported"],
+            use_controlnet and (cap["cn_supported"] or bool(cap.get("cn_fallback"))))
+
 
 @router.post("/characters/{character_id}/generate-design", summary="角色人設圖生成(ComfyUI)")
 async def generate_character_design(
@@ -490,25 +506,22 @@ async def generate_character_design(
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
     cn_weight: float = 0.85,
-    seed: int = -1,  # A3 P0-1：-1=維持現行隨機（零回歸），>=0 沿用指定 seed
-    reuse_prompt: bool = False,  # A3 P0-3：沿用上次 prompt，不重新編譯
+    seed: int = -1,  # -1＝隨機；>=0 固定 seed
+    reuse_prompt: bool = False,  # 沿用上次 prompt，不重新編譯
+    face_detailer: bool = True,  # 增強臉部輪廓（FaceDetailer，家族 profile 有開才生效）
+    face_detailer_denoise: Optional[float] = None,  # 修臉強度；None＝家族預設，後端夾 0.2~0.7
+    custom_tags: str = "",       # 客製化標籤（作品／繪師）
     db: Session = Depends(get_db),
 ):
     """主流程見 services/ai/character_design_service.py。"""
-    # B5 能力守門
-    _cap = _current_capability()
-    if not _cap["ipa_supported"]:
-        use_ipa = False
-    # 2026-08-05 D'-2 補洞：家族不支援 CN 但有替代路徑（Anima → img2img）時不可打成 False，
-    # 否則 service 的 cn_fallback 分支永遠進不去（前端 cnUsable 已同此判斷，後端漏改）。
-    if not _cap["cn_supported"] and not _cap.get("cn_fallback"):
-        use_controlnet = False
+    use_ipa, use_controlnet = _gate_design_flags(use_ipa, use_controlnet)
     return await character_design_service.generate_character_design(
         character_id=character_id, expression=expression, art_style_id=art_style_id,
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight, seed=seed,
-        reuse_prompt=reuse_prompt, db=db,
+        reuse_prompt=reuse_prompt, use_face_detailer=face_detailer,
+        face_detailer_denoise=face_detailer_denoise, custom_tags=custom_tags, db=db,
     )
 
 
@@ -525,26 +538,61 @@ async def generate_variant_design(
     ipa_weight: float = 0.6,
     use_controlnet: bool = True,
     cn_weight: float = 0.85,
-    seed: int = -1,  # A3 P0-1：-1=維持現行隨機（零回歸），>=0 沿用指定 seed
-    reuse_prompt: bool = False,  # A3 P0-3：沿用上次 prompt，不重新編譯
+    seed: int = -1,  # -1＝隨機；>=0 固定 seed
+    reuse_prompt: bool = False,  # 沿用上次 prompt，不重新編譯
+    face_detailer: bool = True,  # 增強臉部輪廓（FaceDetailer，家族 profile 有開才生效）
+    face_detailer_denoise: Optional[float] = None,  # 修臉強度；None＝家族預設，後端夾 0.2~0.7
+    custom_tags: str = "",       # 客製化標籤（作品／繪師）
     db: Session = Depends(get_db),
 ):
     """主流程見 services/ai/character_design_service.py。"""
-    # B5 能力守門
-    _cap = _current_capability()
-    if not _cap["ipa_supported"]:
-        use_ipa = False
-    # 2026-08-05 D'-2 補洞：家族不支援 CN 但有替代路徑（Anima → img2img）時不可打成 False，
-    # 否則 service 的 cn_fallback 分支永遠進不去（前端 cnUsable 已同此判斷，後端漏改）。
-    if not _cap["cn_supported"] and not _cap.get("cn_fallback"):
-        use_controlnet = False
+    use_ipa, use_controlnet = _gate_design_flags(use_ipa, use_controlnet)
     return await character_design_service.generate_variant_design(
         character_id=character_id, slot=slot, expression=expression, art_style_id=art_style_id,
         use_ai_prompt=use_ai_prompt, use_outfit=use_outfit, use_vision=use_vision,
         use_ipa=use_ipa, ipa_weight=ipa_weight,
         use_controlnet=use_controlnet, cn_weight=cn_weight, seed=seed,
-        reuse_prompt=reuse_prompt, db=db,
+        reuse_prompt=reuse_prompt, use_face_detailer=face_detailer,
+        face_detailer_denoise=face_detailer_denoise, custom_tags=custom_tags, db=db,
     )
+
+
+@router.get("/art/custom-tags", summary="客製化標籤清單（作品／繪師，本機 JSON）")
+def get_custom_tags():
+    """[CN-122] 清單只存 CUSTOM_TAGS_FILE；檔案不存在回空清單。"""
+    return load_custom_tags()
+
+
+@router.put("/art/custom-tags", summary="儲存客製化標籤清單（整份覆寫）")
+def put_custom_tags(body: CustomTagsPayload):
+    """[CN-131] tag 正規化＋去重後原子寫入；超過上限回 400。"""
+    try:
+        return save_custom_tags(body.model_dump())
+    except CustomTagsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/art/custom-tags/import", summary="匯入標籤檔（custom_tags JSON／Danbooru CSV）合併進清單")
+async def post_custom_tags_import(file: UploadFile = File(...)):
+    """[CN-131] 只合併作品／繪師；大型字典請設 TAG_DICTIONARY_CSV 用搜尋挑選。"""
+    content = await file.read(CUSTOM_TAGS_IMPORT_MAX_BYTES + 1)
+    if len(content) > CUSTOM_TAGS_IMPORT_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"檔案超過 {CUSTOM_TAGS_IMPORT_MAX_BYTES // 1024} KB；整份 Danbooru 字典請設 .env 的 TAG_DICTIONARY_CSV，改用搜尋挑選",
+        )
+    try:
+        return await run_in_threadpool(import_custom_tags, content, file.filename or "")
+    except CustomTagsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/art/tag-dictionary/search", summary="搜尋 Danbooru 標籤字典（作品／繪師）")
+def get_tag_dictionary_search(q: str = "", kind: Optional[str] = None):
+    """[CN-131] 字典未設定時 configured=false、results 為空。"""
+    if kind and kind not in TAG_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind 只能是 {'／'.join(TAG_KINDS)}")
+    return {**tag_dictionary.dictionary_status(), "results": tag_dictionary.search(q, kind)}
 
 
 
@@ -552,15 +600,18 @@ async def generate_variant_design(
 
 # ── WD14 Tag Extraction ───────────────────────────────────────────────────────
 
+@router.get("/art/appearance-cards", summary="角色外觀年齡／身材卡片清單（backend/appearance_cards.yml）")
+def get_appearance_cards():
+    """[CN-129][CN-130] 卡片定義與各性別對應 tag；免重啟。"""
+    return {"cards": list_cards(), "body_groups": list_body_groups()}
+
+
 @router.post("/art/wd14-tags", summary="WD14 圖像反推 Danbooru 標籤")
 async def wd14_tags(
     file: Annotated[UploadFile, File(description="參考圖片 (JPEG/PNG)")],
     threshold: float = Form(0.35, ge=0.1, le=0.9, description="標籤信心門檻（預設 0.35）"),
 ):
-    """
-    透過 ComfyUI WD14Tagger 節點，從圖片反推 Danbooru 標籤。
-    需要 ComfyUI 已安裝 WD14Tagger（pythongosssss/ComfyUI-Custom-Scripts 或相容節點）。
-    """
+    """透過 ComfyUI WD14Tagger 節點，從圖片反推 Danbooru 標籤 [FD-011]"""
     node_type = comfyui_client.detect_wd14_node()
     if not node_type:
         raise HTTPException(
@@ -623,6 +674,54 @@ async def wd14_tags(
 _IMG_GUIDE_MODES = ("i2i", "controlnet")
 
 
+def _set_main_sampler(wf: dict, *, seed: int, steps: int | None = None,
+                      width: int | None = None, height: int | None = None) -> None:
+    """主 KSampler 的 seed/steps 與 EmptyLatentImage 尺寸；參數節點參照寫回上游，metadata 才會一致。"""
+    ks_id = _find_main_ksampler_id(wf)
+    if ks_id is not None:
+        _set_node_input(wf, ks_id, "seed", seed)
+        if steps is not None:
+            _set_node_input(wf, ks_id, "steps", steps)
+    if width and height:
+        for nid, node in wf.items():
+            if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage":
+                _set_node_input(wf, nid, "width", width)
+                _set_node_input(wf, nid, "height", height)
+
+
+def _apply_cn_guide(wf: dict, cap: dict, profile, image_bytes: bytes, width: int, height: int,
+                    cn_weight: float, label: str) -> tuple[str, dict]:
+    """結構引導：家族支援 CN 走 ControlNet，否則依候選鏈退 LLLite → img2img [CN-125]"""
+    if cap.get("cn_supported"):
+        if not _wf_has_controlnet(wf):
+            _inject_ipa_cn_nodes(wf, inject_ipa=False, inject_cn=True, models=cap.get("models"))
+        if _wf_has_controlnet(wf):
+            name = comfyui_client.upload_image_bytes(
+                _letterbox_to_aspect(image_bytes, width, height), f"{label}_cn_ref.png")
+            _inject_controlnet_image(wf, name)
+            for node in wf.values():
+                if isinstance(node, dict) and node.get("class_type") in _CN_APPLY_TYPES:
+                    node.get("inputs", {})["strength"] = round(cn_weight, 2)
+            return "controlnet", {"cn_weight": round(cn_weight, 2)}
+
+    fitted = _fit_to_canvas(image_bytes, width, height)
+    if cap.get("cn_fallback") == "lllite" and cap.get("lllite_weight"):
+        name = comfyui_client.upload_image_bytes(fitted, f"{label}_lllite_ref.png")
+        strength = round(cn_weight * profile.lllite_strength_scale, 3)
+        end_pct = profile.coverage_cn_end_pct.get("full", 1.0)
+        if _inject_lllite(wf, name, cap["lllite_weight"], strength, end_percent=end_pct,
+                          node_class=cap.get("lllite_node_class")):
+            return "lllite", {"lllite_strength": strength}
+        logger.warning("[%s] LLLite 注入失敗 → 退 img2img", label)
+
+    denoise = profile.img2img_denoise(cn_weight)
+    name = comfyui_client.upload_image_bytes(fitted, f"{label}_i2i_ref.png")
+    if _inject_img2img(wf, name, denoise):
+        return "img2img", {"denoise": denoise}
+    logger.warning("[%s] img2img 注入失敗（缺 KSampler 或 VAE）→ 純 txt2img", label)
+    return "txt2img", {}
+
+
 @router.post("/art/img-guide", summary="參考圖引導生成 (i2i / controlnet)")
 async def img_guide(
     file: Annotated[UploadFile, File(description="參考圖片 (JPEG/PNG)")],
@@ -630,65 +729,56 @@ async def img_guide(
     negative_prompt: str = Form("", description="負向提示詞"),
     mode: str = Form("i2i", description="生成模式：i2i | controlnet"),
     denoise: float = Form(0.35, ge=0.05, le=0.95, description="去噪強度（i2i 模式）"),
+    cn_weight: float = Form(0.85, ge=0.1, le=1.5, description="結構引導強度（controlnet 模式）"),
+    width: int = Form(1024),
+    height: int = Form(1024),
     steps: int = Form(20, ge=5, le=60),
     seed: int = Form(-1),
     art_style_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
-    """
-    i2i       — 以參考圖為底圖，denoise 0.05~0.95 控制保留程度（低=保留原圖，高=大幅改變）
-    controlnet — 以參考圖約束構圖/姿勢，prompt 決定風格（使用 scribble ControlNet）
-    """
+    """以參考圖引導生成（i2i／controlnet 兩種模式） [FD-012]"""
     if mode not in _IMG_GUIDE_MODES:
         raise HTTPException(status_code=400, detail=f"mode 必須為 {_IMG_GUIDE_MODES}")
 
     image_bytes = await file.read()
     actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
+    width, height = _clamp_dim(width), _clamp_dim(height)
 
     art_style = db.get(ArtStyle, art_style_id) if art_style_id else None
-    style = _resolve_style(art_style)
-    default_neg = (art_style.negative if art_style and art_style.negative else STYLE_CONFIG[style].negative)
-    neg = negative_prompt.strip() or default_neg
+    style, pos, neg = _style_prompts(db, art_style_id, prompt, negative_prompt)
 
-    extra = _extra_tags(art_style)
-    pos = f"{prompt}, {extra}" if extra else prompt
-
-    uploaded_name = comfyui_client.upload_image_bytes(image_bytes, file.filename or "ref.png")
+    # [CN-125] 走目前選用的 workflow（與 txt2img 同源）；系統 SDXL 工作流會被全域 checkpoint 覆寫成 Anima UNet 檔 → Value not in list
+    active_wf = state.get_workflow()
+    wf = _load_workflow(active_wf)
+    cap = resolve_capability(wf, resolve_checkpoint_for_workflow(active_wf))
+    profile, _family = resolve_profile_for_workflow(active_wf)
+    if _wf_has_ipa(wf):
+        _bypass_ipa_nodes(wf)
+    if _wf_has_controlnet(wf) and not (mode == "controlnet" and cap.get("cn_supported")):
+        _bypass_controlnet_nodes(wf)
+    lora_list = _collect_loras(art_style)
+    _inject_loras(wf, lora_list)
+    _inject_prompts(wf, pos, neg)
+    _set_main_sampler(wf, seed=actual_seed, steps=steps, width=width, height=height)
 
     if mode == "i2i":
-        wf = _load_workflow("image_to_image.json")
-        _inject_loras(wf, art_style.loras if art_style else [])
-        for node in wf.values():
-            if not isinstance(node, dict):
-                continue
-            ct = node.get("class_type")
-            inputs = node.get("inputs", {})
-            if ct == "LoadImage":
-                inputs["image"] = uploaded_name
-            elif ct == "CLIPTextEncode":
-                if inputs.get("text") == "__POSITIVE__":
-                    inputs["text"] = pos
-                elif inputs.get("text") == "__NEGATIVE__":
-                    inputs["text"] = neg
-            elif ct == "KSampler":
-                inputs["seed"] = actual_seed
-                inputs["steps"] = steps
-                inputs["denoise"] = round(denoise, 2)
-
-    else:  # controlnet
-        wf = _load_workflow("sketch_to_reference.json")
-        _inject_loras(wf, art_style.loras if art_style else [])
-        img_w, img_h = _image_dimensions(image_bytes)
-        _inject_controlnet_compose(wf, uploaded_name, pos, neg, actual_seed, img_w, img_h, steps)
+        uploaded = comfyui_client.upload_image_bytes(_fit_to_canvas(image_bytes, width, height), "guide_i2i_ref.png")
+        if not _inject_img2img(wf, uploaded, round(denoise, 2)):
+            raise HTTPException(status_code=422, detail="目前 workflow 找不到 KSampler 或 VAE，無法做 Image2Image")
+        mechanism, mech_params = "img2img", {"denoise": round(denoise, 2)}
+    else:
+        mechanism, mech_params = _apply_cn_guide(wf, cap, profile, image_bytes, width, height, cn_weight, "guide")
 
     _replace_negative_seeds(wf, actual_seed)
     await guardian.request_focus("comfyui")
     image_out = await _run_comfyui(wf)
 
     hist_id = record_generation(
-        db, endpoint="img_guide", seed=actual_seed, workflow=state.get_workflow(),
+        db, endpoint="img_guide", seed=actual_seed, workflow=active_wf,
         style=style.value, positive=pos, negative=neg,
-        params={"mode": mode, "denoise": denoise, "steps": steps, "art_style_id": art_style_id},
+        params={"mode": mode, "mechanism": mechanism, **mech_params, "steps": steps,
+                "width": width, "height": height, "loras": lora_list, "art_style_id": art_style_id},
     )
     return Response(
         content=image_out,
@@ -696,8 +786,9 @@ async def img_guide(
         headers={
             "X-Seed": str(actual_seed),
             "X-Mode": mode,
+            "X-Mechanism": mechanism,
             "X-Style": style.value,
-            "X-Denoise": str(denoise),
+            "X-Denoise": str(mech_params.get("denoise", "")),
             "X-History-Id": str(hist_id) if hist_id else "",
         },
     )
@@ -716,11 +807,10 @@ async def ipadapter(
     art_style_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
-    """
-    以參考圖萃取外觀特徵（角色臉部、髮型、服裝風格），
-    結合文字 prompt 生成風格一致的插畫。
-    weight: 0.1=微影響, 0.6=平衡, 1.0+=強參考
-    """
+    """以參考圖萃取外觀特徵（角色臉部、髮型、服裝風格） [FD-013]"""
+    _cap = _current_capability()
+    if not _cap["ipa_supported"]:
+        raise HTTPException(status_code=422, detail=f"目前 workflow 家族（{_cap.get('family')}）不支援 IP-Adapter，請改用 Image2Image 或結構引導")
     image_bytes = await file.read()
     actual_seed = seed if seed >= 0 else random.randint(0, 2**31 - 1)
 

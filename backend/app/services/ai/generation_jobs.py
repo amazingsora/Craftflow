@@ -1,10 +1,4 @@
-"""
-生圖非同步 Job（P4 + P5 批次）。
-
-In-memory job store（單人本地工具，結果為短生命週期 bytes，不落 DB）。
-與 LoRA training 的「建 job → 查狀態 → 取結果」模式一致。
-完成的 job 保留 _TTL_SECONDS 供取圖，逾時或超量自動淘汰。
-"""
+"""生圖非同步 Job（含批次） [FD-053]"""
 from __future__ import annotations
 
 import asyncio
@@ -48,6 +42,8 @@ def unsubscribe_progress(job_id: str, q) -> None:
     qs = _progress_queues.get(job_id, [])
     if q in qs:
         qs.remove(q)
+    if not qs:
+        _progress_queues.pop(job_id, None)
 
 
 def _push_progress(job_id: str, event) -> None:
@@ -56,6 +52,34 @@ def _push_progress(job_id: str, event) -> None:
             q.put_nowait(event)
         except Exception:
             pass
+
+
+_TERMINAL_STATUSES = ("done", "error")
+_SSE_HEARTBEAT_SECONDS = 15
+
+
+async def stream_job_events(job: GenJob):
+    """SSE 事件產生器（供 GET /art/jobs/{id}/progress） [FD-054]"""
+    q = subscribe_progress(job.id)
+    try:
+        if job.status in _TERMINAL_STATUSES:
+            yield {**job.progress, "event": job.status}
+            return
+        yield {**job.progress, "event": "snapshot"}
+        while True:
+            try:
+                ev = await asyncio.wait_for(q.get(), timeout=_SSE_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                if job.status in _TERMINAL_STATUSES:
+                    yield {**job.progress, "event": job.status}
+                    return
+                yield {"heartbeat": True}
+                continue
+            if ev is None:  # 哨兵：run_txt2img_job finally 已推完終結事件
+                return
+            yield ev
+    finally:
+        unsubscribe_progress(job.id, q)
 
 
 def create_job(meta: dict) -> GenJob:

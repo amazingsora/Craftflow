@@ -1,15 +1,9 @@
-"""
-Character AI services:
-  1. extract_from_text  — scan chapter content and suggest character traits
-  2. design_chat        — conversational Q&A to help author design a character
-  3. describe_portrait  — given an illustration, describe visual appearance
-"""
+"""Character AI services [FD-044]"""
 from __future__ import annotations
 
-import json
-import re
 
 from app.services.ai import ollama_client
+from app.services.ai.llm_json import extract_json
 from app.services.ai.prompt_loader import load_prompt
 
 
@@ -21,10 +15,7 @@ def generate_summary(
     notes: str | None = None,
     model: str = ollama_client.DEFAULT_TEXT_MODEL,
 ) -> str:
-    """
-    Take raw user-input character fields and produce a structured AI-organized profile summary.
-    Output is in Traditional Chinese, formatted for display.
-    """
+    """Take raw user-input character fields and produce a structured AI-organized profile summary [FD-045]"""
     raw_notes = "\n".join(filter(None, [
         f"外貌/個性：{core_traits}" if core_traits else None,
         f"行為模式：{behavior_rules}" if behavior_rules else None,
@@ -45,10 +36,7 @@ def extract_from_text(
     character_name: str,
     model: str = ollama_client.DEFAULT_TEXT_MODEL,
 ) -> dict:
-    """
-    Analyse chapter text and extract/suggest character profile fields.
-    Returns a dict with keys matching the Character model fields.
-    """
+    """Analyse chapter text and extract/suggest character profile fields [FD-046]"""
     prompt = load_prompt("character/extract_from_text", character_name=character_name, chapter_text=chapter_text)
 
     raw = ollama_client.generate(prompt, model=model)
@@ -61,10 +49,7 @@ def design_chat(
     existing_profile: dict | None = None,
     model: str = ollama_client.DEFAULT_TEXT_MODEL,
 ) -> str:
-    """
-    Answer a single design question about a character.
-    existing_profile is the current Character fields as a dict (optional context).
-    """
+    """Answer a single design question about a character [FD-047]"""
     profile_ctx = ""
     if existing_profile:
         parts = [f"  {k}: {v}" for k, v in existing_profile.items() if v]
@@ -81,39 +66,11 @@ def describe_portrait(
     character_name: str,
     model: str = ollama_client.DEFAULT_VISION_MODEL,
 ) -> str:
-    """
-    Given an illustration/portrait, describe the character's visual appearance
-    to be used as reference for the character profile.
-    """
+    """Given an illustration/portrait, describe the character's visual appearance [FD-048]"""
     prompt = load_prompt("character/describe_portrait", character_name=character_name)
 
     return ollama_client.analyze_image(image_path, prompt, model=model)
 
 
-def describe_portrait_bytes(
-    image_bytes: bytes,
-    character_name: str,
-    model: str = ollama_client.DEFAULT_VISION_MODEL,
-) -> str:
-    prompt = load_prompt("character/describe_portrait", character_name=character_name)
-
-    return ollama_client.analyze_image_bytes(image_bytes, prompt, model=model)
-
-
 def _parse_json_object(raw: str) -> dict | None:
-    if not raw:
-        return None
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
-    try:
-        data = json.loads(cleaned)
-        return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
-        pass
-    m = re.search(r"\{[\s\S]*\}", cleaned)
-    if not m:
-        return None
-    try:
-        data = json.loads(m.group(0))
-        return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
-        return None
+    return extract_json(raw, dict)

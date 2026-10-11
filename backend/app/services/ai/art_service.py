@@ -1,15 +1,7 @@
-"""
-Art AI services — all powered by Ollama vision model.
-
-Modes:
-  sketch_critique   — draft image → written improvement suggestions
-  finished_critique — finished illustration → detailed critique
-  line_color        — lineart → colour scheme suggestions
-  composition_ask   — freeform Q&A about composition / action / framing
-  describe          — general image description (for illustration metadata)
-"""
+"""Art AI services — all powered by Ollama vision model [FD-031]"""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,15 +30,45 @@ def suggest_lineart_colors_bytes(
     return ollama_client.analyze_image_bytes(image_bytes, load_prompt("art/line_color"), model=model)
 
 
+# [CN-126] LLM tag 輸出清理規則；Danbooru 真實存在的 no_* tag 保留
+_HEDGE_PREFIXES = ("without ", "not ", "slightly ", "somewhat ", "possibly ", "maybe ", "probably ")
+_DANBOORU_NO_TAGS = frozenset({"no humans", "no pupils", "no nose", "no mouth", "no shoes",
+                               "no headwear", "no eyes", "no sclera"})
+_MAX_TAG_WORDS = 4
+
+
+def sanitize_tags(text: str, drop_negations: bool = True) -> str:
+    """清理逗號分隔 tag：去空、去重（保留首次順序）；drop_negations 再去否定／二選一／長句 [FD-121]"""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in re.split(r"[,\n]", text or ""):
+        tag = re.sub(r"\s+", " ", raw.strip().strip(".").strip())
+        if not tag:
+            continue
+        low = tag.lower()
+        if drop_negations and _is_unfit_tag(low):
+            continue
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(tag)
+    return ", ".join(out)
+
+
+def _is_unfit_tag(low: str) -> bool:
+    if low.startswith("no ") and low not in _DANBOORU_NO_TAGS:
+        return True
+    if low.startswith(_HEDGE_PREFIXES) or " or " in f" {low} ":
+        return True
+    return len(low.split()) > _MAX_TAG_WORDS
+
+
 def analyze_composition_bytes(
     image_bytes: bytes,
     user_question: str | None = None,
     model: str = ollama_client.DEFAULT_VISION_MODEL,
 ) -> tuple[str, str]:
-    """
-    上傳草稿並提出構圖問題，由 Vision 模型給出具體建議，並提煉出精準對齊草稿的 SDXL Prompt。
-    user_question 為 None 時，AI 自動分析構圖（不需使用者輸入問題）。
-    """
+    """上傳草稿並提問構圖，Vision 模型給建議並產出對齊草稿的 SDXL prompt [FD-032]"""
     if user_question:
         prompt = load_prompt("art/composition_analysis", user_question=user_question)
     else:
@@ -57,7 +79,6 @@ def analyze_composition_bytes(
         options={"num_predict": 450, "temperature": 0.2},  # 降低溫度以確保精準度與穩定度
     )
 
-    # 移除原本錯誤的 raw.startswith("[") 判定，直接進行切分
     advice = raw.strip()
 
     # 預設更加中性且安全的 Prompt，防止拉扯 ControlNet
@@ -77,7 +98,7 @@ def analyze_composition_bytes(
                 advice = parts[0].replace("ADVICE:", "").strip()
                 sdxl_prompt = parts[1].strip()
 
-    return advice, sdxl_prompt
+    return advice, sanitize_tags(sdxl_prompt)
 
 
 def describe_illustration(
@@ -87,13 +108,6 @@ def describe_illustration(
     prompt = load_prompt("art/describe_illustration")
     return ollama_client.analyze_image(image_path, prompt, model=model)
 
-
-def describe_illustration_bytes(
-    image_bytes: bytes,
-    model: str = ollama_client.DEFAULT_VISION_MODEL,
-) -> str:
-    prompt = load_prompt("art/describe_illustration")
-    return ollama_client.analyze_image_bytes(image_bytes, prompt, model=model)
 
 # 舊接口相容轉接層 (Backward Compatibility)
 

@@ -8,7 +8,7 @@ REM NOTE: no wildcards here on purpose. --reload-exclude .venv/* style
 REM patterns get expanded into real paths before uvicorn sees them and
 REM uvicorn then dies with "Got unexpected extra arguments".
 REM Trade-off: editing backend\main.py no longer triggers a reload.
-start "Craftflow Backend" cmd /k "cd /d "%~dp0backend" && .venv\Scripts\uvicorn.exe main:app --reload --reload-dir app --host 0.0.0.0 --port 8000"
+start "Craftflow Backend" cmd /k "cd /d "%~dp0backend" && .venv\Scripts\uvicorn.exe main:app --reload --reload-dir app --host 127.0.0.1 --port 8000"
 start "Craftflow Frontend" cmd /k "cd /d "%~dp0frontend" && npm run dev"
 echo.
 echo Backend  : http://localhost:8000

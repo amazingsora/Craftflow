@@ -1,0 +1,94 @@
+# 角色「外觀年齡」卡片 → 固定 Danbooru tag（SDXL/Illustrious 與 Anima 共用）[CN-129]
+# 使用者在角色管理選卡片；未選（none）＝不加任何 tag。免重啟（mtime 快取）。
+#
+# 欄位：
+#   label / hint    UI 顯示
+#   female / male / neutral：positive（接在 1girl／1boy 之後）、negative（附加到負向）
+#   adult_male_pack true＝男角改用成年男角包（male focus，不加 bishounen 與「年輕化」負向）
+#
+# 規則：一張卡只給 1 個核心 tag（多 tag 會壓比例）；不加權重（兩家族權重行為不同）；只用 Danbooru tag。
+# 未成年卡片（兒童／少年少女）待內容護欄還原後才加入（BACKLOG P-09、R-09）。
+
+cards:
+
+  child:
+    label: 兒童
+    hint: 約 6–12（模型預設外觀）
+    female:  {positive: "child", negative: "mature female, old woman"}
+    male:    {positive: "child", negative: "mature male, old man, facial hair"}
+    neutral: {positive: "child", negative: ""}
+
+  teenage:
+    label: 少年少女
+    hint: 約 13–17（模型預設外觀）
+    female:  {positive: "teenage", negative: "mature female, child"}
+    male:    {positive: "teenage", negative: "mature male, facial hair, child"}
+    neutral: {positive: "", negative: "child"}
+
+  young_adult:
+    label: 青年
+    hint: 約 18–25（模型預設外觀）
+    female:  {positive: "", negative: "child, mature female"}
+    male:    {positive: "", negative: "child, mature male, facial hair"}
+    neutral: {positive: "", negative: "child"}
+
+  mature:
+    label: 成熟
+    hint: 約 30–45
+    adult_male_pack: true
+    female:  {positive: "mature female", negative: "child, teenage"}
+    male:    {positive: "mature male", negative: "child, teenage"}
+    neutral: {positive: "", negative: "child, teenage"}
+
+  elder:
+    label: 年長
+    hint: 約 60 以上
+    adult_male_pack: true
+    female:  {positive: "old woman", negative: "child, teenage"}
+    male:    {positive: "old man", negative: "child, teenage"}
+    neutral: {positive: "", negative: "child, teenage"}
+
+
+
+body_groups:
+
+  build:
+    label: 體型
+    cards:
+      slender:
+        label: 纖瘦
+        all: {positive: "slender", negative: "plump, muscular"}
+      toned:
+        label: 精壯
+        female:  {positive: "toned", negative: "plump"}
+        male:    {positive: "toned male", negative: "plump"}
+        neutral: {positive: "toned", negative: "plump"}
+      muscular:
+        label: 肌肉發達
+        female:  {positive: "muscular female", negative: "skinny"}
+        male:    {positive: "muscular male", negative: "skinny"}
+        neutral: {positive: "muscular", negative: "skinny"}
+      plump:
+        label: 豐滿
+        female:  {positive: "curvy", negative: "skinny"}
+        male:    {positive: "plump", negative: "skinny"}
+        neutral: {positive: "plump", negative: "skinny"}
+
+  chest:
+    label: 胸部
+    cards:
+      flat_chest:
+        label: 平胸
+        female: {positive: "flat chest"}
+      small_breasts:
+        label: 小
+        female: {positive: "small breasts"}
+      medium_breasts:
+        label: 中
+        female: {positive: "medium breasts"}
+      large_breasts:
+        label: 大
+        female: {positive: "large breasts"}
+      giant_breasts:
+        label: 超特
+        female: {positive: "giant breasts"}

@@ -1,15 +1,6 @@
-"""
-TrainingRunner — Abstract base for LoRA training execution.
-
-Two implementations:
-  LocalSubprocessRunner  — subprocess calls kohya_ss directly (backend on Windows host)
-  RemoteAgentRunner      — HTTP calls to a host_agent.py (backend in Docker)
-
-Switch via TRAINING_RUNNER_MODE env var: "local" | "remote"
-"""
+"""TrainingRunner — Abstract base for LoRA training execution [FD-071]"""
 from __future__ import annotations
 
-import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path

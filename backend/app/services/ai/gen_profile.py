@@ -1,21 +1,13 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
-"""每家族生成策略 profile（GEN_PROFILE）。
-
-2026-06-20 (R3)：把原散落於 character_design_service 的生成決策常數
-（主 KSampler steps、coverage→CN 上限與 end_percent、full coverage 的 CN 行為）
-集中為「依 checkpoint family 的單一真相來源」。換家族（如未來 Anima）只需補一組 profile，
-不必散改生成流程。
-
-family 來源：capability.resolve_family(checkpoint)（checkpoint_styles.yml `families` 區段）。
-未知家族 → fallback 'sdxl'（零行為變更）。
-
-注意：cfg / sampler / scheduler / FaceDetailer 參數寫在 workflow JSON（node 級，後端不覆寫），
-不在此 profile；此處只放「後端會動態覆寫工作流」的參數。
-"""
+"""每家族生成策略 profile（GEN_PROFILE）：後端會動態覆寫進 workflow 的參數。
+family 來自 capability.resolve_family；未知家族 fallback 'sdxl'。
+cfg／sampler／scheduler 由 workflow JSON 決定，不在此處。"""
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+
+from app.core import config as _cfg
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +30,7 @@ class GenProfile:
     coverage_cn_end_pct: dict = field(default_factory=lambda: {"full": 0.85})
     # [CN-080] full coverage 的 CN 上限；None=不夾、沿用滑桿（維持 CN≥0.75 畫風一致）
     full_cn_weight: float | None = None
-    # CN preprocessor：'canny'(V35 附件三 proven，較鬆、留底模上色空間) 或
-    # 'anime_lineart'(乾淨線稿但易平塗)。pre-ref 外擴(彩色圖)由呼叫端強制改 anime_lineart。
+    # CN preprocessor：'canny'（較鬆、留上色空間）或 'anime_lineart'（線稿乾淨但易平塗）
     cn_preprocessor: str = "anime_lineart"
     cn_canny_low: int = 100
     cn_canny_high: int = 200
@@ -51,33 +42,46 @@ class GenProfile:
     cn_fallback_chain: tuple[str, ...] = ()
     # [CN-082] LLLite strength 是 LoRA-like 乘數（default 1.0、range -10~10），與 CN 的 0~1 權重尺度不同
     lllite_strength_scale: float = 1.0
+    # [CN-120] 人設圖 FaceDetailer：None＝不注入；workflow 已含 FaceDetailer 時亦不注入
+    face_detailer_denoise: float | None = None
+    face_detailer_steps: int = 18
+    # [CN-134] Hires 第二段：scale＝相對主畫布倍率（None＝不做）；sampler／scheduler None＝沿用主 KSampler
+    hires_scale: float | None = 1.5
+    hires_denoise: float = 0.40
+    hires_steps: int = 20
+    hires_sampler: str | None = "dpmpp_2m"
+    hires_scheduler: str | None = "karras"
+    # False＝只做 latent 放大（不載放大模型，省顯存）
+    hires_use_model: bool = True
+
+    def face_detailer_strength(self, requested: float | None) -> float | None:
+        """使用者滑桿值夾進安全區間；未指定用家族預設；家族未開回 None [FD-121]"""
+        if self.face_detailer_denoise is None:
+            return None
+        if requested is None:
+            return self.face_detailer_denoise
+        lo, hi = FACE_DETAILER_DENOISE_RANGE
+        return round(min(hi, max(lo, float(requested))), 2)
 
     @property
     def cn_fallback(self) -> str | None:
-        """相容欄位：回傳候選鏈第一項。
-
-        `capability.resolve_capability` 與前端 CapabilityNotice 仍讀這個名字，
-        保留它可避免改動一路貫通到 UI（能力旗標沒貫通到 UI 會讓後端替代路徑變成
-        死代碼 —— 2026-07-25 已付過一次學費）。
-        """
+        """相容欄位：候選鏈第一項（resolve_capability 與前端 CapabilityNotice 仍讀此名）。"""
         return self.cn_fallback_chain[0] if self.cn_fallback_chain else None
     # [CN-083] denoise 以滑桿兩端為錨線性映射；舊公式值域與定義域無關，兩端撞 clamp 產生死區
     img2img_denoise_min: float = 0.35
     img2img_denoise_max: float = 0.85
 
     def img2img_denoise(self, cn_weight: float) -> float:
-        """CN 強度滑桿 → img2img denoise（線性反向映射，無死區）。
-
-        cn_weight = CN_WEIGHT_SLIDER_MIN → img2img_denoise_max（最自由）
-        cn_weight = CN_WEIGHT_SLIDER_MAX → img2img_denoise_min（最貼合）
-        定義域外的值先夾到滑桿範圍內，確保回傳恆落在 [min, max]。
-        """
+        """CN 強度滑桿 → img2img denoise（線性反向映射，無死區） [FD-051]"""
         span = CN_WEIGHT_SLIDER_MAX - CN_WEIGHT_SLIDER_MIN
         ratio = (float(cn_weight) - CN_WEIGHT_SLIDER_MIN) / span
         ratio = min(1.0, max(0.0, ratio))
         d_span = self.img2img_denoise_max - self.img2img_denoise_min
         return round(self.img2img_denoise_max - ratio * d_span, 2)
 
+
+# [CN-120] 修臉 denoise 可調區間：<0.2 幾乎無變化；>0.7 換臉感明顯、與身體畫風脫節
+FACE_DETAILER_DENOISE_RANGE = (0.2, 0.7)
 
 # family → profile。未列家族走 _DEFAULT（= 現況 SDXL 行為，零變更）。
 _DEFAULT = GenProfile(family="sdxl")
@@ -86,28 +90,45 @@ GEN_PROFILE: dict[str, GenProfile] = {
     "sdxl":        _DEFAULT,
     "pony":        GenProfile(family="pony"),
     "noobai":      GenProfile(family="noobai"),
-    # [CN-084] Illustrious（fabricatedXL_v70＝V36/V37 主路線）profile 與 steps 歷史遺留說明
+    # [CN-084] Illustrious profile
     "illustrious": GenProfile(family="illustrious", steps=None),
     # [CN-085] Anima profile 決策史：ipa/cn 閘控、img2img→lllite 候選鏈、denoise 下限 0.20 未定案
     "anima":       GenProfile(family="anima", steps=None, ipa_enabled=False,
                               cn_enabled=False,
                               cn_fallback_chain=("lllite", "img2img"),
                               img2img_denoise_min=0.20,
-                              lllite_strength_scale=1.0),
+                              # [CN-120] 滑桿預設 0.85 × 1.47 ≈ 1.25；full 全程控制（ComfyUI F2）
+                              lllite_strength_scale=1.47,
+                              coverage_cn_end_pct={"full": 1.0},
+                              face_detailer_denoise=0.50,
+                              # [CN-134] 官方討論：1536² 級底圖只建議 1.3x；SDE 取樣器在重繪段易注入雜點
+                              hires_scale=1.31, hires_denoise=0.35,
+                              hires_sampler="euler", hires_scheduler="simple"),
 }
+
+# [CN-133] 8g 的 hires 倍率上限（latent 放大、無放大模型）
+TIER_8G_HIRES_MAX_SCALE = 1.3
+
+
+def apply_tier(profile: GenProfile, tier: str) -> GenProfile:
+    """依 GPU 等級關閉吃顯存的能力；16g（及未知值）原樣回傳 [FD-130]"""
+    if tier == "4g":
+        return replace(profile, ipa_enabled=False, cn_enabled=False,
+                       cn_fallback_chain=profile.cn_fallback_chain or ("img2img",),
+                       face_detailer_denoise=None, hires_scale=None)
+    if tier == "8g":
+        scale = profile.hires_scale
+        return replace(profile, ipa_enabled=False, hires_use_model=False,
+                       hires_scale=min(scale, TIER_8G_HIRES_MAX_SCALE) if scale else None)
+    return profile
 
 
 def get_profile(family: str) -> GenProfile:
-    return GEN_PROFILE.get(family, _DEFAULT)
+    return apply_tier(GEN_PROFILE.get(family, _DEFAULT), _cfg.GPU_TIER)
 
 
 def resolve_profile_for_workflow(workflow_name: str) -> tuple[GenProfile, str]:
-    """讀 active workflow 內嵌 checkpoint → family → profile。
-
-    custom workflow（如 V36）的 checkpoint 內嵌於 JSON（不被全域覆寫），是實際生成所用，
-    故以工作流內嵌值為準；讀不到才退回 state.get_checkpoint()。
-    回傳 (profile, family)。任何錯誤 → (_DEFAULT, 'sdxl')，不讓生成 crash。
-    """
+    """讀 active workflow 內嵌 checkpoint → family → profile [FD-052]"""
     # [CN-086] checkpoint 解析改用 capability.resolve_checkpoint_for_workflow，三處共用避免分歧
     try:
         from app.services.ai.capability import resolve_checkpoint_for_workflow, resolve_family

@@ -1,0 +1,15 @@
+{
+  "_說明": "複製成 data/custom_tags.json 後編輯（該檔不進 git）。tag＝送進 prompt 的原文；繪師不加 @，Anima 家族會自動補。",
+  "series": [
+    {
+      "label": "作品顯示名稱",
+      "tag": "series tag"
+    }
+  ],
+  "artists": [
+    {
+      "label": "繪師顯示名稱",
+      "tag": "artist name"
+    }
+  ]
+}

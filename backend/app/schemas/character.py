@@ -14,6 +14,8 @@ class CharacterCreate(BaseModel):
     color: Optional[str] = None
     age: Optional[int] = None
     height: Optional[int] = None
+    appearance_age: Optional[str] = None  # [CN-129] 外觀年齡卡片 key
+    body_cards: Optional[str] = None  # [CN-130] 身材卡片 key（逗號串）
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
     outfit: Optional[str] = None
@@ -36,6 +38,8 @@ class CharacterUpdate(BaseModel):
     color: Optional[str] = None
     age: Optional[int] = None
     height: Optional[int] = None
+    appearance_age: Optional[str] = None  # [CN-129] 外觀年齡卡片 key
+    body_cards: Optional[str] = None  # [CN-130] 身材卡片 key（逗號串）
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
     outfit: Optional[str] = None
@@ -65,9 +69,12 @@ class CharacterResponse(BaseModel):
     portrait_path: Optional[str]
     color: Optional[str]
     concept_images: Optional[list] = []
+    concept_excluded: Optional[list] = []  # [CN-132]
     ai_generated_images: Optional[list] = []
     age: Optional[int] = None
     height: Optional[int] = None
+    appearance_age: Optional[str] = None  # [CN-129] 外觀年齡卡片 key
+    body_cards: Optional[str] = None  # [CN-130] 身材卡片 key（逗號串）
     birthday: Optional[str] = None
     ai_prompt: Optional[str] = None
     outfit: Optional[str] = None
