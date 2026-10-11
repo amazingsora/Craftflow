@@ -69,6 +69,7 @@ class CharacterResponse(BaseModel):
     portrait_path: Optional[str]
     color: Optional[str]
     concept_images: Optional[list] = []
+    concept_excluded: Optional[list] = []  # [CN-132]
     ai_generated_images: Optional[list] = []
     age: Optional[int] = None
     height: Optional[int] = None

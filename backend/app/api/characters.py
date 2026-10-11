@@ -206,21 +206,67 @@ _AI = _ImageKind("ai_generated_images", _AI_IMAGE_DIR, _MAX_AI_IMAGES, "ai", "AI
                  f"最多只能儲存 {_MAX_AI_IMAGES} 張 AI 生成圖", check_type=False)
 
 
-def _image_list(character: Character, slot: Optional[int], kind: _ImageKind) -> list[str]:
+def _slot_list(character: Character, slot: Optional[int], field: str) -> list[str]:
     """slot=None → 主角色；1..N → 變體（經 _slot_index 驗證）。回傳可修改的副本。"""
     if slot is None:
-        return list(getattr(character, kind.field) or [])
-    return list(_get_variants(character)[_slot_index(slot)].get(kind.field) or [])
+        return list(getattr(character, field) or [])
+    return list(_get_variants(character)[_slot_index(slot)].get(field) or [])
+
+
+def _set_slot_list(character: Character, slot: Optional[int], field: str, files: list[str]) -> None:
+    if slot is None:
+        setattr(character, field, files)
+        return
+    variants = _get_variants(character)
+    variants[_slot_index(slot)][field] = files
+    character.variants = variants
+    flag_modified(character, 'variants')
+
+
+def _image_list(character: Character, slot: Optional[int], kind: _ImageKind) -> list[str]:
+    return _slot_list(character, slot, kind.field)
 
 
 def _set_image_list(character: Character, slot: Optional[int], kind: _ImageKind, files: list[str]) -> None:
-    if slot is None:
-        setattr(character, kind.field, files)
-        return
-    variants = _get_variants(character)
-    variants[_slot_index(slot)][kind.field] = files
-    character.variants = variants
-    flag_modified(character, 'variants')
+    _set_slot_list(character, slot, kind.field, files)
+
+
+# [CN-132] main＝第 0 張；excluded 以檔名記錄，只保留仍存在且非 main 的
+_CONCEPT_EXCLUDED = "concept_excluded"
+
+
+class ConceptImagePatch(BaseModel):
+    main: Optional[bool] = None     # true → 移到第 0 張
+    enabled: Optional[bool] = None  # 是否參與生成（main 恆參與）
+
+
+def _normalize_concept_excluded(character: Character, slot: Optional[int]) -> None:
+    others = _slot_list(character, slot, _CONCEPT.field)[1:]
+    excluded = _slot_list(character, slot, _CONCEPT_EXCLUDED)
+    kept = [f for f in excluded if f in others]
+    if kept != excluded:
+        _set_slot_list(character, slot, _CONCEPT_EXCLUDED, kept)
+
+
+def _patch_concept(db: Session, character_id: int, slot: Optional[int], index: int,
+                   patch: ConceptImagePatch) -> Character:
+    character = _get_character_or_404(db, character_id)
+    images = _image_list(character, slot, _CONCEPT)
+    target = _nth_image(images, index, _CONCEPT.label)
+    if patch.main:
+        images = [target, *(f for f in images if f != target)]
+        _set_image_list(character, slot, _CONCEPT, images)
+    if patch.enabled is not None:
+        excluded = [f for f in _slot_list(character, slot, _CONCEPT_EXCLUDED) if f != target]
+        if not patch.enabled:
+            if images[0] == target:
+                raise HTTPException(status_code=400, detail="main 概念圖一定參與生成，請先把 main 換到別張")
+            excluded.append(target)
+        _set_slot_list(character, slot, _CONCEPT_EXCLUDED, excluded)
+    _normalize_concept_excluded(character, slot)
+    db.commit()
+    db.refresh(character)
+    return character
 
 
 def _add_image(db: Session, character_id: int, slot: Optional[int], kind: _ImageKind,
@@ -246,6 +292,8 @@ def _remove_image(db: Session, character_id: int, slot: Optional[int], kind: _Im
     existing = _image_list(character, slot, kind)
     (kind.directory / _nth_image(existing, index, kind.label)).unlink(missing_ok=True)
     _set_image_list(character, slot, kind, [f for i, f in enumerate(existing) if i != index])
+    if kind is _CONCEPT:
+        _normalize_concept_excluded(character, slot)
     db.commit()
     db.refresh(character)
     return character
@@ -274,6 +322,12 @@ async def upload_concept_image(
 @router.delete("/characters/{character_id}/concept-images/{index}", response_model=CharacterResponse)
 def delete_concept_image(character_id: int, index: int, db: DbDep):
     return _remove_image(db, character_id, None, _CONCEPT, index)
+
+
+@router.patch("/characters/{character_id}/concept-images/{index}", response_model=CharacterResponse)
+def patch_concept_image(character_id: int, index: int, data: ConceptImagePatch, db: DbDep):
+    """設 main／切換是否參與生成。"""
+    return _patch_concept(db, character_id, None, index, data)
 
 
 @router.get("/characters/{character_id}/concept-images/{index}")
@@ -360,6 +414,11 @@ async def upload_variant_concept_image(
 @router.delete("/characters/{character_id}/variants/{slot}/concept-images/{index}", response_model=CharacterResponse)
 def delete_variant_concept_image(character_id: int, slot: int, index: int, db: DbDep):
     return _remove_image(db, character_id, slot, _CONCEPT, index)
+
+
+@router.patch("/characters/{character_id}/variants/{slot}/concept-images/{index}", response_model=CharacterResponse)
+def patch_variant_concept_image(character_id: int, slot: int, index: int, data: ConceptImagePatch, db: DbDep):
+    return _patch_concept(db, character_id, slot, index, data)
 
 
 @router.get("/characters/{character_id}/variants/{slot}/concept-images/{index}")

@@ -132,9 +132,12 @@ def resolve_capability(wf: dict, checkpoint_name: str) -> dict:
         }
 
     models = INJECT_MODELS.get(family)  # None if family not in table (e.g. flux)
+    from app.services.ai.gen_profile import get_profile
+    profile = get_profile(family)
 
-    ipa_supported = _wf_has_ipa(wf) or (models is not None and "ipa_adapter" in models)
-    cn_supported = _wf_has_controlnet(wf) or (models is not None and "cn_model" in models)
+    # [CN-133] 動態注入另受家族 profile（含 GPU 分級）閘控；workflow 內建的 IPA／CN 節點不受影響
+    ipa_supported = _wf_has_ipa(wf) or (profile.ipa_enabled and models is not None and "ipa_adapter" in models)
+    cn_supported = _wf_has_controlnet(wf) or (profile.cn_enabled and models is not None and "cn_model" in models)
 
     # [CN-090] 不支援 CN 但有替代路徑時一併回報，否則前端送 use_controlnet=0，後端 fallback 永遠進不去
     cn_fallback = None

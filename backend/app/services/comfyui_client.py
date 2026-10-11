@@ -167,8 +167,7 @@ def detect_lllite() -> dict:
             if not info:
                 tried.append(f"{candidate}: 節點未安裝")
                 continue
-            opts = (info.get("input", {}).get("required", {}).get("lllite_name") or [[]])[0]
-            weights = [w for w in opts if isinstance(w, str)]
+            weights = combo_options(info.get("input", {}).get("required", {}).get("lllite_name"))
             result["node_class"] = candidate
             result["weights"] = weights
             if weights:
@@ -196,6 +195,33 @@ def detect_lllite() -> dict:
         logger.warning("[lllite] 偵測失敗（第 %d 次，%.0fs 後重試）：node_class=%s weights=%d reason=%s",
                        streak, ttl, result["node_class"], len(result["weights"]), result["reason"])
     return result
+
+
+# [CN-134] /object_info 的下拉選項有兩種格式：V1 [[選項...], {...}]、V3 ["COMBO", {"options": [...]}]
+def combo_options(spec) -> list[str]:
+    """取出下拉輸入的選項字串（兩種格式皆可）；格式不明回 []"""
+    if not isinstance(spec, (list, tuple)) or not spec:
+        return []
+    head = spec[0]
+    if isinstance(head, list):
+        opts = head
+    elif head == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict):
+        opts = spec[1].get("options") or []
+    else:
+        opts = []
+    return [o for o in opts if isinstance(o, str)]
+
+
+def list_upscale_models() -> list[str] | None:
+    """ComfyUI models/upscale_models 可用檔名；查詢失敗回 None（與「目錄是空的」區分）"""
+    try:
+        r = SESSION.get(f"{COMFYUI_BASE}/object_info/UpscaleModelLoader", timeout=8)
+        if not r.ok:
+            return None
+        info = (r.json() or {}).get("UpscaleModelLoader") or {}
+        return combo_options(info.get("input", {}).get("required", {}).get("model_name"))
+    except Exception:
+        return None
 
 
 def pick_lllite_weight(weights: list[str]) -> str | None:

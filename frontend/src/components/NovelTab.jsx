@@ -1,159 +1,160 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Empty } from './ui.jsx'
 
 const API = '/api/v1'
 
 // ── Drag handle icon ───────────────────────────────────────────────────────────
 const DragHandle = ({ style }) => (
   <span
-    style={{ fontSize: 12, color: 'var(--border)', cursor: 'grab', userSelect: 'none', flexShrink: 0, ...style }}
+    style={{ fontSize: 12, color: 'var(--faint)', cursor: 'grab', userSelect: 'none', flexShrink: 0, ...style }}
     title="拖曳排序"
   >⠿</span>
 )
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 const S = {
-  root: { display: 'flex', height: 740, overflow: 'hidden', margin: -24 },
+  root: {
+    display: 'flex', height: 'calc(100vh - 140px)', minHeight: 560, overflow: 'hidden',
+    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)',
+  },
 
   sideA: {
-    width: 190, flexShrink: 0,
-    borderRight: '1px solid var(--border)',
+    width: 208, flexShrink: 0,
+    borderRight: '1px solid var(--border)', background: 'var(--surface-2)',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
   sideB: {
-    width: 260, flexShrink: 0,
+    width: 272, flexShrink: 0,
     borderRight: '1px solid var(--border)',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
   },
   main: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 },
 
   panelHeader: {
-    padding: '10px 12px', flexShrink: 0,
-    fontSize: 12, fontWeight: 600, color: 'var(--muted)',
+    padding: '0 8px 0 14px', height: 44, flexShrink: 0,
+    fontSize: 12, fontWeight: 600, color: 'var(--text-2)', letterSpacing: '.02em',
     borderBottom: '1px solid var(--border)',
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
   },
 
-  listScroll: { flex: 1, overflowY: 'auto' },
+  listScroll: { flex: 1, overflowY: 'auto', padding: '6px 0' },
 
   // Project list
   projItem: {
-    padding: '7px 12px', cursor: 'pointer',
-    fontSize: 13, color: 'var(--text)',
-    borderLeft: '2px solid transparent',
+    margin: '1px 6px', padding: '7px 10px', cursor: 'pointer', borderRadius: 'var(--r)',
+    fontSize: 13, color: 'var(--text)', fontWeight: 500,
   },
-  projItemActive: { background: 'rgba(255,255,255,.05)', borderLeft: '2px solid var(--accent)' },
-  projSub: { fontSize: 11, color: 'var(--muted)', marginTop: 2 },
+  projItemActive: { background: 'var(--accent-soft)', color: 'var(--accent)' },
+  projSub: { fontSize: 11, color: 'var(--muted)', marginTop: 2, fontWeight: 400 },
 
   // Volume block
-  volBlock: { borderBottom: '1px solid var(--border)' },
+  volBlock: { paddingBottom: 4 },
   volHeader: {
-    padding: '7px 10px 7px 8px',
+    padding: '8px 8px 4px 10px',
     display: 'flex', alignItems: 'center', gap: 6,
     cursor: 'default', fontSize: 12, color: 'var(--muted)',
-    background: 'rgba(255,255,255,.02)',
   },
-  volLabel: { flex: 1, fontWeight: 600, fontSize: 12, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  volActions: { display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 },
+  volLabel: { flex: 1, fontWeight: 600, fontSize: 11.5, color: 'var(--text-2)', letterSpacing: '.02em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  volActions: { display: 'flex', gap: 2, alignItems: 'center', flexShrink: 0 },
 
   // Chapter item (inside volume)
   chapItem: {
-    padding: '5px 10px 5px 28px',
-    display: 'flex', alignItems: 'center', gap: 5,
-    cursor: 'pointer', fontSize: 13, color: 'var(--muted)',
-    borderLeft: '2px solid transparent',
+    margin: '1px 6px', padding: '6px 8px 6px 20px', borderRadius: 'var(--r)',
+    display: 'flex', alignItems: 'center', gap: 6,
+    cursor: 'pointer', fontSize: 13, color: 'var(--text-2)',
   },
-  chapItemActive: { background: 'rgba(255,255,255,.05)', borderLeft: '2px solid var(--accent)', color: 'var(--text)' },
+  chapItemActive: { background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 },
 
   // Drag-over highlight
   dragOver: { outline: '1px dashed var(--accent)', outlineOffset: -1 },
 
   // Inline forms
   inlineForm: {
-    padding: '7px 10px', flexShrink: 0,
-    borderBottom: '1px solid var(--border)',
-    display: 'flex', flexDirection: 'column', gap: 5,
+    padding: '10px', flexShrink: 0,
+    borderBottom: '1px solid var(--border)', background: 'var(--surface)',
+    display: 'flex', flexDirection: 'column', gap: 6,
   },
   inlineInput: {
     width: '100%', boxSizing: 'border-box',
-    background: '#12121e', border: '1px solid var(--border)',
-    borderRadius: 6, color: 'var(--text)',
-    padding: '5px 8px', fontSize: 12,
+    background: 'var(--surface)', border: '1px solid var(--border-strong)',
+    borderRadius: 'var(--r)', color: 'var(--text)',
+    padding: '5px 8px', fontSize: 12.5,
     outline: 'none', fontFamily: 'inherit',
   },
-  inlineRow: { display: 'flex', gap: 5 },
+  inlineRow: { display: 'flex', gap: 6 },
   btnSmall: {
-    padding: '3px 9px', borderRadius: 5,
-    border: '1px solid var(--border)', background: 'transparent',
-    color: 'var(--text)', fontSize: 11, cursor: 'pointer', flexShrink: 0,
+    padding: '3px 9px', borderRadius: 'var(--r-sm)',
+    border: '1px solid var(--border-strong)', background: 'var(--surface)',
+    color: 'var(--text)', fontSize: 11.5, cursor: 'pointer', flexShrink: 0,
   },
   btnPrimary: {
-    padding: '3px 10px', borderRadius: 5,
-    border: 'none', background: 'var(--accent)',
-    color: '#fff', fontSize: 11, cursor: 'pointer', fontWeight: 600, flexShrink: 0,
+    padding: '3px 10px', borderRadius: 'var(--r-sm)',
+    border: '1px solid transparent', background: 'var(--accent)',
+    color: 'var(--accent-contrast)', fontSize: 11.5, cursor: 'pointer', fontWeight: 600, flexShrink: 0,
   },
   btnIcon: {
-    padding: '1px 5px', borderRadius: 4,
-    border: '1px solid var(--border)', background: 'transparent',
-    color: 'var(--muted)', fontSize: 11, cursor: 'pointer',
-    lineHeight: 1.4,
+    minWidth: 22, height: 22, padding: '0 5px', borderRadius: 'var(--r-sm)',
+    border: '1px solid transparent', background: 'transparent',
+    color: 'var(--muted)', fontSize: 12, cursor: 'pointer',
+    lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   },
 
   // Editor
   editorHeader: {
-    padding: '10px 16px', flexShrink: 0,
+    padding: '0 12px 0 20px', height: 52, flexShrink: 0,
     borderBottom: '1px solid var(--border)',
-    display: 'flex', alignItems: 'center', gap: 8,
+    display: 'flex', alignItems: 'center', gap: 10,
   },
-  dirtyDot: { width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 },
+  dirtyDot: { width: 7, height: 7, borderRadius: '50%', background: 'var(--warning)', flexShrink: 0, boxShadow: '0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent)' },
   titleInput: {
     flex: 1, background: 'transparent', border: 'none',
-    color: 'var(--text)', fontSize: 15, fontWeight: 600,
-    outline: 'none', fontFamily: 'inherit',
+    color: 'var(--text)', fontSize: 17, fontWeight: 700, letterSpacing: '-.01em',
+    outline: 'none', fontFamily: 'inherit', boxShadow: 'none',
   },
   textarea: {
     flex: 1, background: 'transparent', border: 'none',
-    color: 'var(--text)', fontSize: 15, lineHeight: 1.9,
-    padding: '16px', resize: 'none', outline: 'none',
-    fontFamily: 'inherit', overflowY: 'auto',
+    color: 'var(--text)', fontSize: 16, lineHeight: 2,
+    padding: '24px max(24px, calc((100% - 720px) / 2))', resize: 'none', outline: 'none',
+    fontFamily: 'inherit', overflowY: 'auto', boxShadow: 'none',
   },
   editorFooter: {
-    padding: '8px 16px', flexShrink: 0,
-    borderTop: '1px solid var(--border)',
+    padding: '8px 12px 8px 20px', flexShrink: 0,
+    borderTop: '1px solid var(--border)', background: 'var(--surface-2)',
     display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
   },
-  wordCount: { fontSize: 12, color: 'var(--muted)' },
+  wordCount: { fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--font-mono)' },
 
   // Analysis panel
   analysisPanel: {
     borderTop: '1px solid var(--border)',
-    maxHeight: 240, overflowY: 'auto',
-    padding: '12px 16px', flexShrink: 0,
+    maxHeight: 260, overflowY: 'auto',
+    padding: '14px 20px', flexShrink: 0, background: 'var(--surface-2)',
   },
-  analysisTitle: { fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 8 },
-  issue: { padding: '6px 10px', borderRadius: 6, marginBottom: 5, fontSize: 12, lineHeight: 1.6 },
-  issueSevere: { background: 'rgba(255,80,80,.12)', borderLeft: '3px solid var(--danger)' },
-  issueWarn:   { background: 'rgba(255,200,50,.08)', borderLeft: '3px solid #f0c040' },
+  analysisTitle: { fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 8 },
+  issue: { padding: '6px 10px', borderRadius: 'var(--r)', marginBottom: 5, fontSize: 12.5, lineHeight: 1.6 },
+  issueSevere: { background: 'var(--tint-red-bg)', borderLeft: '3px solid var(--danger)' },
+  issueWarn:   { background: 'var(--tint-amber-bg)', borderLeft: '3px solid var(--warning)' },
   rewriteItem: { marginBottom: 12 },
   rewriteMeta: { fontSize: 11, color: 'var(--muted)', marginBottom: 4 },
-  rewriteGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12, lineHeight: 1.6 },
-  rewriteOld:  { padding: '8px 10px', borderRadius: 6, background: 'rgba(255,80,80,.08)',  color: 'var(--muted)' },
-  rewriteNew:  { padding: '8px 10px', borderRadius: 6, background: 'rgba(80,200,80,.08)', color: 'var(--text)' },
+  rewriteGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12.5, lineHeight: 1.7 },
+  rewriteOld:  { padding: '8px 10px', borderRadius: 'var(--r)', background: 'var(--tint-red-bg)',  color: 'var(--text-2)' },
+  rewriteNew:  { padding: '8px 10px', borderRadius: 'var(--r)', background: 'var(--tint-green-bg)', color: 'var(--text)' },
 
-  empty: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: 13 },
+  empty: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: 13, padding: 16, textAlign: 'center' },
 
   // Preview mode
-  previewWrap: { flex: 1, overflowY: 'auto', padding: '28px 40px' },
-  previewTitle: { textAlign: 'center', fontSize: 20, fontWeight: 700, marginBottom: 36, color: 'var(--text)', lineHeight: 1.5 },
-  previewContent: { maxWidth: 620, margin: '0 auto', fontSize: 17, lineHeight: 2.2, color: 'var(--text)' },
+  previewWrap: { flex: 1, overflowY: 'auto', padding: '40px 48px' },
+  previewTitle: { textAlign: 'center', fontSize: 22, fontWeight: 700, marginBottom: 40, color: 'var(--text)', lineHeight: 1.5, letterSpacing: '.02em' },
+  previewContent: { maxWidth: 640, margin: '0 auto', fontSize: 17, lineHeight: 2.2, color: 'var(--text)' },
   previewPara: { textIndent: '2em', margin: '0 0 0.6em 0', padding: 0 },
 
   // Mode toggle
-  modeToggle: { display: 'flex', gap: 3, flexShrink: 0 },
+  modeToggle: { display: 'inline-flex', flexShrink: 0, border: '1px solid var(--border-strong)', borderRadius: 'var(--r)', overflow: 'hidden' },
   modeBtn: {
-    padding: '3px 10px', borderRadius: 5, fontSize: 11, cursor: 'pointer',
-    border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)',
+    padding: '4px 11px', fontSize: 12, cursor: 'pointer',
+    border: 'none', background: 'var(--surface)', color: 'var(--text-2)',
   },
-  modeBtnActive: { background: 'rgba(255,255,255,.1)', color: 'var(--text)' },
+  modeBtnActive: { background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 600 },
 
   // Page navigation bar
   pageNavBar: {
@@ -163,11 +164,11 @@ const S = {
   },
   pageInfo: { flex: 1, textAlign: 'center', fontSize: 12, color: 'var(--muted)', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
   pageBtn: {
-    padding: '4px 14px', borderRadius: 5, fontSize: 12, cursor: 'pointer',
-    border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)',
+    padding: '4px 14px', borderRadius: 'var(--r)', fontSize: 12, cursor: 'pointer',
+    border: '1px solid var(--border-strong)', background: 'var(--surface)', color: 'var(--text)',
     flexShrink: 0,
   },
-  pageBtnDisabled: { opacity: 0.25, cursor: 'not-allowed' },
+  pageBtnDisabled: { opacity: 0.35, cursor: 'not-allowed' },
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -591,7 +592,7 @@ export default function NovelTab() {
                 </div>
               ))}
               {vol.chapters.length === 0 && (
-                <div style={{ padding: '4px 10px 6px 28px', fontSize: 11, color: 'var(--border)' }}>（無章節）</div>
+                <div style={{ padding: '4px 10px 6px 26px', fontSize: 11.5, color: 'var(--faint)' }}>（無章節）</div>
               )}
             </div>
           ))}
@@ -602,7 +603,9 @@ export default function NovelTab() {
       <div style={S.main}>
         {!activeChapter ? (
           <div style={S.empty}>
-            {!activeProject ? '← 選擇或建立作品' : volumes.length === 0 ? '← 先新增集數' : '← 選擇章節開始寫作'}
+            <Empty icon="book-open-text" title={!activeProject ? '選擇或建立作品' : volumes.length === 0 ? '先新增集數' : '選擇章節開始寫作'} style={{ background: 'transparent', border: 'none' }}>
+              {!activeProject ? '從左側清單挑一部作品，或按「+」建立新作品' : volumes.length === 0 ? '在中間欄按「+ 集」建立第一集' : '從中間欄點選章節，內容會在這裡編輯'}
+            </Empty>
           </div>
         ) : (
           <>

@@ -17,6 +17,7 @@ import random
 from sqlalchemy.orm import Session
 
 from app.core.config import CUSTOM_WORKFLOWS_DIR, COMFYUI_LORAS_DIR, COMFYUI_JOB_TIMEOUT_SEC
+from app.core import config as _cfg
 from app.core.config import PERSONAL_KIND_NEGATIVE, personal_family_extra
 from app.core import state
 from app.models.art_style import ArtStyle
@@ -26,7 +27,7 @@ from app.services.ai.prompt_engine import PromptStyle
 from app.services.ai.prompt_engine.styles import STYLE_CONFIG
 from app.schemas.art_generate import GenerateRequest
 from app.services.ai.capability import _STYLES_YML, load_checkpoint_styles_section
-from app.services.ai.wf_node_ops import _inject_prompts
+from app.services.ai.wf_node_ops import _inject_prompts, _inject_hires
 
 logger = logging.getLogger(__name__)
 
@@ -563,8 +564,30 @@ def _build_txt2img(req: "GenerateRequest", db: Session, batch_size: int = 1):
             inputs["seed"] = seed
             inputs["steps"] = req.steps
 
+    if _cfg.HIRES_ENABLED:
+        from app.services.ai.gen_profile import resolve_profile_for_workflow
+        _apply_hires(wf, resolve_profile_for_workflow(state.get_workflow())[0], req.width, req.height, "txt2img")
     _replace_negative_seeds(wf, seed)
     return wf, seed, style, prompt, negative, lora_list
+
+
+def _apply_hires(wf: dict, profile, width: int, height: int, label: str = "") -> bool:
+    """依全域開關＋家族 profile（含 GPU 分級）注入 hires 第二段；須在其他節點手術之後呼叫 [FD-132]"""
+    if not _cfg.HIRES_ENABLED or not profile.hires_scale:
+        return False
+    model = _cfg.HIRES_UPSCALE_MODEL if profile.hires_use_model else ""
+    if model:
+        available = comfyui_client.list_upscale_models()
+        if available is None or model not in available:
+            # [CN-134] 放大模型缺檔時 ComfyUI 會整張拒收 ⇒ 退 latent 放大，不讓生成失敗
+            logger.warning("[hires%s] 放大模型 %s 不在 ComfyUI upscale_models（%s）→ 改用 latent 放大",
+                           f" {label}" if label else "", model,
+                           "查詢失敗" if available is None else f"{len(available)} 檔")
+            model = ""
+    return _inject_hires(wf, width=int(width), height=int(height), scale=profile.hires_scale,
+                         denoise=profile.hires_denoise, steps=profile.hires_steps,
+                         sampler=profile.hires_sampler, scheduler=profile.hires_scheduler,
+                         upscale_model=model or None)
 
 
 def _collect_loras(art_style) -> list[dict]:

@@ -5,12 +5,18 @@ import { request, apiDelete, apiUrl } from '../api/client'
 import { S } from './characterTabStyles.js'
 import { Spinner, StatusBadge, GenderPicker, DeleteConfirm } from './characterTabParts.jsx'
 import { GENRES, STATUSES, apiFetch } from './characterTabShared.js'
+import { UI } from './sharedStyles.js'
+import { Icon } from './Icon.jsx'
+import { Empty } from './ui.jsx'
+
+const plus = <Icon name="plus" size={14} />
 
 
 // 角色卡（CharacterListView／FactionView 共用）；children＝卡片底部的額外內容
 function CharCard({ c, onSelect, children }) {
   return (
     <div
+      className="cf-card"
       style={S.charCard}
       onClick={() => onSelect(c)}
       onMouseEnter={e => e.currentTarget.style.borderColor = c.color || 'var(--accent)'}
@@ -18,15 +24,15 @@ function CharCard({ c, onSelect, children }) {
     >
       <div style={S.portrait}>
         {(c.concept_images?.[0])
-          ? <img src={apiUrl(`/characters/${c.id}/concept-images/0`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+          ? <img className="cf-card-img" src={apiUrl(`/characters/${c.id}/concept-images/0`)} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 8%' }} alt={c.name} />
           : c.portrait_path
-            ? <img src={apiUrl(`/characters/${c.id}/portrait`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-            : '無概念圖'
+            ? <img className="cf-card-img" src={apiUrl(`/characters/${c.id}/portrait`)} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center 8%' }} alt={c.name} />
+            : <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, color: 'var(--faint)' }}><Icon name="user-round" size={22} />無概念圖</span>
         }
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 12px 4px', minWidth: 0 }}>
         {c.color && <span style={{ ...S.colorDot, background: c.color }} />}
-        <span style={S.charName}>{c.name}</span>
+        <span style={{ ...S.charName, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
       </div>
       {children}
     </div>
@@ -70,8 +76,11 @@ export function ProjectsView({ onSelect, onCreateClick, onEdit }) {
   return (
     <div style={S.root}>
       <div style={S.toolbar}>
-        <span style={S.toolbarTitle}>作品管理</span>
-        <button style={S.addBtn} onClick={onCreateClick}>+ 新增作品</button>
+        <div>
+          <h1 style={S.toolbarTitle}>作品管理</h1>
+          <p style={{ ...S.muted, marginTop: 2 }}>每部作品擁有自己的角色與勢力</p>
+        </div>
+        <button style={S.addBtn} onClick={onCreateClick}>{plus}新增作品</button>
       </div>
 
       {deletingProject && (
@@ -86,28 +95,30 @@ export function ProjectsView({ onSelect, onCreateClick, onEdit }) {
 
       {loading && <p style={S.muted}>載入中...</p>}
       {!loading && projects.length === 0 && (
-        <p style={S.muted}>尚無作品。點擊「+ 新增作品」開始建立。</p>
+        <Empty icon="folder-open" title="尚無作品">點擊右上角「新增作品」開始建立。</Empty>
       )}
       {!loading && projects.length > 0 && (
         <div style={S.grid}>
           {projects.map(p => (
             <div
-              key={p.id} style={S.card}
+              key={p.id} style={S.card} className="cf-card cf-hover-parent"
               onClick={() => { if (!deletingProject) onSelect(p) }}
               onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
               onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                 <div style={S.cardTitle}>{p.title}</div>
-                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                <div className="cf-reveal" style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                   <button
-                    style={{ ...S.btnSm, fontSize: 11, padding: '3px 10px' }}
+                    style={{ ...UI.btnIcon, width: 28, height: 28 }}
+                    title="編輯" aria-label="編輯作品"
                     onClick={e => { e.stopPropagation(); onEdit(p) }}
-                  >編輯</button>
+                  ><Icon name="pencil" size={14} /></button>
                   <button
-                    style={{ ...S.btnDanger, fontSize: 11, padding: '3px 10px' }}
+                    style={{ ...UI.btnIcon, width: 28, height: 28, color: 'var(--danger)' }}
+                    title="刪除" aria-label="刪除作品"
                     onClick={e => { e.stopPropagation(); setDeletingProject(p) }}
-                  >刪除</button>
+                  ><Icon name="trash-2" size={14} /></button>
                 </div>
               </div>
               <div style={S.btnRow}>
@@ -115,9 +126,12 @@ export function ProjectsView({ onSelect, onCreateClick, onEdit }) {
                 {p.genre && <span style={S.genreBadge}>{p.genre}</span>}
               </div>
               {p.synopsis && (
-                <div style={S.cardMeta}>{p.synopsis.slice(0, 80)}{p.synopsis.length > 80 ? '...' : ''}</div>
+                <div style={{ ...S.cardMeta, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.synopsis}</div>
               )}
-              <div style={S.charCount}>作者：{p.author} · {charCounts[p.id] ?? '…'} 個角色</div>
+              <div style={{ ...S.charCount, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{p.author}</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="users" size={13} /><span className="cf-num">{charCounts[p.id] ?? '…'}</span></span>
+              </div>
             </div>
           ))}
         </div>
@@ -154,8 +168,10 @@ export function ProjectCreateView({ onBack, onCreate }) {
   return (
     <div style={S.root}>
       <div style={S.toolbar}>
-        <button style={S.backBtn} onClick={onBack}>← 返回作品列表</button>
-        <span style={S.toolbarTitle}>新增作品</span>
+        <div>
+          <button className="cf-link" style={{ ...S.backBtn, padding: '2px 4px', margin: '0 -4px' }} onClick={onBack}><Icon name="arrow-left" size={13} />返回作品列表</button>
+          <h1 style={{ ...S.toolbarTitle, marginTop: 4 }}>新增作品</h1>
+        </div>
       </div>
       <div style={S.form}>
         <div style={S.row}>
@@ -273,6 +289,7 @@ export function CharacterListView({ project: initProject, onSelectChar, onCreate
 
   const FactionCard = ({ f }) => (
     <div
+      className="cf-card cf-hover-parent"
       style={S.factionTile}
       onClick={() => onSelectFaction(f)}
       onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
@@ -280,17 +297,22 @@ export function CharacterListView({ project: initProject, onSelectChar, onCreate
     >
       <div style={S.factionThumb}>
         {f.thumbnail_path
-          ? <img src={apiUrl(`/factions/${f.id}/thumbnail`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
-          : '⚑'
+          ? <img className="cf-card-img" src={apiUrl(`/factions/${f.id}/thumbnail`)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={f.name} />
+          : <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <Icon name="flag" size={26} stroke={1.5} />
+              <span style={{ fontSize: 11, letterSpacing: '.08em' }}>勢力</span>
+            </span>
         }
       </div>
-      <div style={S.factionName}>{f.name}</div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={S.factionMeta}>{f.characters.length} 名成員</span>
+      <div style={{ ...S.factionName, display: 'flex', alignItems: 'center', gap: 6 }}><Icon name="flag" size={13} style={{ color: 'var(--accent)' }} />{f.name}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 12px 12px' }}>
+        <span style={S.factionMeta}><span className="cf-num">{f.characters.length}</span> 名成員</span>
         <button
-          style={{ ...S.btnDanger, fontSize: 11, padding: '2px 8px' }}
+          className="cf-reveal"
+          style={{ ...UI.btnGhost, color: 'var(--danger)', padding: '2px 6px' }}
           onClick={e => { e.stopPropagation(); setDeletingFaction(f) }}
-        >刪除</button>
+          title="刪除勢力"
+        ><Icon name="trash-2" size={13} /></button>
       </div>
     </div>
   )
@@ -299,21 +321,24 @@ export function CharacterListView({ project: initProject, onSelectChar, onCreate
     <div style={S.root}>
       <div style={S.toolbar}>
         <div style={S.breadcrumb}>
-          <span style={S.breadLink} onClick={onBackToProjects}>作品管理</span>
-          <span style={S.breadSep}>›</span>
-          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{project.title}</span>
-          {project.genre && <span style={S.genreBadge}>{project.genre}</span>}
-          <StatusBadge status={project.status} />
+          <span className="cf-link" style={S.breadLink} onClick={onBackToProjects}>
+            <Icon name="arrow-left" size={13} style={{ display: 'inline-block', verticalAlign: '-2px', marginRight: 4 }} />作品管理
+          </span>
+          <span style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ color: 'var(--text)', fontSize: 22, fontWeight: 700, letterSpacing: '-.02em' }}>{project.title}</span>
+            {project.genre && <span style={S.genreBadge}>{project.genre}</span>}
+            <StatusBadge status={project.status} />
+          </span>
         </div>
         <div style={S.btnRow}>
-          <button style={S.btnSm} onClick={() => { setSaveError(null); setEditing(e => !e) }}>{editing ? '取消' : '編輯作品'}</button>
-          <button style={S.btnSm} onClick={() => setShowCreateFaction(s => !s)}>+ 新增勢力</button>
-          <button style={S.addBtn} onClick={onCreateChar}>+ 新增角色</button>
+          <button style={UI.btnSecondary} onClick={() => { setSaveError(null); setEditing(e => !e) }}><Icon name={editing ? 'x' : 'pencil'} size={14} />{editing ? '取消' : '編輯作品'}</button>
+          <button style={UI.btnSecondary} onClick={() => setShowCreateFaction(s => !s)}><Icon name="flag" size={14} />新增勢力</button>
+          <button style={S.addBtn} onClick={onCreateChar}>{plus}新增角色</button>
         </div>
       </div>
 
       {editing && (
-        <div style={{ ...S.form, maxWidth: 480, background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+        <div style={{ ...S.form, ...UI.panel, maxWidth: 560, padding: 18, animation: 'cf-fade-up .2s var(--ease) both' }}>
           <div style={S.row}>
             <div style={{ ...S.fieldGroup, flex: 2 }}>
               <label style={S.label}>作品名稱</label>
@@ -376,7 +401,7 @@ export function CharacterListView({ project: initProject, onSelectChar, onCreate
       )}
 
       {!editing && project.synopsis && (
-        <p style={{ ...S.muted, lineHeight: 1.7, maxWidth: 640 }}>{project.synopsis}</p>
+        <p style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.75, maxWidth: 720, marginTop: -6 }}>{project.synopsis}</p>
       )}
 
       {loading && <p style={S.muted}>載入中...</p>}
@@ -386,12 +411,12 @@ export function CharacterListView({ project: initProject, onSelectChar, onCreate
           {ungrouped.map(c => (
             <CharCard key={`char-${c.id}`} c={c} onSelect={onSelectChar}>
               {c.core_traits && (
-                <div style={S.charTraits}>{c.core_traits.slice(0, 45)}{c.core_traits.length > 45 ? '...' : ''}</div>
+                <div style={{ ...S.charTraits, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{c.core_traits}</div>
               )}
             </CharCard>
           ))}
           {factions.length === 0 && ungrouped.length === 0 && (
-            <p style={S.muted}>尚無角色或勢力。點擊右上角按鈕開始建立。</p>
+            <Empty icon="users" title="尚無角色或勢力" style={{ gridColumn: '1 / -1' }}>點擊右上角「新增角色」開始建立。</Empty>
           )}
         </div>
       )}
@@ -459,13 +484,14 @@ export function FactionView({ faction: initFaction, project, allChars, onBack, o
     <div style={S.root}>
       <div style={S.toolbar}>
         <div style={S.breadcrumb}>
-          <span style={S.breadLink} onClick={onBack}>← {project.title}</span>
-          <span style={S.breadSep}>›</span>
-          <span style={{ color: 'var(--accent)', fontWeight: 600 }}>⚑ {faction.name}</span>
+          <span className="cf-link" style={S.breadLink} onClick={onBack}><Icon name="arrow-left" size={13} style={{ display: 'inline-block', verticalAlign: '-2px', marginRight: 4 }} />{project.title}</span>
+          <span style={S.breadSep}>/</span>
+          <span>勢力</span>
+          <span style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-.02em' }}><Icon name="flag" size={20} style={{ color: 'var(--accent)' }} />{faction.name}</span>
         </div>
         <div style={S.btnRow}>
-          <button style={S.btnSm} onClick={() => setEditing(e => !e)}>{editing ? '取消' : '重新命名'}</button>
-          <button style={S.addBtn} onClick={() => setAddingMember(s => !s)}>+ 加入角色</button>
+          <button style={UI.btnSecondary} onClick={() => setEditing(e => !e)}><Icon name={editing ? 'x' : 'pencil'} size={14} />{editing ? '取消' : '重新命名'}</button>
+          <button style={S.addBtn} onClick={() => setAddingMember(s => !s)}>{plus}加入角色</button>
         </div>
       </div>
 
@@ -482,7 +508,7 @@ export function FactionView({ faction: initFaction, project, allChars, onBack, o
       )}
 
       {addingMember && (
-        <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 14 }}>
+        <div style={{ ...UI.panel, padding: 14, animation: 'cf-fade-up .2s var(--ease) both' }}>
           <p style={S.sectionLabel}>選擇角色加入 {faction.name}</p>
           {nonMembers.length === 0
             ? <p style={S.muted}>所有角色都已在此勢力中。</p>
@@ -499,19 +525,20 @@ export function FactionView({ faction: initFaction, project, allChars, onBack, o
         </div>
       )}
 
-      <div style={S.detail}>
+      <div style={{ display: 'flex', gap: 28, alignItems: 'flex-start' }}>
         {/* 左：勢力縮圖 */}
-        <div style={{ flex: '0 0 200px' }}>
+        <div style={{ flex: '0 0 220px' }}>
           <p style={S.sectionLabel}>勢力縮圖</p>
           <div
-            style={{ ...S.dropzone, minHeight: 160, cursor: 'pointer' }}
+            className="cf-drop"
+            style={{ ...S.dropzone, minHeight: 0, aspectRatio: '3 / 4', cursor: 'pointer' }}
             onClick={() => thumbRef.current.click()}
           >
             {uploadingThumb
               ? <p style={S.muted}><Spinner />上傳中...</p>
               : faction.thumbnail_path
-                ? <img src={apiUrl(`/factions/${faction.id}/thumbnail?t=${faction.thumbnail_path}`)} style={S.portraitImg} alt="縮圖" />
-                : <p style={{ ...S.muted, padding: 12 }}>點擊上傳縮圖</p>
+                ? <img src={apiUrl(`/factions/${faction.id}/thumbnail?t=${faction.thumbnail_path}`)} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} alt="縮圖" />
+                : <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, fontSize: 12.5 }}><Icon name="image-plus" size={20} />點擊上傳縮圖</span>
             }
           </div>
           <input ref={thumbRef} type="file" accept="image/*" style={{ display: 'none' }}
@@ -520,16 +547,18 @@ export function FactionView({ faction: initFaction, project, allChars, onBack, o
 
         {/* 右：成員列表 */}
         <div style={{ flex: 1 }}>
-          <p style={S.sectionLabel}>成員（{members.length} 人）</p>
+          <p style={S.sectionLabel}>成員 <span className="cf-num" style={{ color: 'var(--muted)', fontWeight: 400 }}>{members.length}</span></p>
           {members.length === 0
-            ? <p style={S.muted}>尚無成員，點擊「+ 加入角色」添加。</p>
+            ? <Empty icon="users" title="尚無成員">點擊右上角「加入角色」添加。</Empty>
             : <div style={S.charGrid}>
                 {members.map(c => (
                   <CharCard key={c.id} c={c} onSelect={onSelectChar}>
-                    <button
-                      style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px', marginTop: 'auto' }}
-                      onClick={e => { e.stopPropagation(); removeMember(c.id) }}
-                    >移出勢力</button>
+                    <div style={{ padding: '4px 12px 12px' }}>
+                      <button
+                        style={{ ...UI.btnGhost, color: 'var(--danger)', padding: '2px 6px', margin: '0 -6px' }}
+                        onClick={e => { e.stopPropagation(); removeMember(c.id) }}
+                      ><Icon name="x" size={13} />移出勢力</button>
+                    </div>
                   </CharCard>
                 ))}
               </div>
@@ -577,10 +606,12 @@ export function CharacterCreateView({ project, onBack, onCreate }) {
   return (
     <div style={S.root}>
       <div style={S.toolbar}>
-        <div style={S.breadcrumb}>
-          <span style={S.breadLink} onClick={onBack}>← {project.title}</span>
+        <div>
+          <div style={S.breadcrumb}>
+            <span className="cf-link" style={S.breadLink} onClick={onBack}><Icon name="arrow-left" size={13} style={{ display: 'inline-block', verticalAlign: '-2px', marginRight: 4 }} />{project.title}</span>
+          </div>
+          <h1 style={{ ...S.toolbarTitle, marginTop: 4 }}>新增角色</h1>
         </div>
-        <span style={S.toolbarTitle}>新增角色</span>
       </div>
       <div style={S.form}>
         <div style={S.row}>

@@ -35,27 +35,26 @@ export default function CapabilityNotice({ title, kind, family, fallback }) {
   return (
     <div
       style={{
-        border: '1px dashed var(--border)', borderRadius: 10,
-        padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6,
-        opacity: 0.75,
+        border: '1px dashed var(--border-strong)', borderRadius: 'var(--r)', background: 'var(--surface-2)',
+        padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>{title}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>{title}</span>
         <span
           style={{
-            fontSize: 11, padding: '3px 10px', borderRadius: 6,
-            border: '1px solid var(--border)', color: 'var(--muted)',
-            cursor: 'not-allowed', whiteSpace: 'nowrap',
+            fontSize: 10.5, padding: '1px 6px', borderRadius: 3, fontWeight: 600,
+            background: 'var(--tint-amber-bg)', color: 'var(--tint-amber-fg)',
+            cursor: 'help', whiteSpace: 'nowrap',
           }}
           title={reason}
         >
           此模型不支援
         </span>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>{reason}</div>
+      <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>{reason}</div>
       {hint && (
-        <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5, opacity: 0.9 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-2)', lineHeight: 1.6 }}>
           {hint}
         </div>
       )}

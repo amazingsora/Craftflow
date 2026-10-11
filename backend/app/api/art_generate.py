@@ -26,13 +26,18 @@ from app.services.ai.vram_manager import guardian
 from app.services.ai.generation_recorder import record_generation
 from app.services.ai import generation_jobs
 from app.services.ai import character_design_service
-from app.services.ai.custom_tags import load_custom_tags
+from app.core.config import CUSTOM_TAGS_IMPORT_MAX_BYTES
+from app.services.ai.custom_tags import (
+    TAG_KINDS, CustomTagsError, import_custom_tags, load_custom_tags, save_custom_tags,
+)
+from app.services.ai import tag_dictionary
 from app.services.ai.appearance_cards import list_body_groups, list_cards
 from app.services.ai import image_edit_service
 from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
 from app.services.ai.gen_profile import resolve_profile_for_workflow
 from app.schemas.art_generate import (
     CompilePromptRequest,
+    CustomTagsPayload,
     GenerateRequest,
     GenerateAsyncRequest,
 )
@@ -56,6 +61,7 @@ from app.services.ai.image_ops import (
     _letterbox_to_aspect,
 )
 from app.services.ai.wf_node_ops import (
+    hires_params,
     _CN_APPLY_TYPES,
     _bypass_controlnet_nodes,
     _bypass_ipa_nodes,
@@ -149,6 +155,7 @@ async def generate(req: GenerateRequest, db: Session = Depends(get_db)):
         params={
             "width": req.width, "height": req.height, "steps": req.steps,
             "loras": lora_list, "art_style_id": req.art_style_id,
+            "hires": hires_params(wf),
         },
     )
     return Response(
@@ -186,6 +193,7 @@ async def generate_async(req: GenerateAsyncRequest, db: Session = Depends(get_db
             "width": req.width, "height": req.height, "steps": req.steps,
             "loras": lora_list, "art_style_id": req.art_style_id,
             "batch_size": batch_size, "async": True,
+            "hires": hires_params(wf),
         },
     )
     asyncio.create_task(generation_jobs.run_txt2img_job(job, wf, record_kwargs))
@@ -553,6 +561,38 @@ async def generate_variant_design(
 def get_custom_tags():
     """[CN-122] 清單只存 CUSTOM_TAGS_FILE；檔案不存在回空清單。"""
     return load_custom_tags()
+
+
+@router.put("/art/custom-tags", summary="儲存客製化標籤清單（整份覆寫）")
+def put_custom_tags(body: CustomTagsPayload):
+    """[CN-131] tag 正規化＋去重後原子寫入；超過上限回 400。"""
+    try:
+        return save_custom_tags(body.model_dump())
+    except CustomTagsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/art/custom-tags/import", summary="匯入標籤檔（custom_tags JSON／Danbooru CSV）合併進清單")
+async def post_custom_tags_import(file: UploadFile = File(...)):
+    """[CN-131] 只合併作品／繪師；大型字典請設 TAG_DICTIONARY_CSV 用搜尋挑選。"""
+    content = await file.read(CUSTOM_TAGS_IMPORT_MAX_BYTES + 1)
+    if len(content) > CUSTOM_TAGS_IMPORT_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"檔案超過 {CUSTOM_TAGS_IMPORT_MAX_BYTES // 1024} KB；整份 Danbooru 字典請設 .env 的 TAG_DICTIONARY_CSV，改用搜尋挑選",
+        )
+    try:
+        return await run_in_threadpool(import_custom_tags, content, file.filename or "")
+    except CustomTagsError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/art/tag-dictionary/search", summary="搜尋 Danbooru 標籤字典（作品／繪師）")
+def get_tag_dictionary_search(q: str = "", kind: Optional[str] = None):
+    """[CN-131] 字典未設定時 configured=false、results 為空。"""
+    if kind and kind not in TAG_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind 只能是 {'／'.join(TAG_KINDS)}")
+    return {**tag_dictionary.dictionary_status(), "results": tag_dictionary.search(q, kind)}
 
 
 

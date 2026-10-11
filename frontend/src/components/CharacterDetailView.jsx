@@ -5,8 +5,12 @@ import { request, apiDelete, apiUrl } from '../api/client'
 import { S } from './characterTabStyles.js'
 import { Spinner, ImageLightbox, GenderPicker, DeleteConfirm, AppearanceCardPicker, BodyCardPicker, appearanceTagPreview } from './characterTabParts.jsx'
 import { apiFetch } from './characterTabShared.js'
-import { GenerationInfo } from './GenerationInfo.jsx'
 import { CustomTagsField } from './CustomTagsField.jsx'
+import { CUSTOM_TAGS_CHANGED } from './CustomTagsManager.jsx'
+import { UI } from './sharedStyles.js'
+import { Panel } from './ui.jsx'
+import { Icon } from './Icon.jsx'
+import { GenInspector, PendingCard, ImageTile, ConceptSlot, ConceptTile, SummaryCard } from './characterDetailParts.jsx'
 
 
 const DEFAULT_TAB_NAMES = ['主版本', 'Tab 2', 'Tab 3']
@@ -59,7 +63,7 @@ function _initVariant(v = {}, charId = null, slot = null) {
     faceDetailerDenoise: prefs.faceDetailerDenoise,
     age: v.age != null ? String(v.age) : '', height: v.height != null ? String(v.height) : '', birthday: v.birthday ?? '',
     gender: v.gender ?? null, appearanceAge: v.appearance_age ?? '', bodyCards: v.body_cards ?? '', aiSummary: v.ai_summary ?? null,
-    conceptImages: v.concept_images ?? [], aiImages: v.ai_generated_images ?? [],
+    conceptImages: v.concept_images ?? [], conceptExcluded: v.concept_excluded ?? [], aiImages: v.ai_generated_images ?? [],
     pendingQueue: [], generating: false, savingGen: false, savingFields: false,
     summarizing: false, uploadingConcept: false,
     deletingConceptIdx: null, deletingAiIdx: null,
@@ -87,15 +91,6 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       ? 'Anima 走 ControlNet-LLLite（真條件注入，latent 不受草圖污染），強度滑桿即 LLLite strength。'
       : 'Anima 不支援 ControlNet，已自動改用 img2img 低重繪貼合草圖構圖。'
   const ipaHint    = 'Anima 無對應 IP-Adapter；改用「視覺特徵」把參考圖轉成文字特徵帶入提示詞。'
-
-  const capChip = (label, title) => (
-    <span title={title}
-      style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--muted)',
-               cursor: 'not-allowed', userSelect: 'none', opacity: 0.65 }}>
-      <input type="checkbox" checked={false} disabled readOnly style={{ cursor: 'not-allowed' }} />
-      {label}
-    </span>
-  )
 
   const [char, setChar] = useState(initChar)
   const [charName, setCharName] = useState(initChar.name)
@@ -214,13 +209,16 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
   useEffect(() => {
     apiFetch('/art-styles').then(setArtStyles).catch(() => {})
-    apiFetch('/art/custom-tags').then(setCustomTagOptions).catch(() => {})
+    const loadCustomTags = () => apiFetch('/art/custom-tags').then(setCustomTagOptions).catch(() => {})
+    loadCustomTags()
+    window.addEventListener(CUSTOM_TAGS_CHANGED, loadCustomTags)
     apiFetch('/art/appearance-cards').then(d => {
       setAppearanceCards(d?.cards || [])
       setBodyGroups(d?.body_groups || [])
     }).catch(() => {})
     // ComfyUI 離線時 /settings/loras 會 503，靜默忽略即可
     apiFetch('/settings/loras').then(d => setLoraList(d.loras || [])).catch(() => {})
+    return () => window.removeEventListener(CUSTOM_TAGS_CHANGED, loadCustomTags)
   }, [])
 
   // 畫風／LoRA／客製化標籤屬角色層級：各分頁共用同一份狀態
@@ -354,6 +352,18 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
       setChar(updated)
       setConceptImages(updated.concept_images || [])
       setDeletingConceptIdx(null)
+    } catch (e) { setError(e.message) }
+  }
+
+  // [CN-132] main＝第 0 張；未勾「參與」的存在 concept_excluded
+  const conceptExcluded = char.concept_excluded || []
+  const patchConceptImage = async (idx, patch) => {
+    try {
+      const updated = await apiFetch(`/characters/${char.id}/concept-images/${idx}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      })
+      setChar(updated)
+      setConceptImages(updated.concept_images || [])
     } catch (e) { setError(e.message) }
   }
 
@@ -606,7 +616,17 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
     try {
       const updated = await apiFetch(`/characters/${char.id}/variants/${slot}/concept-images/${idx}`, { method: 'DELETE' })
       const serverVar = (updated.variants || [])[slot - 1] || {}
-      setV(slot, { deletingConceptIdx: null, conceptImages: serverVar.concept_images ?? [] })
+      setV(slot, { deletingConceptIdx: null, conceptImages: serverVar.concept_images ?? [], conceptExcluded: serverVar.concept_excluded ?? [] })
+    } catch (e) { setError(e.message) }
+  }
+
+  const patchVariantConceptImage = async (slot, idx, patch) => {
+    try {
+      const updated = await apiFetch(`/characters/${char.id}/variants/${slot}/concept-images/${idx}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      })
+      const serverVar = (updated.variants || [])[slot - 1] || {}
+      setV(slot, { conceptImages: serverVar.concept_images ?? [], conceptExcluded: serverVar.concept_excluded ?? [] })
     } catch (e) { setError(e.message) }
   }
 
@@ -712,321 +732,197 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
     } catch (e) { setError(e.message) }
   }
 
-  return (
-    <div style={S.root}>
-      <div style={S.toolbar}>
-        <div style={S.breadcrumb}>
-          <span style={S.breadLink} onClick={onBack}>← {project.title}</span>
-          <span style={S.breadSep}>›</span>
-          {char.color && <span style={{ ...S.colorDot, background: char.color }} />}
-          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{char.name}</span>
-        </div>
-        {onSendToGenerate && (
-          <button
-            style={{ fontSize: 12, padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: sendingToGen ? 'wait' : 'pointer', fontWeight: 600, opacity: sendingToGen ? 0.6 : 1 }}
-            disabled={sendingToGen}
-            onClick={async () => {
-              // 後端即時編譯英文識別段；Ollama 失敗時回中文 fallback，放回中文描述欄
-              setSendingToGen(true); setError(null)
-              try {
-                const d = await (await request(`/characters/${char.id}/identity-prompt`)).json()
-                onSendToGenerate(d.source === 'compiled'
-                  ? { en: d.positive, negative: d.negative, zh: '', characterId: char.id }
-                  : { en: '', zh: d.zh, characterId: char.id })
-              } catch (e) { setError(e.message) } finally { setSendingToGen(false) }
-            }}
-            title="將角色識別段（英文 tag）帶入文字→生圖 Tab"
-          >{sendingToGen ? '編譯角色提示詞中…' : '→ 以此角色生圖'}</button>
-        )}
-      </div>
+  // Ctrl+S：儲存目前版本的欄位（僅在本頁可見時生效；各 Tab 以 display:none 常駐）
+  const rootRef = useRef()
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 's') return
+      if (!rootRef.current || rootRef.current.offsetParent === null) return
+      e.preventDefault()
+      if (activeTab === 0) { if (!savingFields) saveFields() }
+      else if (vState && !vState.savingFields) saveVariantFields()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
+  const headColor = (activeTab === 0 ? color : vState?.color) || char.color
+  const headFacts = activeTab === 0
+    ? [['性別', { male: '男', female: '女', neutral: '中性' }[gender] ?? null], ['年齡', age], ['身高', height ? `${height} cm` : ''], ['生日', birthday]]
+    : [['性別', { male: '男', female: '女', neutral: '中性' }[vState?.gender] ?? null], ['年齡', vState?.age], ['身高', vState?.height ? `${vState.height} cm` : ''], ['生日', vState?.birthday]]
+
+  // AI 整理資訊可整欄隱藏，狀態記在 localStorage（全角色共用）
+  const [summaryHidden, setSummaryHidden] = useState(() => { try { return localStorage.getItem('craftflow_summary_hidden') === 'true' } catch { return false } })
+  const toggleSummary = () => setSummaryHidden(v => {
+    try { localStorage.setItem('craftflow_summary_hidden', String(!v)) } catch { /* 忽略 */ }
+    return !v
+  })
+
+  // 頁首（名稱／版本分頁／帶入生圖）放在左欄最上方，主版本與變體共用
+  const pageHead = (
+    <>
+      <div style={{ minWidth: 0 }}>
+        <div style={S.breadcrumb}>
+          <span className="cf-link" style={S.breadLink} onClick={onBack} role="link" tabIndex={0}
+            onKeyDown={e => e.key === 'Enter' && onBack()}>
+            <Icon name="arrow-left" size={13} style={{ display: 'inline-block', verticalAlign: '-2px', marginRight: 4 }} />{project.title}
+          </span>
+          <span style={S.breadSep}>/</span>
+          <span>角色</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
+          {headColor && <span style={{ width: 14, height: 14, borderRadius: 4, background: headColor, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.12)', flexShrink: 0 }} />}
+          <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-.03em', lineHeight: 1.15, color: 'var(--text)' }}>{char.name}</h1>
+        </div>
+        <dl style={{ display: 'flex', flexWrap: 'wrap', marginTop: 10, rowGap: 6 }}>
+          {headFacts.map(([k, v], i) => (
+            <div key={k} style={{ padding: i === 0 ? '0 14px 0 0' : '0 14px', borderLeft: i === 0 ? 'none' : '1px solid var(--border)' }}>
+              <dt style={{ fontSize: 11, color: 'var(--muted)' }}>{k}</dt>
+              <dd style={{ fontSize: 13.5, fontWeight: 600, color: v ? 'var(--text)' : 'var(--faint)', fontVariantNumeric: 'tabular-nums' }}>{v || '—'}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
       {/* ── Tab bar ── */}
       {editingTabIdx !== null ? (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', maxWidth: 260 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', maxWidth: 320, paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>
           <input
             style={{ ...S.input, flex: 1, padding: '5px 10px', fontSize: 13 }}
             value={editingTabNameVal} autoFocus
             onChange={e => setEditingTabNameVal(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') confirmTabName(); if (e.key === 'Escape') setEditingTabIdx(null) }}
           />
-          <button style={{ ...S.btnSm, fontSize: 12, padding: '4px 10px' }} disabled={savingTabName} onClick={confirmTabName}>
+          <button style={S.btnSm} disabled={savingTabName} onClick={confirmTabName}>
             {savingTabName ? <Spinner /> : '確認'}
           </button>
-          <button style={{ ...S.btnSm, fontSize: 12, padding: '4px 10px' }} onClick={() => setEditingTabIdx(null)}>取消</button>
+          <button style={UI.btnGhost} onClick={() => setEditingTabIdx(null)}>取消</button>
         </div>
       ) : (
-        <div style={S.varTabBar}>
+        <div style={S.varTabBar} role="tablist">
           {tabNames.map((name, idx) => (
             <button
               key={idx}
+              role="tab" aria-selected={activeTab === idx}
+              className="cf-hover-parent"
               style={{ ...S.varTab, ...(activeTab === idx ? S.varTabActive : {}) }}
               onClick={() => setActiveTab(idx)}
             >
               {name}
               <span
+                className="cf-reveal"
                 style={S.tabEditBtn}
                 title="重新命名"
                 onClick={e => { e.stopPropagation(); startEditTabName(idx) }}
-              >✎</span>
+              ><Icon name="pencil" size={12} /></span>
             </button>
           ))}
         </div>
       )}
-
       {error && <p style={S.error}>{error}</p>}
+      {onSendToGenerate && (
+        <button
+          style={{ ...UI.btnSecondary, width: '100%', height: 36, color: 'var(--accent)', borderColor: 'var(--accent-border)', background: 'var(--accent-soft)', fontWeight: 600, ...(sendingToGen ? { opacity: 0.7, cursor: 'wait' } : {}) }}
+          disabled={sendingToGen}
+          onClick={async () => {
+            // 後端即時編譯英文識別段；Ollama 失敗時回中文 fallback，放回中文描述欄
+            setSendingToGen(true); setError(null)
+            try {
+              const d = await (await request(`/characters/${char.id}/identity-prompt`)).json()
+              onSendToGenerate(d.source === 'compiled'
+                ? { en: d.positive, negative: d.negative, zh: '', characterId: char.id }
+                : { en: '', zh: d.zh, characterId: char.id })
+            } catch (e) { setError(e.message) } finally { setSendingToGen(false) }
+          }}
+          title="將角色識別段（英文 tag）帶入文字→生圖 Tab"
+        >{sendingToGen ? <><Spinner />編譯角色提示詞中…</> : <><Icon name="wand-sparkles" size={15} />以此角色生圖</>}</button>
+      )}
+    </>
+  )
+
+  return (
+    <div style={S.root} ref={rootRef}>
 
       {activeTab === 0 ? (
-      <div style={S.detail}>
-        {/* ── 左欄 ── */}
-        <div style={S.detailLeft}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <span style={S.sectionLabel}>AI 整理資訊</span>
-              <button style={S.btnSm} onClick={runSummarize} disabled={summarizing}>
-                {summarizing ? <><Spinner />整理中...</> : 'AI 重新整理'}
-              </button>
-            </div>
-            {char.ai_summary
-              ? <div style={S.summaryCard}>{char.ai_summary}</div>
-              : <div style={S.summaryPlaceholder}>點擊「AI 重新整理」讓 AI 根據角色資料生成設定檔</div>
-            }
-          </div>
-
+      <div style={S.detail} className={`cf-detail${summaryHidden ? ' cf-detail--nosum' : ''}`}>
+        {/* ── 左欄：頁首＋概念圖＋生成面板＋人設圖 ── */}
+        <div style={S.detailStage}>
+          {pageHead}
           {/* 概念圖（最多3張） */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <span style={S.sectionLabel}>概念圖（{conceptImages.length}/3）</span>
+            <div style={S.sectionHead}>
+              <span style={{ ...S.sectionLabel, marginBottom: 0 }}>概念圖參考 <span className="cf-num" style={{ color: 'var(--muted)', fontWeight: 400 }}>{conceptImages.length}/3</span></span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
-              {conceptImages.map((img, idx) => (
-                <div key={idx} style={{ position: 'relative', aspectRatio: '1/1', borderRadius: 8, overflow: 'hidden', background: 'var(--border)' }}>
-                  <img
-                    src={apiUrl(`/characters/${char.id}/concept-images/${idx}?t=${img}`)}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
-                    alt={`概念圖${idx + 1}`}
-                    title="點擊放大"
-                    onClick={() => setLightboxSrc(apiUrl(`/characters/${char.id}/concept-images/${idx}?t=${img}`))}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {conceptImages.map((img, idx) => {
+                const src = apiUrl(`/characters/${char.id}/concept-images/${idx}?t=${img}`)
+                return (
+                  <ConceptTile key={img} src={src} idx={idx}
+                    isMain={idx === 0} enabled={idx === 0 || !conceptExcluded.includes(img)}
+                    confirming={deletingConceptIdx === idx}
+                    onZoom={() => setLightboxSrc(src)}
+                    onAskDelete={() => setDeletingConceptIdx(idx)}
+                    onConfirmDelete={() => deleteConceptImage(idx)}
+                    onCancelDelete={() => setDeletingConceptIdx(null)}
+                    onSetMain={() => patchConceptImage(idx, { main: true })}
+                    onToggle={() => patchConceptImage(idx, { enabled: conceptExcluded.includes(img) })}
                   />
-                  {deletingConceptIdx === idx
-                    ? <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, color: 'var(--danger)' }}>確認刪除？</span>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <button onClick={() => deleteConceptImage(idx)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: 'var(--tint-red-bg)', color: 'var(--danger)', cursor: 'pointer' }}>刪除</button>
-                          <button onClick={() => setDeletingConceptIdx(null)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>取消</button>
-                        </div>
-                      </div>
-                    : <button
-                        onClick={() => setDeletingConceptIdx(idx)}
-                        style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: 'var(--accent-contrast)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
-                      >×</button>
-                  }
-                </div>
-              ))}
+                )
+              })}
               {conceptImages.length < 3 && (
-                <div
-                  style={{ aspectRatio: '1/1', borderRadius: 8, border: '2px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--muted)', fontSize: 24, transition: 'border-color .2s' }}
-                  onClick={() => conceptRef.current.click()}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
-                >
-                  {uploadingConcept ? <Spinner /> : '+'}
-                </div>
+                <ConceptSlot add onClick={() => conceptRef.current.click()}>
+                  {uploadingConcept ? <Spinner /> : <Icon name="image-plus" size={18} />}
+                </ConceptSlot>
               )}
             </div>
             <input ref={conceptRef} type="file" accept="image/*" style={{ display: 'none' }}
               onChange={e => { if (e.target.files[0]) uploadConceptImage(e.target.files[0]); e.target.value = '' }} />
           </div>
 
-          {/* AI 人設圖 */}
+          <GenInspector
+            count={aiImages.length} family={capability.family}
+            caps={{ ipaSupported, ipaHint, cnUsable, cnLabel, cnHint, faceDetailerSupported }}
+            ipa={{ enabled: ipaEnabled, onEnabled: v => { setIpaEnabled(v); _saveGenPref(initChar.id, null, 'ipaEnabled', v) }, value: ipaWeight, onValue: v => { setIpaWeight(v); _saveGenPref(initChar.id, null, 'ipaWeight', v) } }}
+            cn={{ enabled: cnEnabled, onEnabled: v => { setCnEnabled(v); _saveGenPref(initChar.id, null, 'cnEnabled', v) }, value: cnWeight, onValue: v => { setCnWeight(v); _saveGenPref(initChar.id, null, 'cnWeight', v) } }}
+            fd={{ enabled: faceDetailerEnabled, onEnabled: v => { setFaceDetailerEnabled(v); _saveGenPref(initChar.id, null, 'faceDetailerEnabled', v) }, value: faceDetailerDenoise, onValue: v => { setFaceDetailerDenoise(v); _saveGenPref(initChar.id, null, 'faceDetailerDenoise', v) } }}
+            seed={seed} onSeed={setSeed} lastSeed={lastSeed} onUseLastSeed={() => setSeed(Number(lastSeed))}
+            reusePrompt={reusePrompt} onReusePrompt={setReusePrompt}
+            generating={generating} onGenerate={generateDesignImage} timings={lastTimings}
+          />
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span style={{ ...S.sectionLabel, marginBottom: 0, whiteSpace: 'nowrap' }}>AI 人設圖（{aiImages.length}/8）</span>
-              <button style={{ ...S.btnSm, whiteSpace: 'nowrap' }} disabled={generating} onClick={generateDesignImage}>
-                {generating ? <><Spinner />生成中...</> : '生成人設圖'}
-              </button>
+            <div style={S.sectionHead}>
+              <span style={{ ...S.sectionLabel, marginBottom: 0 }}>AI 人設圖 <span className="cf-num" style={{ color: 'var(--muted)', fontWeight: 400 }}>{aiImages.length}/8</span></span>
             </div>
-            {/* 生成選項獨立一列，可換行，避免與標題／按鈕擠在同一列 */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4, marginBottom: 8 }}>
-              {ipaSupported ? (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                  <input type="checkbox" checked={ipaEnabled} onChange={e => { setIpaEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'ipaEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                  概念圖參考
-                </label>
-              ) : capChip('概念圖參考（不支援）', ipaHint)}
-              {cnUsable && (
-                <label title={cnHint} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: cnEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                  <input type="checkbox" checked={cnEnabled} onChange={e => { setCnEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'cnEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                  {cnLabel}
-                </label>
-              )}
-              {faceDetailerSupported && (
-              <label title="生成後以 FaceDetailer 重繪臉部" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: faceDetailerEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                  <input type="checkbox" checked={faceDetailerEnabled} onChange={e => { setFaceDetailerEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'faceDetailerEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                  增強臉部輪廓
-                </label>
-              )}
-            </div>
-            {ipaSupported && ipaEnabled && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>IPA 強度</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
-                <input type="range" min={0.1} max={1.5} step={0.05} value={ipaWeight}
-                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
-                  onChange={e => { const v = Number(e.target.value); setIpaWeight(v); _saveGenPref(initChar.id, null, 'ipaWeight', v) }} />
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{ipaWeight.toFixed(2)}</span>
-              </div>
-            )}
-            {cnUsable && cnEnabled && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>CN 強度</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
-                <input type="range" min={0.1} max={1.5} step={0.05} value={cnWeight}
-                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
-                  onChange={e => { const v = Number(e.target.value); setCnWeight(v); _saveGenPref(initChar.id, null, 'cnWeight', v) }} />
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{cnWeight.toFixed(2)}</span>
-              </div>
-            )}
-            {faceDetailerSupported && faceDetailerEnabled && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}
-                title="修臉重繪幅度（denoise）：低＝保留原臉只補細節；高＝重畫臉型五官，過高會與身體畫風脫節">
-                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>臉部強度</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.2</span>
-                <input type="range" min={0.2} max={0.7} step={0.05} value={faceDetailerDenoise}
-                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
-                  onChange={e => { const v = Number(e.target.value); setFaceDetailerDenoise(v); _saveGenPref(initChar.id, null, 'faceDetailerDenoise', v) }} />
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.7</span>
-                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{faceDetailerDenoise.toFixed(2)}</span>
-              </div>
-            )}
-            {/* seed：-1＝隨機；固定 seed＋「沿用 prompt」可重現同一張圖 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Seed</span>
-              <input type="number" value={seed}
-                title="-1 = 每次隨機（預設）；填入非負整數則固定 seed，供比較調整效果"
-                style={{ width: 120, fontSize: 12, padding: '2px 6px', background: 'var(--surface-2)',
-                         border: '1px solid var(--border-strong)', borderRadius: 4, color: 'var(--fg)' }}
-                onChange={e => setSeed(e.target.value === '' ? -1 : Number(e.target.value))} />
-              {lastSeed != null && (
-                <button style={{ ...S.btnSm, fontSize: 11, padding: '2px 8px' }}
-                  title="把上次實際使用的 seed 填入輸入框，供下次生成沿用"
-                  onClick={() => setSeed(Number(lastSeed))}>
-                  沿用上次 seed（{lastSeed}）
-                </button>
-              )}
-              <label title="連同 seed 一起沿用上次生成的 prompt，不重新編譯（只固定 seed 不夠，LLM 每次翻譯結果仍可能不同）"
-                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: reusePrompt ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                <input type="checkbox" checked={reusePrompt} onChange={e => setReusePrompt(e.target.checked)}
-                  style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                沿用 prompt
-              </label>
-            </div>
-
             {/* 待確認佇列（一次顯示一張） */}
             {pendingQueue.length > 0 && (
-              <div style={{ marginBottom: 10, border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>
-                    {pendingQueue[0].label}
-                  </span>
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-                    待確認 {pendingQueue.length} 張
-                  </span>
-                </div>
-                
-                <img
-                  src={pendingQueue[0].url}
-                  style={{ ...S.genImg, marginTop: 0, cursor: 'zoom-in' }}
-                  alt={pendingQueue[0].label}
-                  title="點擊放大"
-                  onClick={() => setLightboxSrc(pendingQueue[0].url)}
+              <div style={{ marginBottom: 12 }}>
+                <PendingCard
+                  item={pendingQueue[0]} total={pendingQueue.length}
+                  onZoom={() => setLightboxSrc(pendingQueue[0].url)}
+                  saveLabel={aiImages.length >= 8 ? '已達上限' : '儲存此圖'}
+                  saveDisabled={savingGen || aiImages.length >= 8} saving={savingGen}
+                  onSave={savePendingFirst} onDiscard={discardPendingFirst} onDiscardAll={discardAllPending}
                 />
-
-                <div style={{ ...S.btnRow, marginTop: 6 }}>
-                  <button
-                    style={{ ...S.btn, flex: 1, padding: '7px 0', fontSize: 13 }}
-                    disabled={savingGen || aiImages.length >= 8}
-                    onClick={savePendingFirst}
-                  >
-                    {savingGen ? <><Spinner />儲存中...</> : aiImages.length >= 8 ? '已達上限' : '儲存此圖'}
-                  </button>
-                  <button style={S.btnSm} onClick={discardPendingFirst}>捨棄</button>
-                  {pendingQueue.length > 1 && (
-                    <button style={{ ...S.btnSm, color: 'var(--danger)' }} onClick={discardAllPending}>全捨棄</button>
-                  )}
-                </div>
-
-                {lastTimings && (
-                  <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5, fontWeight: 600, letterSpacing: 0.5 }}>⏱ 生成耗時</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {[
-                        lastTimings.vision_extract    != null && ['視覺分析',  lastTimings.models?.vision,   lastTimings.vision_extract],
-                        lastTimings.body_coverage     != null && ['姿態偵測',  lastTimings.models?.vision,   lastTimings.body_coverage],
-                        lastTimings.compile_prompt    != null && ['提示詞編譯', lastTimings.models?.text,    lastTimings.compile_prompt],
-                        lastTimings.compile_ai_prompt != null && ['AI提示詞',  lastTimings.models?.text,    lastTimings.compile_ai_prompt],
-                        lastTimings.canvas_expand     != null && ['Canvas Expand', lastTimings.models?.canvas_expand || lastTimings.models?.workflow, lastTimings.canvas_expand],
-                        lastTimings.upload            != null && ['圖片上傳',  null,                         lastTimings.upload],
-                        lastTimings.comfyui           != null && ['ComfyUI 生成', lastTimings.models?.workflow, lastTimings.comfyui],
-                      ].filter(Boolean).map(([label, model, sec]) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                          <span style={{ color: 'var(--muted)' }}>
-                            {label}
-                            {model && <span style={{ color: 'var(--muted)', marginLeft: 4, fontSize: 10 }}>({model})</span>}
-                          </span>
-                          <span style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{sec}s</span>
-                        </div>
-                      ))}
-                      {(() => {
-                        const keys = ['vision_extract','body_coverage','compile_prompt','compile_ai_prompt','canvas_expand','upload','comfyui']
-                        const sum = keys.reduce((a, k) => a + (lastTimings[k] ?? 0), 0)
-                        const other = Math.round((lastTimings.total - sum) * 10) / 10
-                        return other > 0.5 ? (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                            <span style={{ color: 'var(--muted)' }}>其他</span>
-                            <span style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{other}s</span>
-                          </div>
-                        ) : null
-                      })()}
-                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 3, paddingTop: 3, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                        <span style={{ color: 'var(--accent)', fontWeight: 600 }}>總計</span>
-                        <span style={{ color: 'var(--accent)', fontFamily: 'monospace', fontWeight: 600 }}>{lastTimings.total}s</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
-
             {/* 已儲存的 AI 圖 */}
-            {aiImages.length > 0 && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+            {aiImages.length > 0 ? (
+              <div className="cf-gallery" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                 {aiImages.map((img, idx) => (
-                  <div key={idx} style={{ borderRadius: 8, overflow: 'hidden' }}>
-                    <img
-                      src={apiUrl(`/characters/${char.id}/ai-images/${idx}?t=${img}`)}
-                      style={{ width: '100%', display: 'block', borderRadius: 8, cursor: 'zoom-in' }}
-                      alt={`AI圖${idx + 1}`}
-                      title="點擊放大"
-                      onClick={() => setLightboxSrc(apiUrl(`/characters/${char.id}/ai-images/${idx}?t=${img}`))}
-                    />
-                    <div style={{ display: 'flex', gap: 4, marginTop: 4, justifyContent: 'center' }}>
-                      <a href={apiUrl(`/characters/${char.id}/ai-images/${idx}`)} download={`${char.name}_ai_${idx + 1}.png`} style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px', textDecoration: 'none', textAlign: 'center' }}>下載</a>
-                      {deletingAiIdx === idx
-                        ? <>
-                            <button style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: 'var(--tint-red-bg)', color: 'var(--danger)', cursor: 'pointer' }} onClick={() => deleteAiImage(idx)}>確認</button>
-                            <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px' }} onClick={() => setDeletingAiIdx(null)}>取消</button>
-                          </>
-                        : <button style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px' }} onClick={() => setDeletingAiIdx(idx)}>移除</button>
-                      }
-                    </div>
-                    <GenerationInfo fetchPath={`/characters/${char.id}/ai-images/${idx}/generation-info`} />
-                  </div>
+                  <ImageTile
+                    key={idx} index={idx}
+                    src={apiUrl(`/characters/${char.id}/ai-images/${idx}?t=${img}`)} alt={`AI圖${idx + 1}`}
+                    onZoom={() => setLightboxSrc(apiUrl(`/characters/${char.id}/ai-images/${idx}?t=${img}`))}
+                    downloadHref={apiUrl(`/characters/${char.id}/ai-images/${idx}`)} downloadName={`${char.name}_ai_${idx + 1}.png`}
+                    confirming={deletingAiIdx === idx}
+                    onAskDelete={() => setDeletingAiIdx(idx)} onConfirmDelete={() => deleteAiImage(idx)} onCancelDelete={() => setDeletingAiIdx(null)}
+                    infoPath={`/characters/${char.id}/ai-images/${idx}/generation-info`}
+                  />
                 ))}
+              </div>
+            ) : pendingQueue.length === 0 && (
+              <div style={{ ...S.summaryPlaceholder, aspectRatio: '2 / 3', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <Icon name="image" size={22} style={{ color: 'var(--faint)' }} />
+                尚無人設圖<br />調整右側參數後按「生成人設圖」
               </div>
             )}
           </div>
@@ -1046,321 +942,329 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
           </div>
         </div>
 
-        {/* ── 右欄 ── */}
+        {/* ── 資料 ── */}
         <div style={S.detailRight}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={S.sectionLabel}>角色資料（可編輯）</span>
-            <button style={S.btnSm} disabled={savingFields} onClick={saveFields}>
-              {savingFields ? <><Spinner />儲存中...</> : '儲存所有變更'}
-            </button>
-          </div>
-
-          <div style={S.row}>
-            <div style={{ ...S.fieldGroup, flex: 2 }}>
-              <label style={S.label}>角色名稱</label>
-              <input style={S.input} value={charName} onChange={e => setCharName(e.target.value)} />
-            </div>
-            <div style={S.fieldGroup}>
-              <label style={S.label}>代表色</label>
-              <div style={S.colorRow}>
-                <input type="color" style={S.colorPicker} value={color || '#888888'} onChange={e => setColor(e.target.value)} />
-                <span style={S.colorCode}>{color || '未設定'}</span>
-                {color && <button style={{ ...S.btnSm, fontSize: 11, padding: '4px 10px' }} onClick={() => setColor('')}>清除</button>}
-              </div>
-            </div>
-          </div>
-
-          <div style={S.row}>
-            <div style={S.fieldGroup}>
-              <label style={S.label}>年齡</label>
-              <input type="number" style={S.input} value={age} onChange={e => setAge(e.target.value)} placeholder="例如：18" min="0" max="9999" />
-            </div>
-            <div style={S.fieldGroup}>
-              <label style={S.label}>身高 (cm)</label>
-              <input type="number" style={S.input} value={height} onChange={e => setHeight(e.target.value)} placeholder="例如：162" min="50" max="250" />
-            </div>
-            <div style={{ ...S.fieldGroup, flex: 2 }}>
-              <label style={S.label}>生日</label>
-              <input style={S.input} value={birthday} onChange={e => setBirthday(e.target.value)} placeholder="例如：5月16日 或 1998-05-16" />
-            </div>
-          </div>
-
-          <div>
-            <label style={S.label}>
-              性別
-              {gender && (
-                <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)' }}>
-                  → {appearanceTagPreview(gender, appearanceAge, appearanceCards)}
-                </span>
-              )}
-            </label>
-            <GenderPicker value={gender} onChange={setGender} />
-          </div>
-
-          <div>
-            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>外觀年齡</label>
-            <AppearanceCardPicker value={appearanceAge} onChange={setAppearanceAge} cards={appearanceCards} gender={gender} />
-          </div>
-
-          <div>
-            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>身材</label>
-            <BodyCardPicker value={bodyCards} onChange={setBodyCards} groups={bodyGroups} gender={gender} appearanceAge={appearanceAge} />
-          </div>
-
-          {styleLoraFields}
-
-          {/* 所屬勢力 */}
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <label style={S.label}>所屬勢力</label>
-              {availableFactions.length > 0 && (
-                <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 10px' }} onClick={() => setAddingFaction(s => !s)}>
-                  {addingFaction ? '取消' : '+ 加入勢力'}
+          <div style={{ ...S.sectionHead, marginBottom: 0, position: 'sticky', top: 0, zIndex: 3, padding: '8px 0', background: 'var(--bg)' }}>
+            <span style={{ ...S.sectionLabel, marginBottom: 0 }}>角色資料</span>
+            <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {summaryHidden && (
+                <button style={UI.btnGhost} onClick={toggleSummary} title="顯示 AI 整理資訊">
+                  <Icon name="sparkles" size={13} style={{ color: 'var(--accent)' }} />AI 整理資訊
                 </button>
               )}
+              <button style={{ ...UI.btnSecondary, padding: '6px 12px' }} disabled={savingFields} onClick={saveFields} title="Ctrl + S">
+                {savingFields ? <><Spinner />儲存中…</> : <><Icon name="save" size={14} />儲存所有變更</>}
+              </button>
+            </span>
+          </div>
+
+          <Panel index="01" title="基本資料" icon="user-round">
+            <div style={S.row}>
+              <div style={{ ...S.fieldGroup, flex: 2 }}>
+                <label style={S.label}>角色名稱</label>
+                <input style={S.input} value={charName} onChange={e => setCharName(e.target.value)} />
+              </div>
+              <div style={S.fieldGroup}>
+                <label style={S.label}>代表色</label>
+                <div style={S.colorRow}>
+                  <input type="color" style={S.colorPicker} value={color || '#888888'} onChange={e => setColor(e.target.value)} />
+                  <span style={S.colorCode}>{color || '未設定'}</span>
+                  {color && <button style={{ ...S.btnSm, fontSize: 11, padding: '4px 10px' }} onClick={() => setColor('')}>清除</button>}
+                </div>
+              </div>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {charFactions.length === 0 && !addingFaction && <span style={S.muted}>無</span>}
-              {charFactions.map(f => (
-                <span key={f.id} style={S.factionChip}>
-                  {f.name}
-                  <span style={S.chipX} onClick={() => leaveFaction(f.id)}>×</span>
-                </span>
-              ))}
+
+            <div style={S.row}>
+              <div style={S.fieldGroup}>
+                <label style={S.label}>年齡</label>
+                <input type="number" style={S.input} value={age} onChange={e => setAge(e.target.value)} placeholder="例如：18" min="0" max="9999" />
+              </div>
+              <div style={S.fieldGroup}>
+                <label style={S.label}>身高 (cm)</label>
+                <input type="number" style={S.input} value={height} onChange={e => setHeight(e.target.value)} placeholder="例如：162" min="50" max="250" />
+              </div>
+              <div style={{ ...S.fieldGroup, flex: 2 }}>
+                <label style={S.label}>生日</label>
+                <input style={S.input} value={birthday} onChange={e => setBirthday(e.target.value)} placeholder="例如：5月16日 或 1998-05-16" />
+              </div>
             </div>
-            {addingFaction && availableFactions.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                {availableFactions.map(f => (
-                  <button key={f.id} style={S.btnSm} onClick={() => joinFaction(f.id)}>{f.name}</button>
+
+            <div>
+              <label style={S.label}>
+                性別
+                {gender && (
+                  <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: 11, color: 'var(--accent)' }}>
+                    → {appearanceTagPreview(gender, appearanceAge, appearanceCards)}
+                  </span>
+                )}
+              </label>
+              <GenderPicker value={gender} onChange={setGender} />
+            </div>
+
+            <div>
+              <label style={S.label}><span title="會影響生圖" style={S.genMark} />外觀年齡</label>
+              <AppearanceCardPicker value={appearanceAge} onChange={setAppearanceAge} cards={appearanceCards} gender={gender} />
+            </div>
+
+            <div>
+              <label style={S.label}><span title="會影響生圖" style={S.genMark} />身材</label>
+              <BodyCardPicker value={bodyCards} onChange={setBodyCards} groups={bodyGroups} gender={gender} appearanceAge={appearanceAge} />
+            </div>
+          </Panel>
+
+          <Panel index="02" title="畫風與 LoRA" icon="palette">
+            {styleLoraFields}
+          </Panel>
+
+          <Panel index="03" title="角色設定" icon="scroll-text">
+            {/* 所屬勢力 */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <label style={S.label}>所屬勢力</label>
+                {availableFactions.length > 0 && (
+                  <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 10px' }} onClick={() => setAddingFaction(s => !s)}>
+                    {addingFaction ? '取消' : '+ 加入勢力'}
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {charFactions.length === 0 && !addingFaction && <span style={S.muted}>無</span>}
+                {charFactions.map(f => (
+                  <span key={f.id} style={S.factionChip}>
+                    {f.name}
+                    <span style={S.chipX} onClick={() => leaveFaction(f.id)}>×</span>
+                  </span>
                 ))}
               </div>
-            )}
-          </div>
-
-          <div>
-            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>外貌 / 個性特徵</label>
-            <textarea style={{ ...S.textarea, minHeight: 70 }} value={traits} onChange={e => setTraits(e.target.value)} placeholder="髮色、體型、個性..." />
-          </div>
-          <div>
-            <label style={S.label}>行為模式</label>
-            <textarea style={{ ...S.textarea, minHeight: 70 }} value={behavior} onChange={e => setBehavior(e.target.value)} placeholder="面對危機的反應、習慣..." />
-          </div>
-          <div>
-            <label style={S.label}>說話風格</label>
-            <textarea style={{ ...S.textarea, minHeight: 50 }} value={voice} onChange={e => setVoice(e.target.value)} placeholder="語氣、口頭禪..." />
-          </div>
-          <div>
-            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={visionEnabled}
-                onChange={e => { setVisionEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'visionEnabled', e.target.checked) }}
-                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
-              />
-              <span style={{ color: 'var(--accent)' }}>✦ </span>草圖視覺特徵
-            </label>
-            <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>開啟時用視覺模型從概念圖抽取特徵加入提示詞；關閉則僅靠欄位設定，交由 CN／畫風主導（CN 結構偵測不受影響）</p>
-          </div>
-          <div>
-            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={outfitEnabled}
-                onChange={e => { setOutfitEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'outfitEnabled', e.target.checked) }}
-                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
-              />
-              <span style={{ color: 'var(--accent)' }}>✦ </span>服裝設定
-            </label>
-            {outfitEnabled && (
-              <>
-                <textarea
-                  style={{ ...S.textarea, minHeight: 60 }}
-                  value={outfit}
-                  onChange={e => setOutfit(e.target.value)}
-                  placeholder="例如：白色禮服、黑色窄裙、學生制服、和服..."
-                />
-                <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>服裝描述會加入生成提示詞，影響圖片中的穿著</p>
-              </>
-            )}
-          </div>
-
-          <div>
-            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={aiPromptEnabled}
-                onChange={e => { setAiPromptEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'aiPromptEnabled', e.target.checked) }}
-                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
-              />
-              <span style={{ color: 'var(--accent)' }}>✦ </span>AI 提示詞
-            </label>
-            {aiPromptEnabled && (
-              <>
-                <textarea
-                  style={{ ...S.textarea, minHeight: 60, fontFamily: 'monospace', fontSize: 13 }}
-                  value={aiPrompt}
-                  onChange={e => setAiPrompt(e.target.value)}
-                  placeholder="中英文皆可，例如：flat color, clean lineart 或 戲劇性光影、強烈對比"
-                />
-                <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>中英文皆接受，獨立編譯後置於 prompt 最前端，強制力優先於角色描述</p>
-              </>
-            )}
-          </div>
-
-          {customTagsField}
-
-          <div>
-            <label style={S.label}>創作筆記</label>
-            <textarea style={{ ...S.textarea, minHeight: 120 }} value={notes} onChange={e => setNotes(e.target.value)} placeholder="隨時新增想法..." />
-            <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>供「AI 重新整理」及問答使用，不影響圖片生成</p>
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <span style={{ ...S.label, marginBottom: 0, fontFamily: 'monospace', letterSpacing: 1 }}>DEBUG PROMPT</span>
-              <button
-                style={{ ...S.btnSm, fontSize: 11, padding: '3px 10px' }}
-                onClick={() => setShowDebugPrompt(s => !s)}
-              >
-                {showDebugPrompt ? '隱藏' : '顯示'}
-              </button>
+              {addingFaction && availableFactions.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {availableFactions.map(f => (
+                    <button key={f.id} style={S.btnSm} onClick={() => joinFaction(f.id)}>{f.name}</button>
+                  ))}
+                </div>
+              )}
             </div>
-            {showDebugPrompt && (
-              lastDebugPrompt
-                ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ fontSize: 10, color: 'var(--tint-blue-fg)', letterSpacing: 1, fontFamily: 'monospace' }}>中文描述（AI 翻譯前）</div>
-                      {lastFlatDraft != null && (
-                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)',
-                          color: lastFlatDraft ? 'var(--tint-amber-fg)' : 'var(--tint-green-fg)',
-                          border: `1px solid ${lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)'}` }}>
-                          {lastFlatDraft ? '單色稿 → 文字優先' : '正式上色 → 視覺優先'}
-                        </div>
+
+            <div>
+              <label style={S.label}><span title="會影響生圖" style={S.genMark} />外貌 / 個性特徵</label>
+              <textarea style={{ ...S.textarea, minHeight: 70 }} value={traits} onChange={e => setTraits(e.target.value)} placeholder="髮色、體型、個性..." />
+            </div>
+            <div>
+              <label style={S.label}>行為模式</label>
+              <textarea style={{ ...S.textarea, minHeight: 70 }} value={behavior} onChange={e => setBehavior(e.target.value)} placeholder="面對危機的反應、習慣..." />
+            </div>
+            <div>
+              <label style={S.label}>說話風格</label>
+              <textarea style={{ ...S.textarea, minHeight: 50 }} value={voice} onChange={e => setVoice(e.target.value)} placeholder="語氣、口頭禪..." />
+            </div>
+          </Panel>
+
+          <Panel index="04" title="生圖附加" icon="sparkles">
+            <div>
+              <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={visionEnabled}
+                  onChange={e => { setVisionEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'visionEnabled', e.target.checked) }}
+                  style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+                />
+                <span title="會影響生圖" style={S.genMark} />草圖視覺特徵
+              </label>
+              <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>開啟時用視覺模型從概念圖抽取特徵加入提示詞；關閉則僅靠欄位設定，交由 CN／畫風主導（CN 結構偵測不受影響）</p>
+            </div>
+            <div>
+              <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={outfitEnabled}
+                  onChange={e => { setOutfitEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'outfitEnabled', e.target.checked) }}
+                  style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+                />
+                <span title="會影響生圖" style={S.genMark} />服裝設定
+              </label>
+              {outfitEnabled && (
+                <>
+                  <textarea
+                    style={{ ...S.textarea, minHeight: 60 }}
+                    value={outfit}
+                    onChange={e => setOutfit(e.target.value)}
+                    placeholder="例如：白色禮服、黑色窄裙、學生制服、和服..."
+                  />
+                  <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>服裝描述會加入生成提示詞，影響圖片中的穿著</p>
+                </>
+              )}
+            </div>
+
+            <div>
+              <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={aiPromptEnabled}
+                  onChange={e => { setAiPromptEnabled(e.target.checked); _saveGenPref(initChar.id, null, 'aiPromptEnabled', e.target.checked) }}
+                  style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+                />
+                <span title="會影響生圖" style={S.genMark} />AI 提示詞
+              </label>
+              {aiPromptEnabled && (
+                <>
+                  <textarea
+                    style={{ ...S.textarea, minHeight: 60, fontFamily: 'monospace', fontSize: 13 }}
+                    value={aiPrompt}
+                    onChange={e => setAiPrompt(e.target.value)}
+                    placeholder="中英文皆可，例如：flat color, clean lineart 或 戲劇性光影、強烈對比"
+                  />
+                  <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>中英文皆接受，獨立編譯後置於 prompt 最前端，強制力優先於角色描述</p>
+                </>
+              )}
+            </div>
+
+            {customTagsField}
+          </Panel>
+
+          <Panel index="05" title="創作筆記" icon="file-text">
+            <div>
+              <label style={S.label}>創作筆記</label>
+              <textarea style={{ ...S.textarea, minHeight: 120 }} value={notes} onChange={e => setNotes(e.target.value)} placeholder="隨時新增想法..." />
+              <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>供「AI 重新整理」及問答使用，不影響圖片生成</p>
+            </div>
+          </Panel>
+
+          <Panel index="06" title="Debug Prompt" icon="bug">
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ ...S.label, marginBottom: 0, fontFamily: 'monospace', letterSpacing: 1 }}>DEBUG PROMPT</span>
+                <button
+                  style={{ ...S.btnSm, fontSize: 11, padding: '3px 10px' }}
+                  onClick={() => setShowDebugPrompt(s => !s)}
+                >
+                  {showDebugPrompt ? '隱藏' : '顯示'}
+                </button>
+              </div>
+              {showDebugPrompt && (
+                lastDebugPrompt
+                  ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontSize: 10, color: 'var(--tint-blue-fg)', letterSpacing: 1, fontFamily: 'monospace' }}>中文描述（AI 翻譯前）</div>
+                        {lastFlatDraft != null && (
+                          <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                            background: lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)',
+                            color: lastFlatDraft ? 'var(--tint-amber-fg)' : 'var(--tint-green-fg)',
+                            border: `1px solid ${lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)'}` }}>
+                            {lastFlatDraft ? '單色稿 → 文字優先' : '正式上色 → 視覺優先'}
+                          </div>
+                        )}
+                        {lastIpaUsed != null && (
+                          <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                            background: lastIpaUsed ? 'var(--tint-blue-bg)' : 'var(--surface-2)',
+                            color: lastIpaUsed ? 'var(--tint-blue-fg)' : 'var(--muted)',
+                            border: `1px solid ${lastIpaUsed ? 'var(--tint-blue-border)' : 'var(--border-strong)'}` }}>
+                            {lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
+                          </div>
+                        )}
+                        {lastPromptProfile && (
+                          <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                            background: lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--surface-2)',
+                            color: lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-fg)' : 'var(--muted)',
+                            border: `1px solid ${lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--border-strong)'}` }}>
+                            {lastPromptProfile}
+                          </div>
+                        )}
+                        {lastCoverage && (
+                          <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                            background: lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--surface-2)',
+                            color: lastCoverage.includes('→') ? 'var(--tint-amber-fg)' : 'var(--muted)',
+                            border: `1px solid ${lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--border-strong)'}` }}>
+                            {lastCoverage}
+                          </div>
+                        )}
+                        {lastSeed != null && (
+                          <div title="點擊複製 seed" onClick={() => navigator.clipboard?.writeText(lastSeed)}
+                            style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace', cursor: 'pointer',
+                            background: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border-strong)' }}>
+                            seed: {lastSeed} 📋
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                        {lastRawDesc ?? '—'}
+                      </div>
+                      {lastLlmInput && (
+                        <>
+                          <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>送進 LLM 的文字（個人詞庫替換後）</div>
+                          <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface-2)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--border-strong)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                            {lastLlmInput}
+                          </div>
+                        </>
                       )}
-                      {lastIpaUsed != null && (
-                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: lastIpaUsed ? 'var(--tint-blue-bg)' : 'var(--surface-2)',
-                          color: lastIpaUsed ? 'var(--tint-blue-fg)' : 'var(--muted)',
-                          border: `1px solid ${lastIpaUsed ? 'var(--tint-blue-border)' : 'var(--border-strong)'}` }}>
-                          {lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
-                        </div>
+                      {lastAiPromptCompiled !== null && (
+                        <>
+                          <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
+                            color: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)' }}>
+                            AI 提示詞編譯結果{lastAiPromptCompiled === '[compilation_failed]' ? ' ⚠ 失敗' : '（置於 prompt 首位）'}
+                          </div>
+                          <div style={{ fontSize: 11, padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, fontFamily: 'monospace',
+                            color: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)',
+                            background: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)',
+                            border: `1px solid ${lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)'}` }}>
+                            {lastAiPromptCompiled === '[compilation_failed]' ? 'AI 提示詞未套用（Ollama 翻譯錯誤）' : lastAiPromptCompiled}
+                          </div>
+                        </>
                       )}
-                      {lastPromptProfile && (
-                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--surface-2)',
-                          color: lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-fg)' : 'var(--muted)',
-                          border: `1px solid ${lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--border-strong)'}` }}>
-                          {lastPromptProfile}
-                        </div>
-                      )}
-                      {lastCoverage && (
-                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--surface-2)',
-                          color: lastCoverage.includes('→') ? 'var(--tint-amber-fg)' : 'var(--muted)',
-                          border: `1px solid ${lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--border-strong)'}` }}>
-                          {lastCoverage}
-                        </div>
-                      )}
-                      {lastSeed != null && (
-                        <div title="點擊複製 seed" onClick={() => navigator.clipboard?.writeText(lastSeed)}
-                          style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace', cursor: 'pointer',
-                          background: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border-strong)' }}>
-                          seed: {lastSeed} 📋
-                        </div>
-                      )}
+                      <div style={{ fontSize: 10, color: 'var(--tint-purple-fg)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
+                      <div style={{ fontSize: 11, color: 'var(--tint-purple-fg)', background: 'var(--tint-purple-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-purple-bg)', fontFamily: 'monospace' }}>
+                        {lastDebugPrompt}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                      {lastRawDesc ?? '—'}
-                    </div>
-                    {lastLlmInput && (
-                      <>
-                        <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>送進 LLM 的文字（個人詞庫替換後）</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface-2)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--border-strong)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                          {lastLlmInput}
-                        </div>
-                      </>
-                    )}
-                    {lastAiPromptCompiled !== null && (
-                      <>
-                        <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
-                          color: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)' }}>
-                          AI 提示詞編譯結果{lastAiPromptCompiled === '[compilation_failed]' ? ' ⚠ 失敗' : '（置於 prompt 首位）'}
-                        </div>
-                        <div style={{ fontSize: 11, padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, fontFamily: 'monospace',
-                          color: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)',
-                          background: lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)',
-                          border: `1px solid ${lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)'}` }}>
-                          {lastAiPromptCompiled === '[compilation_failed]' ? 'AI 提示詞未套用（Ollama 翻譯錯誤）' : lastAiPromptCompiled}
-                        </div>
-                      </>
-                    )}
-                    <div style={{ fontSize: 10, color: 'var(--tint-purple-fg)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
-                    <div style={{ fontSize: 11, color: 'var(--tint-purple-fg)', background: 'var(--tint-purple-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-purple-bg)', fontFamily: 'monospace' }}>
-                      {lastDebugPrompt}
-                    </div>
-                  </div>
-                : <p style={{ ...S.muted, fontSize: 11 }}>尚未生成人設圖，無 prompt 記錄</p>
-            )}
-          </div>
+                  : <p style={{ ...S.muted, fontSize: 11 }}>尚未生成人設圖，無 prompt 記錄</p>
+              )}
+            </div>
+          </Panel>
+
         </div>
+
+        {/* ── AI 整理資訊（最右欄，可隱藏） ── */}
+        {!summaryHidden && (
+          <div style={S.detailSummary}>
+            <SummaryCard onHide={toggleSummary} text={char.ai_summary} busy={summarizing} onRefresh={runSummarize} placeholder="點擊「重新整理」讓 AI 根據角色資料生成設定檔" />
+          </div>
+        )}
       </div>
       ) : (
       /* ── Variant detail (Tab 2 / Tab 3) ── */
-      <div style={S.detail}>
-        {/* Left col: variant images */}
-        <div style={S.detailLeft}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <span style={S.sectionLabel}>AI 整理資訊</span>
-              <button style={S.btnSm} onClick={runVariantSummarize} disabled={vState.summarizing}>
-                {vState.summarizing ? <><Spinner />整理中...</> : 'AI 重新整理'}
-              </button>
-            </div>
-            {vState.aiSummary
-              ? <div style={S.summaryCard}>{vState.aiSummary}</div>
-              : <div style={S.summaryPlaceholder}>點擊「AI 重新整理」生成此版本設定檔</div>
-            }
-          </div>
-
+      <div style={S.detail} className={`cf-detail${summaryHidden ? ' cf-detail--nosum' : ''}`}>
+        {/* ── 左欄：頁首＋概念圖＋生成面板＋變體人設圖 ── */}
+        <div style={S.detailStage}>
+          {pageHead}
           {/* Variant concept images */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <span style={S.sectionLabel}>概念圖（{vState.conceptImages.length}/3）</span>
+            <div style={S.sectionHead}>
+              <span style={{ ...S.sectionLabel, marginBottom: 0 }}>概念圖參考 <span className="cf-num" style={{ color: 'var(--muted)', fontWeight: 400 }}>{vState.conceptImages.length}/3</span></span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
-              {vState.conceptImages.map((img, idx) => (
-                <div key={idx} style={{ position: 'relative', aspectRatio: '1/1', borderRadius: 8, overflow: 'hidden', background: 'var(--border)' }}>
-                  <img
-                    src={apiUrl(`/characters/${char.id}/variants/${activeTab}/concept-images/${idx}?t=${img}`)}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
-                    alt={`概念圖${idx + 1}`}
-                    onClick={() => setLightboxSrc(apiUrl(`/characters/${char.id}/variants/${activeTab}/concept-images/${idx}?t=${img}`))}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {vState.conceptImages.map((img, idx) => {
+                const src = apiUrl(`/characters/${char.id}/variants/${activeTab}/concept-images/${idx}?t=${img}`)
+                const excluded = vState.conceptExcluded || []
+                return (
+                  <ConceptTile key={img} src={src} idx={idx}
+                    isMain={idx === 0} enabled={idx === 0 || !excluded.includes(img)}
+                    confirming={vState.deletingConceptIdx === idx}
+                    onZoom={() => setLightboxSrc(src)}
+                    onAskDelete={() => setV(activeTab, { deletingConceptIdx: idx })}
+                    onConfirmDelete={() => deleteVariantConceptImage(activeTab, idx)}
+                    onCancelDelete={() => setV(activeTab, { deletingConceptIdx: null })}
+                    onSetMain={() => patchVariantConceptImage(activeTab, idx, { main: true })}
+                    onToggle={() => patchVariantConceptImage(activeTab, idx, { enabled: excluded.includes(img) })}
                   />
-                  {vState.deletingConceptIdx === idx
-                    ? <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, color: 'var(--danger)' }}>確認刪除？</span>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <button onClick={() => deleteVariantConceptImage(activeTab, idx)} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: 'var(--tint-red-bg)', color: 'var(--danger)', cursor: 'pointer' }}>刪除</button>
-                          <button onClick={() => setV(activeTab, { deletingConceptIdx: null })} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', cursor: 'pointer' }}>取消</button>
-                        </div>
-                      </div>
-                    : <button onClick={() => setV(activeTab, { deletingConceptIdx: idx })}
-                        style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: 'var(--accent-contrast)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}
-                      >×</button>
-                  }
-                </div>
-              ))}
+                )
+              })}
               {vState.conceptImages.length < 3 && (
-                <label
+                <ConceptSlot
+                  as="label" add
                   htmlFor={`vconc-slot-${activeTab}`}
-                  style={{ aspectRatio: '1/1', borderRadius: 8, border: '2px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--muted)', fontSize: 24, transition: 'border-color .2s' }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
                   onClick={() => console.log('[vConc] label clicked, activeTab:', activeTab, 'htmlFor:', `vconc-slot-${activeTab}`)}
                 >
-                  {vState.uploadingConcept ? <Spinner /> : '+'}
-                </label>
+                  {vState.uploadingConcept ? <Spinner /> : <Icon name="image-plus" size={18} />}
+                </ConceptSlot>
               )}
             </div>
             {[1, 2].map(slot => (
@@ -1373,370 +1277,283 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
             ))}
           </div>
 
-          {/* Variant AI images */}
+          <GenInspector
+            count={vState.aiImages.length} family={capability.family}
+            caps={{ ipaSupported, ipaHint, cnUsable, cnLabel, cnHint, faceDetailerSupported }}
+            ipa={{ enabled: vState.ipaEnabled, onEnabled: v => { setV(activeTab, { ipaEnabled: v }); _saveGenPref(initChar.id, activeTab, 'ipaEnabled', v) }, value: vState.ipaWeight ?? 0.6, onValue: v => { setV(activeTab, { ipaWeight: v }); _saveGenPref(initChar.id, activeTab, 'ipaWeight', v) } }}
+            cn={{ enabled: vState.cnEnabled ?? true, onEnabled: v => { setV(activeTab, { cnEnabled: v }); _saveGenPref(initChar.id, activeTab, 'cnEnabled', v) }, value: vState.cnWeight ?? 0.85, onValue: v => { setV(activeTab, { cnWeight: v }); _saveGenPref(initChar.id, activeTab, 'cnWeight', v) } }}
+            fd={{ enabled: vState.faceDetailerEnabled ?? true, onEnabled: v => { setV(activeTab, { faceDetailerEnabled: v }); _saveGenPref(initChar.id, activeTab, 'faceDetailerEnabled', v) }, value: vState.faceDetailerDenoise ?? 0.5, onValue: v => { setV(activeTab, { faceDetailerDenoise: v }); _saveGenPref(initChar.id, activeTab, 'faceDetailerDenoise', v) } }}
+            seed={vState.seed ?? -1} onSeed={v => setV(activeTab, { seed: v })} lastSeed={vState.lastSeed} onUseLastSeed={() => setV(activeTab, { seed: Number(vState.lastSeed) })}
+            reusePrompt={!!vState.reusePrompt} onReusePrompt={v => setV(activeTab, { reusePrompt: v })}
+            generating={vState.generating} onGenerate={generateVariantDesignImage} timings={vState.lastTimings}
+          />
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span style={{ ...S.sectionLabel, marginBottom: 0, whiteSpace: 'nowrap' }}>AI 人設圖（{vState.aiImages.length}/8）</span>
-              <button style={{ ...S.btnSm, whiteSpace: 'nowrap' }} disabled={vState.generating} onClick={generateVariantDesignImage}>
-                {vState.generating ? <><Spinner />生成中...</> : '生成人設圖'}
-              </button>
-            </div>
-            {/* 生成選項獨立一列，可換行，避免與標題／按鈕擠在同一列 */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4, marginBottom: 8 }}>
-              {ipaSupported ? (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: vState.ipaEnabled ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                  <input type="checkbox" checked={vState.ipaEnabled} onChange={e => { setV(activeTab, { ipaEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'ipaEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                  概念圖參考
-                </label>
-              ) : capChip('概念圖參考（不支援）', ipaHint)}
-              {cnUsable && (
-                <label title={cnHint} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: (vState.cnEnabled ?? true) ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                  <input type="checkbox" checked={vState.cnEnabled ?? true} onChange={e => { setV(activeTab, { cnEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'cnEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                  {cnLabel}
-                </label>
-              )}
-              {faceDetailerSupported && (
-              <label title="生成後以 FaceDetailer 重繪臉部" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, whiteSpace: 'nowrap', color: (vState.faceDetailerEnabled ?? true) ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                  <input type="checkbox" checked={(vState.faceDetailerEnabled ?? true)} onChange={e => { setV(activeTab, { faceDetailerEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'faceDetailerEnabled', e.target.checked) }}
-                    style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                  增強臉部輪廓
-                </label>
-              )}
-            </div>
-            {ipaSupported && vState.ipaEnabled && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>IPA 強度</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
-                <input type="range" min={0.1} max={1.5} step={0.05} value={vState.ipaWeight ?? 0.6}
-                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
-                  onChange={e => { const v = Number(e.target.value); setV(activeTab, { ipaWeight: v }); _saveGenPref(initChar.id, activeTab, 'ipaWeight', v) }} />
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.ipaWeight ?? 0.6).toFixed(2)}</span>
-              </div>
-            )}
-            {cnUsable && (vState.cnEnabled ?? true) && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>CN 強度</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
-                <input type="range" min={0.1} max={1.5} step={0.05} value={vState.cnWeight ?? 0.85}
-                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
-                  onChange={e => { const v = Number(e.target.value); setV(activeTab, { cnWeight: v }); _saveGenPref(initChar.id, activeTab, 'cnWeight', v) }} />
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.cnWeight ?? 0.85).toFixed(2)}</span>
-              </div>
-            )}
-            {faceDetailerSupported && (vState.faceDetailerEnabled ?? true) && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}
-                title="修臉重繪幅度（denoise）：低＝保留原臉只補細節；高＝重畫臉型五官，過高會與身體畫風脫節">
-                <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>臉部強度</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.2</span>
-                <input type="range" min={0.2} max={0.7} step={0.05} value={(vState.faceDetailerDenoise ?? 0.5)}
-                  style={{ flex: 1, accentColor: 'var(--tint-blue-fg)' }}
-                  onChange={e => { const v = Number(e.target.value); setV(activeTab, { faceDetailerDenoise: v }); _saveGenPref(initChar.id, activeTab, 'faceDetailerDenoise', v) }} />
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.7</span>
-                <span style={{ fontSize: 12, color: 'var(--tint-blue-fg)', minWidth: 30, textAlign: 'right' }}>{(vState.faceDetailerDenoise ?? 0.5).toFixed(2)}</span>
-              </div>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Seed</span>
-              <input type="number" value={vState.seed ?? -1}
-                title="-1 = 每次隨機（預設）；填入非負整數則固定 seed，供比較調整效果"
-                style={{ width: 120, fontSize: 12, padding: '2px 6px', background: 'var(--surface-2)',
-                         border: '1px solid var(--border-strong)', borderRadius: 4, color: 'var(--fg)' }}
-                onChange={e => setV(activeTab, { seed: e.target.value === '' ? -1 : Number(e.target.value) })} />
-              {vState.lastSeed != null && (
-                <button style={{ ...S.btnSm, fontSize: 11, padding: '2px 8px' }}
-                  title="把上次實際使用的 seed 填入輸入框，供下次生成沿用"
-                  onClick={() => setV(activeTab, { seed: Number(vState.lastSeed) })}>
-                  沿用上次 seed（{vState.lastSeed}）
-                </button>
-              )}
-              <label title="連同 seed 一起沿用上次生成的 prompt，不重新編譯（只固定 seed 不夠，LLM 每次翻譯結果仍可能不同）"
-                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: vState.reusePrompt ? 'var(--tint-blue-fg)' : 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
-                <input type="checkbox" checked={!!vState.reusePrompt} onChange={e => setV(activeTab, { reusePrompt: e.target.checked })}
-                  style={{ cursor: 'pointer', accentColor: 'var(--tint-blue-fg)' }} />
-                沿用 prompt
-              </label>
+            <div style={S.sectionHead}>
+              <span style={{ ...S.sectionLabel, marginBottom: 0 }}>AI 人設圖 <span className="cf-num" style={{ color: 'var(--muted)', fontWeight: 400 }}>{vState.aiImages.length}/8</span></span>
             </div>
             {vState.pendingQueue.length > 0 && (
-              <div style={{ marginBottom: 10, border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{vState.pendingQueue[0].label}</span>
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>待確認 {vState.pendingQueue.length} 張</span>
-                </div>
-                <img src={vState.pendingQueue[0].url} style={{ ...S.genImg, marginTop: 0, cursor: 'zoom-in' }} alt="pending"
-                  onClick={() => setLightboxSrc(vState.pendingQueue[0].url)} />
-                <div style={{ ...S.btnRow, marginTop: 6 }}>
-                  <button style={{ ...S.btn, flex: 1, padding: '7px 0', fontSize: 13 }}
-                    disabled={vState.savingGen || vState.aiImages.length >= 8} onClick={saveVariantPendingFirst}>
-                    {vState.savingGen ? <><Spinner />儲存中...</> : vState.aiImages.length >= 8 ? '已達上限' : '儲存此圖'}
-                  </button>
-                  <button style={S.btnSm} disabled={vState.savingGen} onClick={() => { URL.revokeObjectURL(vState.pendingQueue[0].url); setV(activeTab, { pendingQueue: vState.pendingQueue.slice(1) }) }}>捨棄</button>
-                </div>
-                {vState.lastTimings && (
-                  <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--surface-2)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5, fontWeight: 600 }}>⏱ 生成耗時</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {[
-                        vState.lastTimings.vision_extract    != null && ['視覺分析',   vState.lastTimings.models?.vision,   vState.lastTimings.vision_extract],
-                        vState.lastTimings.body_coverage     != null && ['姿態偵測',   vState.lastTimings.models?.vision,   vState.lastTimings.body_coverage],
-                        vState.lastTimings.compile_prompt    != null && ['提示詞編譯', vState.lastTimings.models?.text,     vState.lastTimings.compile_prompt],
-                        vState.lastTimings.compile_ai_prompt != null && ['AI提示詞',  vState.lastTimings.models?.text,     vState.lastTimings.compile_ai_prompt],
-                        vState.lastTimings.pass1             != null && ['Pass 1 粗稿', vState.lastTimings.models?.workflow, vState.lastTimings.pass1],
-                        vState.lastTimings.upload            != null && ['圖片上傳',  null,                                 vState.lastTimings.upload],
-                        vState.lastTimings.comfyui           != null && ['ComfyUI 生成', vState.lastTimings.models?.workflow, vState.lastTimings.comfyui],
-                      ].filter(Boolean).map(([label, model, sec]) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                          <span style={{ color: 'var(--muted)' }}>
-                            {label}
-                            {model && <span style={{ color: 'var(--muted)', marginLeft: 4, fontSize: 10 }}>({model})</span>}
-                          </span>
-                          <span style={{ fontFamily: 'monospace' }}>{sec}s</span>
-                        </div>
-                      ))}
-                      {(() => {
-                        const keys = ['vision_extract','body_coverage','compile_prompt','compile_ai_prompt','canvas_expand','upload','comfyui']
-                        const sum = keys.reduce((a, k) => a + (vState.lastTimings[k] ?? 0), 0)
-                        const other = Math.round((vState.lastTimings.total - sum) * 10) / 10
-                        return other > 0.5 ? (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                            <span style={{ color: 'var(--muted)' }}>其他</span>
-                            <span style={{ fontFamily: 'monospace' }}>{other}s</span>
-                          </div>
-                        ) : null
-                      })()}
-                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 3, paddingTop: 3, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                        <span style={{ color: 'var(--accent)', fontWeight: 600 }}>總計</span>
-                        <span style={{ color: 'var(--accent)', fontFamily: 'monospace', fontWeight: 600 }}>{vState.lastTimings.total}s</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
+              <div style={{ marginBottom: 12 }}>
+                <PendingCard
+                  item={vState.pendingQueue[0]} total={vState.pendingQueue.length}
+                  onZoom={() => setLightboxSrc(vState.pendingQueue[0].url)}
+                  saveLabel={vState.aiImages.length >= 8 ? '已達上限' : '儲存此圖'}
+                  saveDisabled={vState.savingGen || vState.aiImages.length >= 8} saving={vState.savingGen}
+                  onSave={saveVariantPendingFirst}
+                  onDiscard={() => { URL.revokeObjectURL(vState.pendingQueue[0].url); setV(activeTab, { pendingQueue: vState.pendingQueue.slice(1) }) }}
+                  discardDisabled={vState.savingGen}
+                />
               </div>
             )}
-            {vState.aiImages.length > 0 && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+            {vState.aiImages.length > 0 ? (
+              <div className="cf-gallery" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                 {vState.aiImages.map((img, idx) => (
-                  <div key={idx} style={{ borderRadius: 8, overflow: 'hidden' }}>
-                    <img src={apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}?t=${img}`)}
-                      style={{ width: '100%', display: 'block', borderRadius: 8, cursor: 'zoom-in' }} alt={`AI圖${idx + 1}`}
-                      onClick={() => setLightboxSrc(apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}?t=${img}`))} />
-                    <div style={{ display: 'flex', gap: 4, marginTop: 4, justifyContent: 'center' }}>
-                      <a href={apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}`)}
-                        download={`${char.name}_v${activeTab}_ai_${idx + 1}.png`}
-                        style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px', textDecoration: 'none', textAlign: 'center' }}>下載</a>
-                      {vState.deletingAiIdx === idx
-                        ? <>
-                            <button style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: 'none', background: 'var(--tint-red-bg)', color: 'var(--danger)', cursor: 'pointer' }} onClick={() => deleteVariantAiImage(activeTab, idx)}>確認</button>
-                            <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 8px' }} onClick={() => setV(activeTab, { deletingAiIdx: null })}>取消</button>
-                          </>
-                        : <button style={{ ...S.btnDanger, fontSize: 11, padding: '3px 8px' }} onClick={() => setV(activeTab, { deletingAiIdx: idx })}>移除</button>
-                      }
-                    </div>
-                    <GenerationInfo fetchPath={`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}/generation-info`} />
-                  </div>
+                  <ImageTile
+                    key={idx} index={idx}
+                    src={apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}?t=${img}`)} alt={`AI圖${idx + 1}`}
+                    onZoom={() => setLightboxSrc(apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}?t=${img}`))}
+                    downloadHref={apiUrl(`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}`)} downloadName={`${char.name}_v${activeTab}_ai_${idx + 1}.png`}
+                    confirming={vState.deletingAiIdx === idx}
+                    onAskDelete={() => setV(activeTab, { deletingAiIdx: idx })} onConfirmDelete={() => deleteVariantAiImage(activeTab, idx)} onCancelDelete={() => setV(activeTab, { deletingAiIdx: null })}
+                    infoPath={`/characters/${char.id}/variants/${activeTab}/ai-images/${idx}/generation-info`}
+                  />
                 ))}
               </div>
+            ) : vState.pendingQueue.length === 0 && (
+              <div style={{ ...S.summaryPlaceholder, aspectRatio: '2 / 3', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <Icon name="image" size={22} style={{ color: 'var(--faint)' }} />
+                尚無此版本的人設圖<br />調整右側參數後按「生成人設圖」
+              </div>
             )}
           </div>
+
         </div>
 
-        {/* Right col: variant fields (name locked) */}
+        {/* ── 資料（名稱鎖定） ── */}
         <div style={S.detailRight}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={S.sectionLabel}>角色資料（可編輯）</span>
-            <button style={S.btnSm} disabled={vState.savingFields} onClick={saveVariantFields}>
-              {vState.savingFields ? <><Spinner />儲存中...</> : '儲存所有變更'}
-            </button>
+          <div style={{ ...S.sectionHead, marginBottom: 0, position: 'sticky', top: 0, zIndex: 3, padding: '8px 0', background: 'var(--bg)' }}>
+            <span style={{ ...S.sectionLabel, marginBottom: 0 }}>角色資料</span>
+            <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {summaryHidden && (
+                <button style={UI.btnGhost} onClick={toggleSummary} title="顯示 AI 整理資訊">
+                  <Icon name="sparkles" size={13} style={{ color: 'var(--accent)' }} />AI 整理資訊
+                </button>
+              )}
+              <button style={{ ...UI.btnSecondary, padding: '6px 12px' }} disabled={vState.savingFields} onClick={saveVariantFields} title="Ctrl + S">
+                {vState.savingFields ? <><Spinner />儲存中…</> : <><Icon name="save" size={14} />儲存所有變更</>}
+              </button>
+            </span>
           </div>
-          <div style={S.row}>
-            <div style={{ ...S.fieldGroup, flex: 2 }}>
-              <label style={S.label}>角色名稱（鎖定）</label>
-              <input style={{ ...S.input, opacity: 0.5, cursor: 'not-allowed' }} value={char.name} readOnly />
-            </div>
-            <div style={S.fieldGroup}>
-              <label style={S.label}>代表色</label>
-              <div style={S.colorRow}>
-                <input type="color" style={S.colorPicker} value={vState.color || '#888888'} onChange={e => setV(activeTab, { color: e.target.value })} />
-                <span style={S.colorCode}>{vState.color || '未設定'}</span>
-                {vState.color && <button style={{ ...S.btnSm, fontSize: 11, padding: '4px 10px' }} onClick={() => setV(activeTab, { color: '' })}>清除</button>}
+          <Panel index="01" title="基本資料" icon="user-round">
+            <div style={S.row}>
+              <div style={{ ...S.fieldGroup, flex: 2 }}>
+                <label style={S.label}>角色名稱（鎖定）</label>
+                <input style={{ ...S.input, opacity: 0.5, cursor: 'not-allowed' }} value={char.name} readOnly />
+              </div>
+              <div style={S.fieldGroup}>
+                <label style={S.label}>代表色</label>
+                <div style={S.colorRow}>
+                  <input type="color" style={S.colorPicker} value={vState.color || '#888888'} onChange={e => setV(activeTab, { color: e.target.value })} />
+                  <span style={S.colorCode}>{vState.color || '未設定'}</span>
+                  {vState.color && <button style={{ ...S.btnSm, fontSize: 11, padding: '4px 10px' }} onClick={() => setV(activeTab, { color: '' })}>清除</button>}
+                </div>
               </div>
             </div>
-          </div>
-          <div style={S.row}>
-            <div style={S.fieldGroup}>
-              <label style={S.label}>年齡</label>
-              <input type="number" style={S.input} value={vState.age} onChange={e => setV(activeTab, { age: e.target.value })} placeholder="例如：18" min="0" max="9999" />
+            <div style={S.row}>
+              <div style={S.fieldGroup}>
+                <label style={S.label}>年齡</label>
+                <input type="number" style={S.input} value={vState.age} onChange={e => setV(activeTab, { age: e.target.value })} placeholder="例如：18" min="0" max="9999" />
+              </div>
+              <div style={S.fieldGroup}>
+                <label style={S.label}>身高 (cm)</label>
+                <input type="number" style={S.input} value={vState.height} onChange={e => setV(activeTab, { height: e.target.value })} placeholder="例如：162" min="50" max="250" />
+              </div>
+              <div style={{ ...S.fieldGroup, flex: 2 }}>
+                <label style={S.label}>生日</label>
+                <input style={S.input} value={vState.birthday} onChange={e => setV(activeTab, { birthday: e.target.value })} placeholder="例如：5月16日" />
+              </div>
             </div>
-            <div style={S.fieldGroup}>
-              <label style={S.label}>身高 (cm)</label>
-              <input type="number" style={S.input} value={vState.height} onChange={e => setV(activeTab, { height: e.target.value })} placeholder="例如：162" min="50" max="250" />
+            <div>
+              <label style={S.label}>性別</label>
+              <GenderPicker value={vState.gender} onChange={v => setV(activeTab, { gender: v })} />
             </div>
-            <div style={{ ...S.fieldGroup, flex: 2 }}>
-              <label style={S.label}>生日</label>
-              <input style={S.input} value={vState.birthday} onChange={e => setV(activeTab, { birthday: e.target.value })} placeholder="例如：5月16日" />
+            <div>
+              <label style={S.label}><span title="會影響生圖" style={S.genMark} />外觀年齡</label>
+              <AppearanceCardPicker value={vState.appearanceAge} onChange={k => setV(activeTab, { appearanceAge: k })}
+                cards={appearanceCards} gender={vState.gender} />
             </div>
-          </div>
-          <div>
-            <label style={S.label}>性別</label>
-            <GenderPicker value={vState.gender} onChange={v => setV(activeTab, { gender: v })} />
-          </div>
-          <div>
-            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>外觀年齡</label>
-            <AppearanceCardPicker value={vState.appearanceAge} onChange={k => setV(activeTab, { appearanceAge: k })}
-              cards={appearanceCards} gender={vState.gender} />
-          </div>
-          <div>
-            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>身材</label>
-            <BodyCardPicker value={vState.bodyCards} onChange={k => setV(activeTab, { bodyCards: k })}
-              groups={bodyGroups} gender={vState.gender} appearanceAge={vState.appearanceAge} />
-          </div>
-          {styleLoraFields}
-          <div>
-            <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>外貌 / 個性特徵</label>
-            <textarea style={{ ...S.textarea, minHeight: 70 }} value={vState.traits} onChange={e => setV(activeTab, { traits: e.target.value })} placeholder="髮色、體型、個性..." />
-          </div>
-          <div>
-            <label style={S.label}>行為模式</label>
-            <textarea style={{ ...S.textarea, minHeight: 70 }} value={vState.behavior} onChange={e => setV(activeTab, { behavior: e.target.value })} placeholder="面對危機的反應、習慣..." />
-          </div>
-          <div>
-            <label style={S.label}>說話風格</label>
-            <textarea style={{ ...S.textarea, minHeight: 50 }} value={vState.voice} onChange={e => setV(activeTab, { voice: e.target.value })} placeholder="語氣、口頭禪..." />
-          </div>
-          <div>
-            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="checkbox" checked={vState.visionEnabled ?? true} onChange={e => { setV(activeTab, { visionEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'visionEnabled', e.target.checked) }}
-                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
-              <span style={{ color: 'var(--accent)' }}>✦ </span>草圖視覺特徵
-            </label>
-            <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>開啟時用視覺模型從概念圖抽取特徵加入提示詞；關閉則僅靠欄位設定，交由 CN／畫風主導</p>
-          </div>
-          <div>
-            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="checkbox" checked={vState.outfitEnabled} onChange={e => { setV(activeTab, { outfitEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'outfitEnabled', e.target.checked) }}
-                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
-              <span style={{ color: 'var(--accent)' }}>✦ </span>服裝設定
-            </label>
-            {vState.outfitEnabled && (
-              <>
-                <textarea style={{ ...S.textarea, minHeight: 60 }}
-                  value={vState.outfit} onChange={e => setV(activeTab, { outfit: e.target.value })}
-                  placeholder="例如：白色禮服、黑色窄裙、學生制服、和服..." />
-                <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>服裝描述會加入生成提示詞，影響圖片中的穿著</p>
-              </>
-            )}
-          </div>
+            <div>
+              <label style={S.label}><span title="會影響生圖" style={S.genMark} />身材</label>
+              <BodyCardPicker value={vState.bodyCards} onChange={k => setV(activeTab, { bodyCards: k })}
+                groups={bodyGroups} gender={vState.gender} appearanceAge={vState.appearanceAge} />
+            </div>
+          </Panel>
 
-          <div>
-            <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-              <input type="checkbox" checked={vState.aiPromptEnabled} onChange={e => { setV(activeTab, { aiPromptEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'aiPromptEnabled', e.target.checked) }}
-                style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
-              <span style={{ color: 'var(--accent)' }}>✦ </span>AI 提示詞
-            </label>
-            {vState.aiPromptEnabled && (
-              <>
-                <textarea style={{ ...S.textarea, minHeight: 60, fontFamily: 'monospace', fontSize: 13 }}
-                  value={vState.aiPrompt} onChange={e => setV(activeTab, { aiPrompt: e.target.value })}
-                  placeholder="中英文皆可，例如：flat color, clean lineart" />
-                <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>中英文皆接受，獨立編譯後置於 prompt 最前端</p>
-              </>
-            )}
-          </div>
+          <Panel index="02" title="畫風與 LoRA" icon="palette">
+            {styleLoraFields}
+          </Panel>
 
-          {customTagsField}
-          <div>
-            <label style={S.label}>創作筆記</label>
-            <textarea style={{ ...S.textarea, minHeight: 120 }} value={vState.notes} onChange={e => setV(activeTab, { notes: e.target.value })} placeholder="隨時新增想法..." />
-          </div>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <span style={{ ...S.label, marginBottom: 0, fontFamily: 'monospace', letterSpacing: 1 }}>DEBUG PROMPT</span>
-              <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 10px' }} onClick={() => setV(activeTab, { showDebugPrompt: !vState.showDebugPrompt })}>
-                {vState.showDebugPrompt ? '隱藏' : '顯示'}
-              </button>
+          <Panel index="03" title="角色設定" icon="scroll-text">
+            <div>
+              <label style={S.label}><span title="會影響生圖" style={S.genMark} />外貌 / 個性特徵</label>
+              <textarea style={{ ...S.textarea, minHeight: 70 }} value={vState.traits} onChange={e => setV(activeTab, { traits: e.target.value })} placeholder="髮色、體型、個性..." />
             </div>
-            {vState.showDebugPrompt && (
-              vState.lastDebugPrompt
-                ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ fontSize: 10, color: 'var(--tint-blue-fg)', letterSpacing: 1, fontFamily: 'monospace' }}>中文描述（AI 翻譯前）</div>
-                      {vState.lastFlatDraft != null && (
-                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: vState.lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)',
-                          color: vState.lastFlatDraft ? 'var(--tint-amber-fg)' : 'var(--tint-green-fg)',
-                          border: `1px solid ${vState.lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)'}` }}>
-                          {vState.lastFlatDraft ? '單色稿 → 文字優先' : '正式上色 → 視覺優先'}
-                        </div>
+            <div>
+              <label style={S.label}>行為模式</label>
+              <textarea style={{ ...S.textarea, minHeight: 70 }} value={vState.behavior} onChange={e => setV(activeTab, { behavior: e.target.value })} placeholder="面對危機的反應、習慣..." />
+            </div>
+            <div>
+              <label style={S.label}>說話風格</label>
+              <textarea style={{ ...S.textarea, minHeight: 50 }} value={vState.voice} onChange={e => setV(activeTab, { voice: e.target.value })} placeholder="語氣、口頭禪..." />
+            </div>
+          </Panel>
+
+          <Panel index="04" title="生圖附加" icon="sparkles">
+            <div>
+              <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={vState.visionEnabled ?? true} onChange={e => { setV(activeTab, { visionEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'visionEnabled', e.target.checked) }}
+                  style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
+                <span title="會影響生圖" style={S.genMark} />草圖視覺特徵
+              </label>
+              <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>開啟時用視覺模型從概念圖抽取特徵加入提示詞；關閉則僅靠欄位設定，交由 CN／畫風主導</p>
+            </div>
+            <div>
+              <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={vState.outfitEnabled} onChange={e => { setV(activeTab, { outfitEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'outfitEnabled', e.target.checked) }}
+                  style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
+                <span title="會影響生圖" style={S.genMark} />服裝設定
+              </label>
+              {vState.outfitEnabled && (
+                <>
+                  <textarea style={{ ...S.textarea, minHeight: 60 }}
+                    value={vState.outfit} onChange={e => setV(activeTab, { outfit: e.target.value })}
+                    placeholder="例如：白色禮服、黑色窄裙、學生制服、和服..." />
+                  <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>服裝描述會加入生成提示詞，影響圖片中的穿著</p>
+                </>
+              )}
+            </div>
+
+            <div>
+              <label style={{ ...S.label, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" checked={vState.aiPromptEnabled} onChange={e => { setV(activeTab, { aiPromptEnabled: e.target.checked }); _saveGenPref(initChar.id, activeTab, 'aiPromptEnabled', e.target.checked) }}
+                  style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} />
+                <span title="會影響生圖" style={S.genMark} />AI 提示詞
+              </label>
+              {vState.aiPromptEnabled && (
+                <>
+                  <textarea style={{ ...S.textarea, minHeight: 60, fontFamily: 'monospace', fontSize: 13 }}
+                    value={vState.aiPrompt} onChange={e => setV(activeTab, { aiPrompt: e.target.value })}
+                    placeholder="中英文皆可，例如：flat color, clean lineart" />
+                  <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>中英文皆接受，獨立編譯後置於 prompt 最前端</p>
+                </>
+              )}
+            </div>
+
+            {customTagsField}
+          </Panel>
+
+          <Panel index="05" title="創作筆記" icon="file-text">
+            <div>
+              <label style={S.label}>創作筆記</label>
+              <textarea style={{ ...S.textarea, minHeight: 120 }} value={vState.notes} onChange={e => setV(activeTab, { notes: e.target.value })} placeholder="隨時新增想法..." />
+            </div>
+          </Panel>
+
+          <Panel index="06" title="Debug Prompt" icon="bug">
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ ...S.label, marginBottom: 0, fontFamily: 'monospace', letterSpacing: 1 }}>DEBUG PROMPT</span>
+                <button style={{ ...S.btnSm, fontSize: 11, padding: '3px 10px' }} onClick={() => setV(activeTab, { showDebugPrompt: !vState.showDebugPrompt })}>
+                  {vState.showDebugPrompt ? '隱藏' : '顯示'}
+                </button>
+              </div>
+              {vState.showDebugPrompt && (
+                vState.lastDebugPrompt
+                  ? <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontSize: 10, color: 'var(--tint-blue-fg)', letterSpacing: 1, fontFamily: 'monospace' }}>中文描述（AI 翻譯前）</div>
+                        {vState.lastFlatDraft != null && (
+                          <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                            background: vState.lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)',
+                            color: vState.lastFlatDraft ? 'var(--tint-amber-fg)' : 'var(--tint-green-fg)',
+                            border: `1px solid ${vState.lastFlatDraft ? 'var(--tint-amber-bg)' : 'var(--tint-green-bg)'}` }}>
+                            {vState.lastFlatDraft ? '單色稿 → 文字優先' : '正式上色 → 視覺優先'}
+                          </div>
+                        )}
+                        {vState.lastIpaUsed != null && (
+                          <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                            background: vState.lastIpaUsed ? 'var(--tint-blue-bg)' : 'var(--surface-2)',
+                            color: vState.lastIpaUsed ? 'var(--tint-blue-fg)' : 'var(--muted)',
+                            border: `1px solid ${vState.lastIpaUsed ? 'var(--tint-blue-border)' : 'var(--border-strong)'}` }}>
+                            {vState.lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
+                          </div>
+                        )}
+                        {vState.lastPromptProfile && (
+                          <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                            background: vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--surface-2)',
+                            color: vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-fg)' : 'var(--muted)',
+                            border: `1px solid ${vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--border-strong)'}` }}>
+                            {vState.lastPromptProfile}
+                          </div>
+                        )}
+                        {vState.lastCoverage && (
+                          <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
+                            background: vState.lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--surface-2)',
+                            color: vState.lastCoverage.includes('→') ? 'var(--tint-amber-fg)' : 'var(--muted)',
+                            border: `1px solid ${vState.lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--border-strong)'}` }}>
+                            {vState.lastCoverage}
+                          </div>
+                        )}
+                        {vState.lastSeed != null && (
+                          <div title="點擊複製 seed" onClick={() => navigator.clipboard?.writeText(vState.lastSeed)}
+                            style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace', cursor: 'pointer',
+                            background: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border-strong)' }}>
+                            seed: {vState.lastSeed} 📋
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                        {vState.lastRawDesc ?? '—'}
+                      </div>
+                      {vState.lastLlmInput && (
+                        <>
+                          <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>送進 LLM 的文字（個人詞庫替換後）</div>
+                          <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface-2)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--border-strong)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+                            {vState.lastLlmInput}
+                          </div>
+                        </>
                       )}
-                      {vState.lastIpaUsed != null && (
-                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: vState.lastIpaUsed ? 'var(--tint-blue-bg)' : 'var(--surface-2)',
-                          color: vState.lastIpaUsed ? 'var(--tint-blue-fg)' : 'var(--muted)',
-                          border: `1px solid ${vState.lastIpaUsed ? 'var(--tint-blue-border)' : 'var(--border-strong)'}` }}>
-                          {vState.lastIpaUsed ? 'IP-Adapter ON' : 'IP-Adapter OFF'}
-                        </div>
+                      {vState.lastAiPromptCompiled !== null && (
+                        <>
+                          <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
+                            color: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)' }}>
+                            AI 提示詞編譯結果{vState.lastAiPromptCompiled === '[compilation_failed]' ? ' ⚠ 失敗' : '（置於 prompt 首位）'}
+                          </div>
+                          <div style={{ fontSize: 11, padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, fontFamily: 'monospace',
+                            color: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)',
+                            background: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)',
+                            border: `1px solid ${vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)'}` }}>
+                            {vState.lastAiPromptCompiled === '[compilation_failed]' ? 'AI 提示詞未套用（Ollama 翻譯錯誤）' : vState.lastAiPromptCompiled}
+                          </div>
+                        </>
                       )}
-                      {vState.lastPromptProfile && (
-                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--surface-2)',
-                          color: vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-fg)' : 'var(--muted)',
-                          border: `1px solid ${vState.lastPromptProfile.startsWith('profile:') ? 'var(--tint-purple-bg)' : 'var(--border-strong)'}` }}>
-                          {vState.lastPromptProfile}
-                        </div>
-                      )}
-                      {vState.lastCoverage && (
-                        <div style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace',
-                          background: vState.lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--surface-2)',
-                          color: vState.lastCoverage.includes('→') ? 'var(--tint-amber-fg)' : 'var(--muted)',
-                          border: `1px solid ${vState.lastCoverage.includes('→') ? 'var(--tint-amber-bg)' : 'var(--border-strong)'}` }}>
-                          {vState.lastCoverage}
-                        </div>
-                      )}
-                      {vState.lastSeed != null && (
-                        <div title="點擊複製 seed" onClick={() => navigator.clipboard?.writeText(vState.lastSeed)}
-                          style={{ fontSize: 10, padding: '1px 7px', borderRadius: 4, fontFamily: 'monospace', cursor: 'pointer',
-                          background: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border-strong)' }}>
-                          seed: {vState.lastSeed} 📋
-                        </div>
-                      )}
+                      <div style={{ fontSize: 10, color: 'var(--tint-purple-fg)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
+                      <div style={{ fontSize: 11, color: 'var(--tint-purple-fg)', background: 'var(--tint-purple-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-purple-bg)', fontFamily: 'monospace' }}>
+                        {vState.lastDebugPrompt}
+                      </div>
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--tint-green-fg)', background: 'var(--tint-blue-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-green-bg)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                      {vState.lastRawDesc ?? '—'}
-                    </div>
-                    {vState.lastLlmInput && (
-                      <>
-                        <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>送進 LLM 的文字（個人詞庫替換後）</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface-2)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--border-strong)', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                          {vState.lastLlmInput}
-                        </div>
-                      </>
-                    )}
-                    {vState.lastAiPromptCompiled !== null && (
-                      <>
-                        <div style={{ fontSize: 10, letterSpacing: 1, fontFamily: 'monospace', marginTop: 2,
-                          color: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)' }}>
-                          AI 提示詞編譯結果{vState.lastAiPromptCompiled === '[compilation_failed]' ? ' ⚠ 失敗' : '（置於 prompt 首位）'}
-                        </div>
-                        <div style={{ fontSize: 11, padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, fontFamily: 'monospace',
-                          color: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--danger)' : 'var(--tint-amber-fg)',
-                          background: vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)',
-                          border: `1px solid ${vState.lastAiPromptCompiled === '[compilation_failed]' ? 'var(--tint-red-bg)' : 'var(--tint-amber-bg)'}` }}>
-                          {vState.lastAiPromptCompiled === '[compilation_failed]' ? 'AI 提示詞未套用（Ollama 翻譯錯誤）' : vState.lastAiPromptCompiled}
-                        </div>
-                      </>
-                    )}
-                    <div style={{ fontSize: 10, color: 'var(--tint-purple-fg)', letterSpacing: 1, fontFamily: 'monospace', marginTop: 2 }}>最終 Prompt（英文）</div>
-                    <div style={{ fontSize: 11, color: 'var(--tint-purple-fg)', background: 'var(--tint-purple-bg)', padding: '8px 10px', borderRadius: 6, wordBreak: 'break-all', lineHeight: 1.5, border: '1px solid var(--tint-purple-bg)', fontFamily: 'monospace' }}>
-                      {vState.lastDebugPrompt}
-                    </div>
-                  </div>
-                : <p style={{ ...S.muted, fontSize: 11 }}>尚未生成變體圖，無 prompt 記錄</p>
-            )}
-          </div>
+                  : <p style={{ ...S.muted, fontSize: 11 }}>尚未生成變體圖，無 prompt 記錄</p>
+              )}
+            </div>
+          </Panel>
+
         </div>
+
+        {/* ── AI 整理資訊（最右欄，可隱藏） ── */}
+        {!summaryHidden && (
+          <div style={S.detailSummary}>
+            <SummaryCard onHide={toggleSummary} text={vState.aiSummary} busy={vState.summarizing} onRefresh={runVariantSummarize} placeholder="點擊「重新整理」生成此版本設定檔" />
+          </div>
+        )}
       </div>
       )}
       {lightboxSrc && <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />}

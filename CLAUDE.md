@@ -90,6 +90,7 @@
 | 客製化標籤（作品／繪師下拉） | `data/custom_tags.json`（格式見 `custom_tags.example.json`；免重啟）。CN-122 |
 | 角色外觀年齡／身材卡片 | `backend/appearance_cards.yml` 的 `cards:`／`body_groups:`（兩家族共用；只用 Danbooru tag、一卡一核心 tag、不加權；免重啟）。CN-129／CN-130 |
 | 家族生成策略（CN 上限、denoise 映射、能力開關） | `services/ai/gen_profile.py` 的 `GEN_PROFILE` |
+| GPU 等級（4g／8g／16g）、Hires 第二段 | `.env` 的 `GPU_TIER`（預設 auto）、`HIRES_ENABLED`／`HIRES_UPSCALE_MODEL`；分級預設表在 `core/config.py`，能力覆寫在 `gen_profile.apply_tier`（只補 `.env` 沒寫的鍵）。CN-133／134 |
 
 ## 7. 除錯鐵律
 
@@ -136,6 +137,7 @@
 - GitHub `amazingsora/Craftflow` 是**公開 repo**，遠端只留 `main`。隱私處理與歷史改寫都以此為前提。
 - 不進 git：`.env`、`doc/`（已從全歷史清除，只存本機）、`data/custom_tags.json`、log／cache／產出圖、`Claude outputs/`。
 - 個人畫風標籤／個人負向只放 `.env` 或 `data/custom_tags.json`，**不進 yml、測試、`.env.example`**。
+- **隱私閘門**（CN-135）：`python tools/check_oss.py`；每個 clone 先 `git config core.hooksPath .githooks`（pre-commit 擋），CI 跑同一支。測試只用中性假 tag；作品名等個人詞庫放 `data/personal_term_map.local.yml`。
 - 服務只綁 `127.0.0.1`；CORS 讀 `config.CORS_ORIGINS`；輸出 PNG 預設剝除 metadata（`PNG_STRIP_METADATA`）。
 - commit／push／歷史改寫一律使用者本機執行（`tools/privacy_cleanup.ps1`）。
 

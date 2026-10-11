@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { apiGet } from '../api/client'
+import { Icon } from './Icon.jsx'
 
 const TIMING_KEYS = ['vision', 'compile_prompt', 'compile_ai_prompt', 'upload', 'comfyui', 'canvas_expand']
 
@@ -31,36 +32,41 @@ export function GenerationInfo({ historyId, fetchPath }) {
   if (!historyId && !fetchPath) return null
 
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 6 }}>
       <button
         onClick={() => setOpen(true)}
+        className="cf-link"
         style={{
-          fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none',
-          padding: 0, cursor: 'pointer', fontWeight: 600,
+          display: 'inline-flex', alignItems: 'center', gap: 5,
+          fontSize: 11.5, color: 'var(--muted)', background: 'none', border: 'none',
+          padding: '2px 4px', margin: '0 -4px', borderRadius: 'var(--r-sm)', cursor: 'pointer', fontWeight: 500,
         }}
       >
-        生成資訊 ▸
+        <Icon name="info" size={12} />生成資訊
       </button>
       {open && (
         <div
           onClick={e => e.target === e.currentTarget && setOpen(false)}
           style={{
-            position: 'fixed', inset: 0, zIndex: 900, background: 'rgba(0,0,0,.55)',
+            position: 'fixed', inset: 0, zIndex: 900, background: 'var(--scrim)', backdropFilter: 'blur(3px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+            animation: 'cf-fade .16s var(--ease) both',
           }}
         >
           <div style={{
             width: 'min(760px, 100%)', maxHeight: '88vh', overflowY: 'auto',
-            background: 'var(--surface, #1e1e1e)', border: '1px solid var(--border)',
-            borderRadius: 12, padding: '16px 20px', color: 'var(--text)',
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 12, padding: '14px 20px 20px', color: 'var(--text)',
+            boxShadow: 'var(--shadow-modal)', animation: 'cf-pop .22s var(--ease) both',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <strong style={{ fontSize: 15 }}>生成資訊</strong>
+              <strong style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}><Icon name="info" size={16} style={{ color: 'var(--muted)' }} />生成資訊</strong>
               <button
                 onClick={() => setOpen(false)}
-                style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 20, cursor: 'pointer' }}
+                className="cf-link"
+                style={{ width: 30, height: 30, display: 'grid', placeItems: 'center', background: 'none', border: 'none', borderRadius: 'var(--r)', color: 'var(--muted)', cursor: 'pointer' }}
                 aria-label="關閉"
-              >×</button>
+              ><Icon name="x" size={16} /></button>
             </div>
             {err && <div style={{ color: 'var(--danger, #c04)', fontSize: 13 }}>{err}</div>}
             {!info && !err && <div style={{ fontSize: 13, color: 'var(--muted)' }}>載入中…</div>}
@@ -99,8 +105,8 @@ function InfoBody({ info }) {
   const pre = {
     fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'normal', overflowWrap: 'break-word',
     background: 'var(--surface-2, rgba(127,127,127,0.08))', border: '1px solid var(--border)',
-    borderRadius: 8, padding: '8px 10px', marginTop: 4, maxHeight: '30vh', overflowY: 'auto',
-    userSelect: 'text', fontFamily: 'ui-monospace, Consolas, monospace',
+    borderRadius: 'var(--r)', padding: '8px 10px', marginTop: 6, maxHeight: '30vh', overflowY: 'auto',
+    userSelect: 'text', fontFamily: 'var(--font-mono)',
   }
   const copyAll = () => navigator.clipboard?.writeText(
     `seed: ${info.seed}\nworkflow: ${info.workflow}\nstyle: ${info.style || ''}\n`
@@ -113,7 +119,7 @@ function InfoBody({ info }) {
         {rows.map(([k, v]) => (
           <React.Fragment key={k}>
             <div style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>{k}</div>
-            <div style={{ overflowWrap: 'anywhere' }}>{String(v)}</div>
+            <div style={{ overflowWrap: 'anywhere', fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{String(v)}</div>
           </React.Fragment>
         ))}
       </div>
@@ -128,12 +134,12 @@ function InfoBody({ info }) {
       <button
         onClick={copyAll}
         style={{
-          alignSelf: 'flex-start', fontSize: 12, color: 'var(--accent)',
-          background: 'none', border: '1px solid var(--border)', borderRadius: 5,
-          padding: '4px 10px', cursor: 'pointer',
+          alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text)',
+          background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 'var(--r)',
+          padding: '5px 10px', cursor: 'pointer',
         }}
       >
-        複製全部
+        <Icon name="copy" size={13} />複製全部
       </button>
     </div>
   )

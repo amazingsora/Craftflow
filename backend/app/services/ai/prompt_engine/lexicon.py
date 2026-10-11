@@ -65,19 +65,25 @@ HAIR_STYLE_MAP: dict[str, str] = {
 _PERSONAL_TERM_MAP_YML = Path("/app/backend/personal_term_map.yml")
 if not _PERSONAL_TERM_MAP_YML.exists():
     _PERSONAL_TERM_MAP_YML = Path(__file__).resolve().parents[4] / "personal_term_map.yml"
+# [CN-135] 版權／個人詞放本機覆蓋檔（不進 git），同鍵蓋過公開檔
+_PERSONAL_TERM_MAP_LOCAL_YML = _PERSONAL_TERM_MAP_YML.parent.parent / "data" / "personal_term_map.local.yml"
 
 
-def _load_personal_term_map() -> dict[str, str]:
-    """讀 personal_term_map.yml。未建檔/解析失敗 → {}。不快取，比照
-    checkpoint_styles.yml/prompt_profiles.yml 慣例，調參期改 yml 免重啟即生效。"""
+def _read_term_map(path: Path) -> dict[str, str]:
     try:
-        with open(_PERSONAL_TERM_MAP_YML, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         return data.get("terms", {}) or {}
     except FileNotFoundError:
         return {}
     except Exception:
         return {}
+
+
+def _load_personal_term_map() -> dict[str, str]:
+    """讀 personal_term_map.yml＋本機覆蓋檔。未建檔/解析失敗 → {}。不快取，比照
+    checkpoint_styles.yml/prompt_profiles.yml 慣例，調參期改 yml 免重啟即生效。"""
+    return {**_read_term_map(_PERSONAL_TERM_MAP_YML), **_read_term_map(_PERSONAL_TERM_MAP_LOCAL_YML)}
 
 
 def personal_term_map_tags() -> list[str]:

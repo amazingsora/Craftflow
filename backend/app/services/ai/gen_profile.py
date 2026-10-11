@@ -5,7 +5,9 @@ cfg／sampler／scheduler 由 workflow JSON 決定，不在此處。"""
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+
+from app.core import config as _cfg
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,14 @@ class GenProfile:
     # [CN-120] 人設圖 FaceDetailer：None＝不注入；workflow 已含 FaceDetailer 時亦不注入
     face_detailer_denoise: float | None = None
     face_detailer_steps: int = 18
+    # [CN-134] Hires 第二段：scale＝相對主畫布倍率（None＝不做）；sampler／scheduler None＝沿用主 KSampler
+    hires_scale: float | None = 1.5
+    hires_denoise: float = 0.40
+    hires_steps: int = 20
+    hires_sampler: str | None = "dpmpp_2m"
+    hires_scheduler: str | None = "karras"
+    # False＝只做 latent 放大（不載放大模型，省顯存）
+    hires_use_model: bool = True
 
     def face_detailer_strength(self, requested: float | None) -> float | None:
         """使用者滑桿值夾進安全區間；未指定用家族預設；家族未開回 None [FD-121]"""
@@ -90,12 +100,31 @@ GEN_PROFILE: dict[str, GenProfile] = {
                               # [CN-120] 滑桿預設 0.85 × 1.47 ≈ 1.25；full 全程控制（ComfyUI F2）
                               lllite_strength_scale=1.47,
                               coverage_cn_end_pct={"full": 1.0},
-                              face_detailer_denoise=0.50),
+                              face_detailer_denoise=0.50,
+                              # [CN-134] 官方討論：1536² 級底圖只建議 1.3x；SDE 取樣器在重繪段易注入雜點
+                              hires_scale=1.31, hires_denoise=0.35,
+                              hires_sampler="euler", hires_scheduler="simple"),
 }
+
+# [CN-133] 8g 的 hires 倍率上限（latent 放大、無放大模型）
+TIER_8G_HIRES_MAX_SCALE = 1.3
+
+
+def apply_tier(profile: GenProfile, tier: str) -> GenProfile:
+    """依 GPU 等級關閉吃顯存的能力；16g（及未知值）原樣回傳 [FD-130]"""
+    if tier == "4g":
+        return replace(profile, ipa_enabled=False, cn_enabled=False,
+                       cn_fallback_chain=profile.cn_fallback_chain or ("img2img",),
+                       face_detailer_denoise=None, hires_scale=None)
+    if tier == "8g":
+        scale = profile.hires_scale
+        return replace(profile, ipa_enabled=False, hires_use_model=False,
+                       hires_scale=min(scale, TIER_8G_HIRES_MAX_SCALE) if scale else None)
+    return profile
 
 
 def get_profile(family: str) -> GenProfile:
-    return GEN_PROFILE.get(family, _DEFAULT)
+    return apply_tier(GEN_PROFILE.get(family, _DEFAULT), _cfg.GPU_TIER)
 
 
 def resolve_profile_for_workflow(workflow_name: str) -> tuple[GenProfile, str]:

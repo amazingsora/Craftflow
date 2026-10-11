@@ -24,6 +24,7 @@ from app.core.config import (
     PERSONAL_NEGATIVE_ENABLED, PERSONAL_NEGATIVE, PERSONAL_STYLE_WEIGHT,
     IPA_FLAT_DRAFT_SCALE,
     PERSONAL_KIND_NEGATIVE,
+    GPU_TIER,
 )
 from app.core import state
 from app.core.database import get_db
@@ -42,6 +43,7 @@ from app.services.ai.workflow_builder import (
     lora_trigger_words,
     _load_workflow,
     _log_wf_snapshot,
+    _apply_hires,
     _replace_negative_seeds,
     _resolve_prompt_overrides,
     _prompt_profile_source,
@@ -91,6 +93,7 @@ from app.services.ai.wf_node_ops import (
     _set_node_input,
     _wf_has_controlnet,
     _wf_has_ipa,
+    hires_params,
 )
 from app.services.ai.vision_extract import (
     _HAIRSTYLE_KW,
@@ -98,7 +101,7 @@ from app.services.ai.vision_extract import (
     _filter_visual_for_llm,
     _vision_extract_cached,
 )
-from app.services.ai.variant_helpers import _get_variants, _slot_index
+from app.services.ai.variant_helpers import _get_variants, _slot_index, active_concept_images
 
 _PORTRAIT_DIR = UPLOAD_DIR / "portraits"
 
@@ -1108,6 +1111,9 @@ async def _generate_design_core(
     _fd_denoise = _profile.face_detailer_strength(face_detailer_denoise)
     face_detailer_used = use_face_detailer and _fd_denoise is not None and _inject_face_detailer(
         wf, _fd_denoise, _profile.face_detailer_steps)
+    # [CN-134] hires 在所有節點手術之後注入：主 VAEDecode 的消費端（含 FaceDetailer）改吃放大結果
+    if not is_expression:
+        _apply_hires(wf, _profile, width, height, log_label)
 
     _replace_negative_seeds(wf, seed)
     _log_wf_snapshot(wf, label=log_label)
@@ -1189,6 +1195,8 @@ async def _generate_design_core(
             "appearance_age": inp.appearance_age or None,
             "body_cards": inp.body_cards or None,
             "face_detailer_denoise": _fd_denoise if face_detailer_used else None,
+            "hires": hires_params(wf),
+            "gpu_tier": GPU_TIER,
         },
     )
     return Response(
@@ -1243,7 +1251,7 @@ async def generate_character_design(
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
 
-    concept_imgs = list(character.concept_images or [])
+    concept_imgs = active_concept_images(character.concept_images, getattr(character, "concept_excluded", None))
     if not concept_imgs and character.portrait_path:
         concept_imgs = [character.portrait_path]
     inp = _DesignInputs(
@@ -1301,7 +1309,7 @@ async def generate_variant_design(
     v = _get_variants(character)[idx]
     inp = _DesignInputs(
         name=character.name,
-        concept_imgs=list(v.get("concept_images") or []),
+        concept_imgs=active_concept_images(v.get("concept_images"), v.get("concept_excluded")),
         outfit=v.get("outfit"),
         core_traits=v.get("core_traits"),
         color=v.get("color"),

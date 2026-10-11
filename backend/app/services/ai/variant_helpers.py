@@ -13,7 +13,7 @@ _EMPTY_VARIANT: dict = {
     "color": None, "core_traits": None, "behavior_rules": None,
     "voice_style": None, "notes": None, "ai_prompt": None, "outfit": None, "ai_summary": None,
     "age": None, "height": None, "birthday": None, "gender": None,
-    "concept_images": [], "ai_generated_images": [],
+    "concept_images": [], "concept_excluded": [], "ai_generated_images": [],
 }
 
 
@@ -23,6 +23,13 @@ def _get_variants(character: Character) -> list[dict]:
     while len(raw) < _MAX_VARIANT_SLOTS:
         raw.append(copy.deepcopy(_EMPTY_VARIANT))
     return raw
+
+
+def active_concept_images(images: list | None, excluded: list | None) -> list[str]:
+    """生成用概念圖：第 0 張（main）恆參與，其餘剔除 excluded 檔名。 [CN-132]"""
+    imgs = list(images or [])
+    skip = set(excluded or [])
+    return imgs[:1] + [f for f in imgs[1:] if f not in skip]
 
 
 def _slot_index(slot: int) -> int:

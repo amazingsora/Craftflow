@@ -37,7 +37,7 @@ export function CustomTagsField({ value, onChange, options }) {
 
   return (
     <div>
-      <label style={S.label}><span style={{ color: 'var(--accent)' }}>✦ </span>客製化標籤</label>
+      <label style={S.label}><span title="會影響生圖" style={S.genMark} />客製化標籤</label>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         {_GROUPS.map(g => (
           <select key={g.key} style={{ ...S.select, flex: 1 }} value="" disabled={!options?.[g.key]?.length}
@@ -72,7 +72,7 @@ export function CustomTagsField({ value, onChange, options }) {
       </div>
       <p style={{ ...S.muted, fontSize: 11, marginTop: 4 }}>
         {empty
-          ? '清單為空：編輯 data/custom_tags.json（格式見 custom_tags.example.json）'
+          ? '清單為空：到「設定 → 客製化標籤」新增、搜尋字典或匯入檔案'
           : '接在畫風段後送入 prompt；Anima 家族的繪師自動補 @。清單只存本機 JSON，選擇存在瀏覽器'}
       </p>
     </div>

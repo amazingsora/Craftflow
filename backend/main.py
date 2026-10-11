@@ -40,6 +40,10 @@ def _startup_healthcheck():
                     CUSTOM_WORKFLOWS_DIR, ", ".join(missing))
     else:
         log.info("[healthcheck] 預期工作流齊備（%d 檔）", len(expected))
+    from app.core import config as cfg
+    # [CN-133] 實際採用的 GPU 等級與補進環境的預設鍵（.env 已寫的鍵不會出現在這裡）
+    log.info("[gpu-tier] %s（%s）preset=%s hires=%s",
+             cfg.GPU_TIER, cfg.GPU_TIER_SOURCE, cfg.GPU_TIER_PRESET_APPLIED or "無", cfg.HIRES_ENABLED)
 
 
 @asynccontextmanager

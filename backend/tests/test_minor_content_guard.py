@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-_H922 = ("masterpiece, best quality, absurdres, safe, 1girl, solo, ***REDACTED***, @***REDACTED***, "
+_H922 = ("masterpiece, best quality, absurdres, safe, 1girl, solo, example series, @example artist, "
          "child, petite, ultra detailed, high contrast, nude, pubic hair, nipples, red eyes, "
          "green eyes, heterochromia, brown hair, short hair, porcelain skin, full body")
 _SEXUAL = {"nude", "pubic hair", "nipples"}

@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    // 預設只綁本機；Docker 內由 docker-compose 設 VITE_HOST=0.0.0.0
+    // 預設只綁本機；Docker 內由 docker-compose 的 VITE_HOST 改綁全介面
     host: process.env.VITE_HOST || '127.0.0.1',
     port: 3000,
     watch: {

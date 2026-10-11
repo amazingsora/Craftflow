@@ -25,3 +25,14 @@ class GenerateRequest(BaseModel):
 
 class GenerateAsyncRequest(GenerateRequest):
     batch_size: int = 1  # 1~8，>1 時同 seed 批次出多張（挑圖用）
+
+
+class CustomTagEntry(BaseModel):
+    label: str = ""
+    tag: str
+
+
+class CustomTagsPayload(BaseModel):
+    """[CN-131] tag 管理整份覆寫；正規化與上限檢查在 custom_tags.save_custom_tags"""
+    series: list[CustomTagEntry] = []
+    artists: list[CustomTagEntry] = []

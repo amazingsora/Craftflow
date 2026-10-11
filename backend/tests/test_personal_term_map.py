@@ -7,9 +7,17 @@ doc/2026-07-12_工作流提示詞優化規劃.md「七、提示詞精度條目�
 import re
 from unittest.mock import patch
 
+import pytest
+
 from app.services.ai import ollama_client
 from app.services.ai.prompt_engine import compiler, lexicon
 from app.services.ai.prompt_engine.styles import PromptStyle
+
+
+@pytest.fixture(autouse=True)
+def _no_local_overlay(tmp_path, monkeypatch):
+    """[CN-135] 隔離本機覆蓋檔：測試只認公開的 personal_term_map.yml。"""
+    monkeypatch.setattr(lexicon, "_PERSONAL_TERM_MAP_LOCAL_YML", tmp_path / "absent.local.yml")
 
 
 # ── lexicon.apply_personal_term_map（純函式）────────────────────────────────────
@@ -18,14 +26,14 @@ from app.services.ai.prompt_engine.styles import PromptStyle
 # 以下斷言改為「英文 tag 出現、中文原文消失、無黏字」的不變量，避免綁死逗號/空白排版。
 
 def test_apply_term_map_replaces_multiple_known_terms():
-    out = lexicon.apply_personal_term_map("***REDACTED***的角色，垂眼，馬靴")
-    assert "***REDACTED***" in out and "tareme" in out and "riding boots" in out
-    assert "***REDACTED***" not in out and "垂眼" not in out and "馬靴" not in out
+    out = lexicon.apply_personal_term_map("窄裙的角色，垂眼，馬靴")
+    assert "pencil skirt" in out and "tareme" in out and "riding boots" in out
+    assert "窄裙" not in out and "垂眼" not in out and "馬靴" not in out
 
 
 def test_apply_term_map_basic_replacement():
-    out = lexicon.apply_personal_term_map("***REDACTED***的角色")
-    assert out == ", ***REDACTED***, 的角色"
+    out = lexicon.apply_personal_term_map("馬靴的角色")
+    assert out == ", riding boots, 的角色"
 
 
 def test_apply_term_map_longest_match_wins():
@@ -68,7 +76,25 @@ def test_apply_term_map_empty_text():
 
 def test_apply_term_map_missing_yml_falls_back_to_noop(tmp_path, monkeypatch):
     monkeypatch.setattr(lexicon, "_PERSONAL_TERM_MAP_YML", tmp_path / "nope.yml")
-    assert lexicon.apply_personal_term_map("***REDACTED***") == "***REDACTED***"
+    assert lexicon.apply_personal_term_map("馬靴") == "馬靴"
+
+
+def test_local_overlay_adds_and_overrides(tmp_path, monkeypatch):
+    """[CN-135] 本機覆蓋檔：新增詞生效、同鍵蓋過公開檔、公開檔其他詞照舊。"""
+    local = tmp_path / "personal_term_map.local.yml"
+    local.write_text("terms:\n  範例作品: example series\n  馬靴: knee boots\n", encoding="utf-8")
+    monkeypatch.setattr(lexicon, "_PERSONAL_TERM_MAP_LOCAL_YML", local)
+    out = lexicon.apply_personal_term_map("範例作品的角色，垂眼，馬靴")
+    assert "example series" in out and "knee boots" in out and "tareme" in out
+    assert "riding boots" not in out
+    assert "example series" in lexicon.personal_term_map_tags()
+
+
+def test_local_overlay_broken_file_keeps_public_map(tmp_path, monkeypatch):
+    local = tmp_path / "personal_term_map.local.yml"
+    local.write_text("terms: [壞掉", encoding="utf-8")
+    monkeypatch.setattr(lexicon, "_PERSONAL_TERM_MAP_LOCAL_YML", local)
+    assert "riding boots" in lexicon.apply_personal_term_map("馬靴")
 
 
 # ── compiler.compile() 接線：翻譯前替換 ─────────────────────────────────────────
@@ -82,10 +108,10 @@ def test_compile_applies_term_map_before_llm_call():
         return "white hair, solo"
 
     with patch.object(ollama_client, "generate", side_effect=_fake_generate):
-        compiler.compile("***REDACTED***風格的白髮少女", style=PromptStyle.ILLUSTRIOUS)
+        compiler.compile("穿馬靴的白髮少女", style=PromptStyle.ILLUSTRIOUS)
 
-    assert "***REDACTED***" in captured["prompt"]
-    assert "***REDACTED***" not in captured["prompt"]
+    assert "riding boots" in captured["prompt"]
+    assert "馬靴" not in captured["prompt"]
 
 
 def test_compile_unregistered_text_is_zero_regression():

@@ -89,7 +89,7 @@ def test_resolve_style_extra_ignores_legacy_env_style_keys(_no_env_style, monkey
     """[CN-122] .env 舊畫風鍵（全域／分家族）已移除：設了也不得進畫風段。"""
     monkeypatch.setattr(cds, "_workflow_style_extra", lambda w: ("", None))
     for k in ("PERSONAL_STYLE_ENABLED", "PERSONAL_STYLE_EXTRA_TAGS", "PERSONAL_STYLE_EXTRA_ANIMA"):
-        monkeypatch.setenv(k, "true" if k.endswith("ENABLED") else "***REDACTED***")
+        monkeypatch.setenv(k, "true" if k.endswith("ENABLED") else "example series")
     assert _resolve_style_extra(None, "AnimaStandardV9_miaomiaoHarem.json") == ("", 1.0)
 
 

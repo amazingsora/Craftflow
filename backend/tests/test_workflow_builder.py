@@ -399,9 +399,9 @@ def test_is_custom_workflow(tmp_path, monkeypatch):
 #      R1 的 `clean lineart` 已於 ComfyUI 驗證（避免的是「線稿感」，不是 lineart 這個字）。
 #   ② tag 上限依位置分流：加權前置（weight != 1.0）會與 identity 爭注意力 → 維持 5；
 #      不加權接尾端（weight == 1.0）→ 8（R1 為 7 個）。
-#   版權詞（***REDACTED*** 等）仍禁止進 yml——個人畫風標籤改走 .env 分家族鍵（軌 P）。
+#   版權／個人畫風詞同樣禁止進 yml，但不在測試寫字面值：由 tools/check_oss.py 讀本機 custom_tags 擋（CN-135）。
 _BANNED_SUBSTRINGS = (
-    "***REDACTED***", "score_",
+    "score_",
     "masterpiece", "best quality", "absurdres",
 )
 _MAX_STYLE_TAGS_WEIGHTED = 5

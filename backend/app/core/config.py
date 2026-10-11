@@ -1,6 +1,7 @@
 # 註解索引：本檔 [CN-xxx] 標記的完整根因記錄見 doc/reference/CODE_NOTES.md
 """所有環境變數旋鈕的單一入口（讀專案根 .env） [FD-028]"""
 import os
+import subprocess
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -9,6 +10,72 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent  # backend/
 
 # 本機執行時自動載入 .env（Docker 執行時 env 已由 docker-compose 注入，此行無害）
 load_dotenv(BASE_DIR.parent / ".env")
+
+# ── GPU 分級（4g／8g／16g）──────────────────────────────────────────────
+# [CN-133] 分級預設只補「.env 沒寫的鍵」再交給下方各旋鈕讀取 ⇒ 顯式 .env 永遠優先；16g＝現行預設、零變更
+GPU_TIERS = ("4g", "8g", "16g")
+GPU_TIER_DEFAULT = "16g"
+# auto 判級門檻（總顯存 GB ≥ 門檻取該級；取最高一級）。8G 卡實報約 7.99、12G 卡歸 8g（CN+IPA 需 ~14G）
+GPU_TIER_MIN_GB = (("4g", 0.0), ("8g", 7.5), ("16g", 14.0))
+GPU_TIER_ENV_DEFAULTS: dict[str, dict[str, str]] = {
+    "4g": {
+        "COMFYUI_REQUIRED_VRAM_GB": "3.5",
+        "OLLAMA_REQUIRED_VRAM_GB": "3",
+        "COMFYUI_RESIDENT_MIN_FREE_GB": "2",
+        "VRAM_COEXIST_ENABLED": "false",
+        "FULLBODY_CANVAS_STD": "832x1216",
+        "CRAFTFLOW_PRE_REF_EXPAND": "0",
+    },
+    "8g": {
+        "COMFYUI_REQUIRED_VRAM_GB": "7",
+        "OLLAMA_REQUIRED_VRAM_GB": "5",
+        "COMFYUI_RESIDENT_MIN_FREE_GB": "5",
+        "VRAM_COEXIST_ENABLED": "false",
+    },
+    "16g": {},
+}
+_NVIDIA_SMI_TIMEOUT_SEC = 5
+
+
+def _detect_gpu_total_gb() -> float | None:
+    """nvidia-smi 讀第一張卡總顯存（GB）；無 NVIDIA 驅動／逾時／格式不符 → None"""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=_NVIDIA_SMI_TIMEOUT_SEC, check=True,
+        ).stdout
+        return int(out.split()[0]) / 1024
+    except Exception:
+        return None
+
+
+def tier_for_vram_gb(total_gb: float) -> str:
+    """總顯存 → 等級（純函式）"""
+    tier = GPU_TIER_MIN_GB[0][0]
+    for name, min_gb in GPU_TIER_MIN_GB:
+        if total_gb >= min_gb:
+            tier = name
+    return tier
+
+
+def resolve_gpu_tier(raw: str | None, detect=_detect_gpu_total_gb) -> tuple[str, str]:
+    """GPU_TIER 設定值 → (等級, 來源說明) [FD-129]"""
+    value = (raw or "auto").strip().lower()
+    if value in GPU_TIERS:
+        return value, ".env"
+    if value != "auto":
+        return GPU_TIER_DEFAULT, f"無效值 {value!r} → {GPU_TIER_DEFAULT}"
+    total = detect()
+    if total is None:
+        return GPU_TIER_DEFAULT, f"auto：偵測不到 NVIDIA 顯存 → {GPU_TIER_DEFAULT}"
+    return tier_for_vram_gb(total), f"auto：nvidia-smi {total:.1f} GB"
+
+
+GPU_TIER, GPU_TIER_SOURCE = resolve_gpu_tier(os.getenv("GPU_TIER"))
+# 實際補進環境的鍵（啟動 log 用）；.env 已寫的鍵不在此列
+GPU_TIER_PRESET_APPLIED = {k: v for k, v in GPU_TIER_ENV_DEFAULTS[GPU_TIER].items() if k not in os.environ}
+os.environ.update(GPU_TIER_PRESET_APPLIED)
+
 UPLOAD_DIR = BASE_DIR / "uploads"
 DB_PATH = BASE_DIR / "craftflow.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
@@ -40,6 +107,11 @@ COMFYUI_LORAS_DIR = Path(os.getenv("COMFYUI_LORAS_DIR", r"C:\ComfyUI\models\lora
 CUSTOM_WORKFLOWS_DIR = Path(os.getenv("CUSTOM_WORKFLOWS_DIR", str(BASE_DIR.parent / "data" / "custom_workflows")))
 # [CN-122] 客製化標籤（作品／繪師）清單：只存本機檔，不進 git、不進 DB
 CUSTOM_TAGS_FILE = Path(os.getenv("CUSTOM_TAGS_FILE", str(BASE_DIR.parent / "data" / "custom_tags.json")))
+CUSTOM_TAGS_MAX_PER_KIND = int(os.getenv("CUSTOM_TAGS_MAX_PER_KIND", "1000"))            # 每類上限（下拉選單可用性）
+CUSTOM_TAGS_IMPORT_MAX_BYTES = int(os.getenv("CUSTOM_TAGS_IMPORT_MAX_BYTES", str(1024 * 1024)))
+# [CN-131] Danbooru 標籤字典 CSV（唯讀，只供 tag 管理搜尋）；空字串＝停用
+TAG_DICTIONARY_CSV = os.getenv("TAG_DICTIONARY_CSV", "").strip()
+TAG_DICTIONARY_SEARCH_LIMIT = int(os.getenv("TAG_DICTIONARY_SEARCH_LIMIT", "50"))
 
 # ── 資料安全（章節版本快照 + DB 備份）──────────────────────────────────────
 CHAPTER_REVISIONS_KEEP = int(os.getenv("CHAPTER_REVISIONS_KEEP", "20"))  # 每章保留快照數
@@ -106,6 +178,11 @@ PROMPT_CACHE_TTL_SEC: int = int(os.getenv("PROMPT_CACHE_TTL_SEC", "0"))
 # true（預設）＝一般情境剝除露骨 tag、負向補 nsfw；false＝成人內容不過濾（debug 用）。
 # 未成年情境（角色 <18 或正向含 child 等標記）不受此旋鈕影響，永遠強制過濾。
 NSFW_GUARD_ENABLED: bool = os.getenv("NSFW_GUARD_ENABLED", "true").lower() == "true"
+# [CN-134] Hires 第二段放大重繪：預設關（參數待 ComfyUI A/B 定案）；倍率／denoise 依家族在 gen_profile
+HIRES_ENABLED: bool = os.getenv("HIRES_ENABLED", "false").lower() == "true"
+# 放大模型檔名（ComfyUI models/upscale_models/）；空字串或 ComfyUI 查無此檔 ⇒ 改用 latent 放大
+HIRES_UPSCALE_MODEL: str = os.getenv("HIRES_UPSCALE_MODEL", "4x-AnimeSharp.safetensors").strip()
+
 # true＝回傳給前端的 PNG 去除內嵌 prompt／workflow（分享圖片不外洩）；生成資訊仍存在 DB
 PNG_STRIP_METADATA: bool = os.getenv("PNG_STRIP_METADATA", "true").lower() == "true"
 

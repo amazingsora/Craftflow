@@ -1,73 +1,50 @@
 import { useState, useEffect } from 'react'
 import { notifyEnabled, soundEnabled, setNotifyEnabled, setSoundEnabled, ensureNotifyPermission, notifyPermission, requestNotifyPermission } from '../notify.js'
+import { UI } from './sharedStyles'
+import { CustomTagsManager } from './CustomTagsManager.jsx'
 
 // 全局 LoRA 區塊暫時隱藏（保留程式碼，改 true 即恢復）。後端 state 的 lora.name 為空時不會注入。
 const SHOW_GLOBAL_LORA = false
 
 const S = {
-  root: { display: 'flex', flexDirection: 'column', gap: 24 },
+  root: { display: 'flex', flexDirection: 'column', gap: 0, marginTop: -19 },
   section: {
     display: 'flex', flexDirection: 'column', gap: 12,
-    padding: '16px 20px',
-    background: 'var(--bg)',
-    border: '1px solid var(--border)',
-    borderRadius: 10,
+    padding: '18px 0',
+    borderTop: '1px solid var(--border)',
   },
-  sectionTitle: { fontSize: 13, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 },
-  radioGroup: { display: 'flex', flexDirection: 'column', gap: 10 },
+  sectionTitle: { fontSize: 12, fontWeight: 600, color: 'var(--text)', letterSpacing: '.02em' },
+  radioGroup: { display: 'flex', flexDirection: 'column', gap: 8 },
   radioLabel: {
     display: 'flex', alignItems: 'flex-start', gap: 10,
-    cursor: 'pointer', padding: '10px 14px', borderRadius: 8,
-    border: '1px solid var(--border)', transition: 'border-color .15s',
+    cursor: 'pointer', padding: '10px 12px', borderRadius: 'var(--r)',
+    border: '1px solid var(--border-strong)', transition: 'border-color .15s, background .15s',
   },
-  radioLabelActive: { borderColor: 'var(--accent)', background: 'var(--accent-soft)' },
-  radioTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 2 },
-  radioDesc: { fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 },
-  radio: { marginTop: 2, accentColor: 'var(--accent)', width: 16, height: 16, flexShrink: 0 },
+  radioLabelActive: { borderColor: 'var(--accent-border)', background: 'var(--accent-soft)' },
+  radioTitle: { fontSize: 13.5, fontWeight: 600, color: 'var(--text)', marginBottom: 2 },
+  radioDesc: { fontSize: 12, color: 'var(--muted)', lineHeight: 1.55 },
+  radio: { marginTop: 3, width: 15, height: 15, flexShrink: 0 },
   configArea: { display: 'flex', flexDirection: 'column', gap: 12 },
-  fieldLabel: { fontSize: 12, color: 'var(--muted)', marginBottom: 4, display: 'block' },
-  select: {
-    width: '100%',
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    color: 'var(--text)',
-    padding: '8px 10px',
-    fontSize: 13,
-    outline: 'none',
-  },
-  input: {
-    width: '100%',
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    color: 'var(--text)',
-    padding: '8px 10px',
-    fontSize: 13,
-    outline: 'none',
-    boxSizing: 'border-box',
-  },
+  fieldLabel: { ...UI.label, color: 'var(--muted)', fontWeight: 400 },
+  select: { ...UI.select, fontSize: 13, fontFamily: 'var(--font-mono)' },
+  input: { ...UI.input, fontSize: 13 },
   sliderRow: { display: 'flex', alignItems: 'center', gap: 10 },
-  slider: { flex: 1, accentColor: 'var(--accent)' },
-  sliderVal: { width: 36, textAlign: 'right', color: 'var(--text)', fontSize: 13, fontWeight: 600 },
-  statusRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 },
+  slider: { flex: 1 },
+  sliderVal: { width: 40, textAlign: 'right', color: 'var(--text)', fontSize: 12.5, fontWeight: 500, fontFamily: 'var(--font-mono)' },
+  statusRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 },
   dot: (online) => ({
-    width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-    background: online ? 'var(--tint-green-fg)' : 'var(--danger)',
+    width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+    background: online ? 'var(--success)' : 'var(--danger)',
+    boxShadow: `0 0 0 3px color-mix(in srgb, ${online ? 'var(--success)' : 'var(--danger)'} 18%, transparent)`,
   }),
-  statusText: { color: 'var(--muted)' },
-  saveBtn: {
-    alignSelf: 'flex-start',
-    padding: '8px 20px', borderRadius: 8, border: 'none',
-    background: 'var(--accent)', color: 'var(--accent-contrast)',
-    fontSize: 13, fontWeight: 600, cursor: 'pointer',
-  },
-  savedMsg: { fontSize: 12, color: 'var(--tint-green-fg)', alignSelf: 'center' },
+  statusText: { color: 'var(--text-2)' },
+  saveBtn: { ...UI.btnPrimary, alignSelf: 'flex-start', padding: '7px 16px', fontSize: 13 },
+  savedMsg: { fontSize: 12, color: 'var(--success)', alignSelf: 'center' },
   infoBox: {
-    padding: '10px 14px', borderRadius: 8,
-    background: 'var(--accent-soft)',
-    border: '1px solid var(--accent-border)',
-    fontSize: 12, color: 'var(--muted)', lineHeight: 1.6,
+    padding: '10px 12px', borderRadius: 'var(--r)',
+    background: 'var(--surface-2)',
+    border: '1px solid var(--border)',
+    fontSize: 12, color: 'var(--muted)', lineHeight: 1.65,
   },
   loraNone: { color: 'var(--muted)', fontSize: 12, marginTop: 2 },
 }
@@ -193,7 +170,7 @@ export default function SettingsTab({
           <span>桌面通知權限：{notifPerm === 'granted' ? '已授權' : notifPerm === 'denied' ? '已封鎖（請到瀏覽器/系統通知設定開啟）' : notifPerm === 'unsupported' ? '瀏覽器不支援' : '未授權'}</span>
           {notifPerm !== 'granted' && notifPerm !== 'unsupported' && (
             <button
-              style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)', fontSize: 12, cursor: 'pointer' }}
+              style={UI.btnSm}
               onClick={async () => { const p = await requestNotifyPermission(); setNotifPerm(p) }}
             >要求授權</button>
           )}
@@ -430,6 +407,12 @@ export default function SettingsTab({
           )}
         </div>
       )}
+
+      {/* [CN-131] Tag 管理：客製化標籤清單（作品／繪師） */}
+      <div style={S.section}>
+        <div style={S.sectionTitle}>客製化標籤（作品／繪師）</div>
+        <CustomTagsManager />
+      </div>
     </div>
   )
 }

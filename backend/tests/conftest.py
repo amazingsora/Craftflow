@@ -23,3 +23,11 @@ def _isolate_nsfw_guard_flag(monkeypatch):
     """[CN-118] NSFW_GUARD_ENABLED 是 import 時讀的常數；固定為預設 true，避免本機 .env 關閉 debug 時測試漂移。"""
     from app.core import config
     monkeypatch.setattr(config, "NSFW_GUARD_ENABLED", True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_gpu_tier(monkeypatch):
+    """[CN-133] GPU 分級與 hires 開關依本機顯卡／.env 而變；固定為 16g、hires 關（＝現行行為）。"""
+    from app.core import config
+    monkeypatch.setattr(config, "GPU_TIER", "16g")
+    monkeypatch.setattr(config, "HIRES_ENABLED", False)

@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.core.config import COMFYUI_BASE, OLLAMA_BASE, CUSTOM_WORKFLOWS_DIR, DEFAULT_VISION_MODEL, DEFAULT_TEXT_MODEL
+from app.core import config as _cfg
 from app.core import state
+from app.services.ai.gen_profile import get_profile
 from app.services.ai.wf_node_ops import _wf_has_controlnet, _wf_has_ipa as _wf_dict_has_ipa
 from app.services.ai.capability import resolve_capability, resolve_checkpoint_for_workflow
 from app.services.http_local import SESSION
@@ -125,6 +127,10 @@ def get_capabilities():
         # 「增強臉部輪廓」開關是否顯示（家族 profile 有開且 workflow 可注入 FaceDetailer）
         "face_detailer_supported": bool(cap.get("face_detailer_supported")),
         "family":        cap["family"],
+        # [CN-133] GPU 分級與 hires 實際是否生效（全域開關 × 家族 profile × 分級），狀態列顯示用
+        "gpu_tier":      _cfg.GPU_TIER,
+        "gpu_tier_source": _cfg.GPU_TIER_SOURCE,
+        "hires_enabled": bool(_cfg.HIRES_ENABLED and get_profile(cap["family"]).hires_scale),
     }
 
 

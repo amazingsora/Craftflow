@@ -66,3 +66,9 @@ t1.png
 mailmap.txt
 # 客製化標籤（作品／繪師，含版權名稱，只存本機）
 data/custom_tags.json
+data/tag_imports/
+
+# ── 隱私閘門（CN-135）：本機個人詞與本機工具設定 ──────────────────
+data/private_terms.txt
+data/personal_term_map.local.yml
+.claude/settings.local.json

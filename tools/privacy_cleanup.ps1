@@ -8,7 +8,9 @@ $Noreply = "56026769+amazingsora@users.noreply.github.com"
 $Remote  = "git@github.com:amazingsora/Craftflow.git"
 $Backup  = "..\Craftflow_backup_$(Get-Date -Format yyyyMMdd_HHmmss).git"
 $Purge   = @(".env", "data/logs/", "backend/data/vision_cache.json", "backend/data/expand_cache/",
-             "Claude outputs/", "t1.png")
+             "Claude outputs/", "t1.png", ".claude/settings.local.json")
+# 個人詞（.env／custom_tags.json／private_terms.txt）的取代規則，放 repo 外避免中途中止時被 add（CN-135）
+$Replace = "..\craftflow_oss_replacements.txt"
 
 function Confirm-Step($msg) {
     $a = Read-Host "$msg [y/N]"
@@ -34,16 +36,18 @@ git clone --mirror . $Backup
 Write-Host "== 3/5 安裝 git-filter-repo =="
 python -m pip install --quiet git-filter-repo
 
-# 4. 改寫歷史：移除隱私檔案、作者 email 統一為 noreply
+# 4. 改寫歷史：移除隱私檔案、個人詞換成 ***REDACTED***、作者 email 統一為 noreply
 Write-Host "== 4/5 改寫歷史 =="
+python tools\check_oss.py --emit-replace-text $Replace
 $emails = git log --all --format="%ae" | Sort-Object -Unique | Where-Object { $_ -ne $Noreply }
 $map = $emails | ForEach-Object { "amazingsora <$Noreply> <$_>" }
 Set-Content -Path mailmap.txt -Value $map -Encoding UTF8
-$fr = @("filter-repo", "--force", "--invert-paths", "--mailmap", "mailmap.txt")
+$fr = @("filter-repo", "--force", "--invert-paths", "--mailmap", "mailmap.txt", "--replace-text", $Replace)
 foreach ($p in $Purge) { $fr += @("--path", $p) }
 Confirm-Step "即將改寫全部分支的歷史（備份已在 $Backup）。繼續？"
 & git @fr
 Remove-Item mailmap.txt
+Remove-Item $Replace
 
 # 5. 推回 GitHub（filter-repo 會移除 origin）
 Write-Host "== 5/5 force push =="
@@ -51,6 +55,16 @@ git remote add origin $Remote
 Confirm-Step "即將 force push 所有分支與 tag 到 $Remote。繼續？"
 git push origin --force --all
 git push origin --force --tags
+
+# --all 只推本機有的分支；遠端獨有的分支仍帶舊歷史，需另外刪除
+$local  = git for-each-ref --format="%(refname:short)" refs/heads
+$remote = git ls-remote --heads origin | ForEach-Object { ($_ -split "refs/heads/")[1] }
+$stale  = $remote | Where-Object { $local -notcontains $_ }
+if ($stale) {
+    Write-Host "遠端仍有本機沒有的分支（帶未清理的舊歷史）：" -ForegroundColor Yellow
+    $stale | ForEach-Object { Write-Host "  $_" }
+    Write-Host "確認不要後執行：git push origin --delete <分支名>"
+}
 
 Write-Host ""
 Write-Host "完成。後續："

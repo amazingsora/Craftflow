@@ -85,6 +85,7 @@ Local-first private tool for novel writing + AI illustration (FastAPI + React + 
 | Custom series/artist tag dropdown | `data/custom_tags.json` (format: `custom_tags.example.json`; hot reload). CN-122 |
 | Appearance-age / body cards | `backend/appearance_cards.yml` `cards:` / `body_groups:` (shared by both families; Danbooru tags only, one core tag per card, no weights; hot reload). CN-129 / CN-130 |
 | Per-family generation strategy | `services/ai/gen_profile.py` `GEN_PROFILE` |
+| GPU tier (4g/8g/16g), hires second pass | `.env` `GPU_TIER` (default auto), `HIRES_ENABLED` / `HIRES_UPSCALE_MODEL`; tier preset table in `core/config.py`, capability overrides in `gen_profile.apply_tier` (fills only keys absent from `.env`). CN-133/134 |
 
 ## 7. Debugging rules
 
@@ -125,6 +126,7 @@ Local-first private tool for novel writing + AI illustration (FastAPI + React + 
 - `amazingsora/Craftflow` is a **public repo** (only `main` on remote).
 - Not in git: `.env`, `doc/` (purged from history, local only), `data/custom_tags.json`, logs/caches/outputs.
 - Personal style tags / negatives live only in `.env` or `data/custom_tags.json` — **never in yml, tests or `.env.example`**.
+- **Privacy gate** (CN-135): `python tools/check_oss.py`; run `git config core.hooksPath .githooks` once per clone (pre-commit blocks), CI runs the same script. Tests use neutral fake tags only; personal term mappings go in `data/personal_term_map.local.yml`.
 - Services bind `127.0.0.1`; CORS from `config.CORS_ORIGINS`; output PNG metadata stripped by default (`PNG_STRIP_METADATA`).
 
 ## 12. Content guard

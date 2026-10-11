@@ -79,7 +79,7 @@ flowchart LR
 | **驗收標準** | **M**：磁碟上每支 workflow 解析出的 `quality_prefix / negative / negative_extra / style_extra / style_extra_weight` 與遷移前**逐字相同**（比對腳本）<br>**R**：露碧娜 × `Standard_V38` × seed 17021106 × IPA 0.2 × CN 0.75 → 正向尾端為 R1 畫風段、全文無 `flat color`；目視接近 R1 參考圖<br>**T**：`cd backend && pytest tests/` 全綠；新護欄對「複製一支 V41」零登錄通過、對「未知 checkpoint」紅燈<br>**共同**：新增 workflow 不需碰 yml<br>**P**：未設個人鍵 → prompt 與改動前逐字相同；設鍵 → 只作用於該家族，illustrious 出圖接近 ComfyUI K2 |
 | **狀態** | 🔵 執行中（軌 M／R／P 程式面完成並驗證；待使用者本機 pytest、R／P 實機驗收、commit） |
 
-> 09-23 15:40 追加軌 P（使用者：「Anima 額外客製標籤用 `***REDACTED***, @***REDACTED***`，以 `.env` 處理且不參與 git，由使用者自行添加」「SDXL 測試後沒問題走 B」）。併入本案而非另開 SYNC-008：本案 M 尚未 commit、R 未做，另開會第五度提前歸檔；且 P 與 R 改的是同一條 `style_extra` 組裝鏈。
+> 09-23 15:40 追加軌 P（使用者：「Anima 額外客製標籤用 `<作品名>, @<畫師 tag>`，以 `.env` 處理且不參與 git，由使用者自行添加」「SDXL 測試後沒問題走 B」）。併入本案而非另開 SYNC-008：本案 M 尚未 commit、R 未做，另開會第五度提前歸檔；且 P 與 R 改的是同一條 `style_extra` 組裝鏈。
 
 > 開新議題：把本區塊換成新議題卡，舊議題整段移到 `doc/agent_sync/`（見 §3）。
 
@@ -277,8 +277,8 @@ illustrious:
 
 ```
 .env（使用者自填，不進 git）
-PERSONAL_STYLE_EXTRA_ANIMA=***REDACTED***, @***REDACTED***
-PERSONAL_STYLE_EXTRA_ILLUSTRIOUS=***REDACTED***, ***REDACTED***
+PERSONAL_STYLE_EXTRA_ANIMA=<作品名>, @<畫師 tag>
+PERSONAL_STYLE_EXTRA_ILLUSTRIOUS=<作品名>, <畫師 tag>
 PERSONAL_NEGATIVE_EXTRA_ANIMA=(halo:1.5)
 PERSONAL_NEGATIVE_EXTRA_ILLUSTRIOUS=halo
 
@@ -326,8 +326,8 @@ F = _detect_style(workflow).value.upper()（與 families[] 同一個家族判定
 
 1. `cd backend && pytest tests/` → 除 §2.6 已知 6 條外全綠。
 2. **負向對照**：`.env` 不設任何新鍵 → 露碧娜 DEBUG prompt 與改動前**逐字相同**。
-3. illustrious（R 完成後）：露碧娜 × `Standard_V38` × seed 17021106 → 正向尾端 `…, ***REDACTED***, ***REDACTED***`、負向含 `halo`、來源標 `family: illustrious +personal(.env)`；目視接近 ComfyUI K2。
-4. anima：露碧娜 × `AnimaStandardV9_miaomiaoHarem` → 正向含 `(***REDACTED***:2.0), (@***REDACTED***:2.0)`；對照 ComfyUI A 系列。出現光環或角色漂移 → §2.5 裁決是否把 `families.anima.style_extra_weight` 改 1.0（會觸及本案範圍限制 ②）。
+3. illustrious（R 完成後）：露碧娜 × `Standard_V38` × seed 17021106 → 正向尾端 `…, <作品名>, <畫師 tag>`、負向含 `halo`、來源標 `family: illustrious +personal(.env)`；目視接近 ComfyUI K2。
+4. anima：露碧娜 × `AnimaStandardV9_miaomiaoHarem` → 正向含 `(<作品名>:2.0), (@<畫師 tag>:2.0)`；對照 ComfyUI A 系列。出現光環或角色漂移 → §2.5 裁決是否把 `families.anima.style_extra_weight` 改 1.0（會觸及本案範圍限制 ②）。
 
 #### 五、風險與回滾
 
@@ -408,7 +408,7 @@ F = _detect_style(workflow).value.upper()（與 families[] 同一個家族判定
 
 | # | 議題 | Claude §2.1 | Gemini §2.3 | 複核 | 結論 |
 |---|---|---|---|---|---|
-| Q1 | art_style.base_style 與 checkpoint 家族衝突 | 暫採 checkpoint（D1），請表態 | **聽 checkpoint** | DB 現況：`art_styles` 只有 #1「***REDACTED***」`base_style=illustrious`，且**沒有任何角色／專案套用**（`characters.art_style_id`、`projects.art_style_id` 全 NULL） | ✅ 採 D1。另記：`compile` 層的 `_resolve_style()` 仍跟 art_style.base_style 走，衝突情境下兩層不一致——這是**現況即存在**的問題，本案不改變也不惡化，轉 BACKLOG |
+| Q1 | art_style.base_style 與 checkpoint 家族衝突 | 暫採 checkpoint（D1），請表態 | **聽 checkpoint** | DB 現況：`art_styles` 只有 #1「<作品名>」`base_style=illustrious`，且**沒有任何角色／專案套用**（`characters.art_style_id`、`projects.art_style_id` 全 NULL） | ✅ 採 D1。另記：`compile` 層的 `_resolve_style()` 仍跟 art_style.base_style 走，衝突情境下兩層不一致——這是**現況即存在**的問題，本案不改變也不惡化，轉 BACKLOG |
 | Q2 | 其他路徑依賴檔名鍵？ | grep 只見 `character_design_service` | 同意，僅 4 處 | 一致 | ✅ 無分歧 |
 | Q3 | `_detect_style` 退 SDXL 加 warn-once | 列入 M（風險表） | **必須加**，且要與 `_profile_for` miss 分開兩種訊息 | `_detect_style` 有兩個退路：讀檔失敗（`workflow_builder.py:456-459`）與 pattern 全不中（函式尾） | ✅ 採 Gemini 細化：兩個退路各自 warn-once，訊息不同 |
 | Q4 | M／R 拆兩步 | 拆 | **極度必要**，並稱可用 `snapshots.json` 做 100% 等價驗證 | ❌ **Gemini 的驗證手段不成立**：`tests/golden/cases.py:128-140` 把 profile negative **逐字抄成字串常數**直接餵 `compile()`，golden **不經過** `_profile_for`，驗不到 M 的結構遷移 | ✅ 拆兩步；M 的等價驗收**只能靠 §2.1 四-1 的比對腳本**，golden 只負責「compile 行為沒變」 |
@@ -546,7 +546,7 @@ F = _detect_style(workflow).value.upper()（與 families[] 同一個家族判定
 | 全量 pytest | **426 passed / 6 failed / 9 skipped**；6 條＝§2.6「二、」既有失敗清單逐條相同，新增失敗 0（測試數 +13） |
 | golden `python -m tests.golden.run_diff` | 13 筆全數一致 |
 | 負向對照 | 暫移 `conftest.py` → 10 條既有測試因讀到真實 `.env` 紅燈；放回全綠 ⇒ 隔離確實必要且有效 |
-| 真實設定解析（真 `.env`＋真 yml＋磁碟 workflow） | `Standard_V38` → `family: illustrious +personal(.env)`，正向尾端 `…, high detail, ***REDACTED***, ***REDACTED***`、負向 `…, halo`（＝ComfyUI K2）；`AnimaStandardV9_miaomiaoHarem` → `family: anima +personal(.env)`，前置 `(***REDACTED***:2.0), (@***REDACTED***:2.0)`、負向 `…, (halo:1.5)` |
+| 真實設定解析（真 `.env`＋真 yml＋磁碟 workflow） | `Standard_V38` → `family: illustrious +personal(.env)`，正向尾端 `…, high detail, <作品名>, <畫師 tag>`、負向 `…, halo`（＝ComfyUI K2）；`AnimaStandardV9_miaomiaoHarem` → `family: anima +personal(.env)`，前置 `(<作品名>:2.0), (@<畫師 tag>:2.0)`、負向 `…, (halo:1.5)` |
 
 **待使用者本機**
 

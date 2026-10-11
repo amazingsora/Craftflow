@@ -2,101 +2,41 @@ import { useState, useRef, useEffect } from 'react'
 import CapabilityNotice from './CapabilityNotice'
 import { FitImage, renderInlineMd } from './ImageViewer'
 import { UI } from './sharedStyles'
+import { Icon } from './Icon.jsx'
+import { Panel, FieldHead, Switch, Slider, Empty, Progress } from './ui.jsx'
 
 const S = {
-  root: { display: 'flex', gap: 24, alignItems: 'flex-start' },
-  left: { flex: '0 0 340px', display: 'flex', flexDirection: 'column', gap: 12 },
-  right: { flex: 1, display: 'flex', flexDirection: 'column', gap: 16 },
-  dropzone: { ...UI.dropzone, minHeight: 220 },
+  root: { display: 'grid', gap: 24, alignItems: 'start', '--split-left': 'minmax(320px, 400px)' },   // 欄寬見 index.css .cf-split
+  left: { display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 },
+  right: { display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 },
+  dropzone: { ...UI.dropzone, minHeight: 240 },
   dropzoneActive: UI.dropzoneActive,
-  previewImg: { width: '100%', objectFit: 'contain', maxHeight: 260 },
-  hint: { color: 'var(--muted)', textAlign: 'center', padding: 20, lineHeight: 2, fontSize: 13 },
-  label: { fontSize: 12, color: 'var(--muted)', marginBottom: 3, display: 'block' },
-  textarea: {
-    width: '100%',
-    background: 'var(--surface-2)',
-    border: '1px solid var(--border)',
-    borderRadius: 8,
-    color: 'var(--text)',
-    padding: '10px 12px',
-    fontSize: 14,
-    resize: 'vertical',
-    fontFamily: 'inherit',
-    outline: 'none',
-    minHeight: 90,
-  },
+  previewImg: { width: '100%', objectFit: 'contain', maxHeight: 300, display: 'block' },
+  hint: { color: 'var(--muted)', textAlign: 'center', padding: 20, lineHeight: 1.8, fontSize: 13, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 },
+  label: UI.label,
+  textarea: { ...UI.textarea, minHeight: 96 },
   btn: UI.btnPrimary,
   btnDisabled: UI.btnDisabled,
-  btnSecondary: {
-    padding: '7px 12px',
-    borderRadius: 8,
-    border: '1px solid var(--border)',
-    background: 'transparent',
-    color: 'var(--text)',
-    fontSize: 13,
-    cursor: 'pointer',
-    alignSelf: 'flex-start',
-  },
-  error: { color: 'var(--danger)', fontSize: 13 },
-  // Result panels
-  resultImg: { width: '100%', borderRadius: 12, display: 'block' },
-  resultImgPlaceholder: {
-    minHeight: 200,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    border: '2px dashed var(--border)',
-    borderRadius: 12,
-    color: 'var(--muted)',
-    fontSize: 13,
-  },
-  adviceCard: {
-    background: 'var(--surface-2)',
-    border: '1px solid var(--border)',
-    borderRadius: 12,
-    padding: '16px 20px',
-    lineHeight: 1.9,
-    fontSize: 14,
-    color: 'var(--text)',
-    whiteSpace: 'pre-wrap',
-  },
-  advicePlaceholder: {
-    minHeight: 120,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    border: '2px dashed var(--border)',
-    borderRadius: 12,
-    color: 'var(--muted)',
-    fontSize: 13,
-  },
+  btnSecondary: UI.btnSm,
+  error: { ...UI.error, padding: '8px 10px', borderRadius: 'var(--r)', background: 'var(--tint-red-bg)' },
+  sub: { fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 },
+  adviceCard: { fontSize: 14, lineHeight: 1.9, color: 'var(--text)', whiteSpace: 'pre-wrap' },
   promptPill: {
-    background: 'var(--tint-purple-bg)',
-    border: '1px solid var(--tint-purple-bg)',
-    borderRadius: 8,
-    padding: '8px 14px',
-    fontSize: 12,
-    color: 'var(--tint-purple-fg)',
-    wordBreak: 'break-all',
-    lineHeight: 1.6,
+    fontFamily: 'var(--font-mono)', background: 'var(--code-bg)', border: '1px solid var(--border)',
+    borderRadius: 'var(--r)', padding: '10px 12px', fontSize: 12, color: 'var(--code-fg)',
+    wordBreak: 'break-word', lineHeight: 1.7,
   },
-  sectionLabel: { fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 },
+  sectionLabel: UI.sectionLabel,
   modelBadge: {
-    fontSize: 11, color: 'var(--muted)',
-    background: 'var(--bg)',
-    border: '1px solid var(--border)',
-    borderRadius: 6,
-    padding: '4px 8px',
-    display: 'inline-block',
+    fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-2)',
+    background: 'var(--surface-2)', border: '1px solid var(--border)',
+    borderRadius: 'var(--r-sm)', padding: '1px 6px', display: 'inline-block',
   },
-  loading: {
-    display: 'flex', flexDirection: 'column',
-    alignItems: 'center', gap: 12,
-    padding: 48, color: 'var(--muted)', fontSize: 13,
-  },
+  loading: { ...UI.loading, padding: 0, width: '100%', maxWidth: 340 },
   spinner: UI.spinner,
-  imgRow: { display: 'flex', gap: 12 },
-  imgHalf: { flex: 1, minWidth: 0 },
+  imgRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--border)' },
+  imgHalf: { minWidth: 0, background: 'var(--canvas)', padding: 16, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' },
+  imgCap: { alignSelf: 'flex-start', fontFamily: 'var(--font-mono)', fontSize: 10.5, letterSpacing: '.06em', color: 'var(--muted)', textTransform: 'uppercase' },
 }
 
 const PLACEHOLDER_QUESTIONS = [
@@ -216,212 +156,161 @@ export default function ComposeTab({ onAddHistory, activeVisionModel, capability
   const dzStyle = { ...S.dropzone, ...(dragging ? S.dropzoneActive : {}) }
 
   return (
-    <div style={S.root}>
+    <div style={S.root} className="cf-split">
       {/* ── 左：輸入 ── */}
       <div style={S.left}>
-        <label style={S.label}>上傳草圖</label>
-        <div
-          style={dzStyle}
-          onDrop={onDrop}
-          onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-          onDragLeave={() => setDragging(false)}
-          onClick={() => inputRef.current.click()}
-        >
-          {preview
-            ? <img src={preview} style={S.previewImg} alt="preview" />
-            : (
-              <div style={S.hint}>
-                拖曳草圖到此處<br />
-                或點擊選擇檔案
-              </div>
-            )
-          }
-        </div>
-        <input
-          ref={inputRef} type="file" accept="image/*"
-          style={{ display: 'none' }}
-          onChange={(e) => handleFile(e.target.files[0])}
-        />
-
-        {/* IP-Adapter 角色外觀參考；不支援時顯示原因＋替代方案 */}
-        {!ipaSupported && (
-          <CapabilityNotice title="角色外觀參考" kind="ipa" family={capability.family} />
-        )}
-        {ipaSupported && (
-        <div style={{
-          border: '1px solid var(--border)', borderRadius: 10,
-          padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10,
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>角色外觀參考</span>
-            <button
-              style={{
-                fontSize: 12, padding: '3px 10px', borderRadius: 6,
-                border: ipaEnabled ? 'none' : '1px solid var(--border)',
-                cursor: 'pointer',
-                background: ipaEnabled ? 'var(--accent)' : 'transparent',
-                color: ipaEnabled ? 'var(--accent-contrast)' : 'var(--muted)',
-              }}
-              onClick={() => setIpaEnabled(v => !v)}
-            >
-              {ipaEnabled ? '已啟用' : '未啟用'}
-            </button>
+        <Panel index="01" title="上傳草圖" icon="upload">
+          <div
+            className="cf-drop"
+            style={dzStyle}
+            onDrop={onDrop}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+            onDragLeave={() => setDragging(false)}
+            onClick={() => inputRef.current.click()}
+          >
+            {preview
+              ? <img src={preview} style={S.previewImg} alt="草圖預覽" />
+              : (
+                <div style={S.hint}>
+                  <Icon name="image-plus" size={22} />
+                  <span>拖曳草圖到此處<br />或點擊選擇檔案</span>
+                </div>
+              )
+            }
           </div>
-          {ipaEnabled && (
-            <div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
-                以草圖本身作為外觀參考，生成有色彩的構圖版本。
-              </div>
-              <label style={{ ...S.label, marginBottom: 4 }}>
-                參考強度：{ipaWeight.toFixed(2)}
-                <span style={{ marginLeft: 6, opacity: 0.6 }}>（0.6 建議起點）</span>
-              </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
-                <input type="range" min={0.1} max={1.5} step={0.05}
-                  value={ipaWeight} style={{ flex: 1, accentColor: 'var(--accent)' }}
-                  onChange={e => setIpaWeight(Number(e.target.value))} />
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-              </div>
-            </div>
-          )}
-        </div>
-        )}
-
-        {/* 草圖引導。cnUsable 涵蓋「原生 CN」與「img2img 替代」；兩者皆無才顯示不支援卡片 */}
-        {!cnUsable && (
-          <CapabilityNotice title="草圖線稿引導" kind="cn" family={capability.family} fallback={cnFallback} />
-        )}
-        {cnUsable && (
-        <div style={{
-          border: '1px solid var(--border)', borderRadius: 10,
-          padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10,
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-              {cnSupported ? '草圖線稿引導 (CN)' : '構圖引導 (img2img)'}
-            </span>
-            <button
-              style={{
-                fontSize: 12, padding: '3px 10px', borderRadius: 6,
-                border: cnEnabled ? 'none' : '1px solid var(--border)',
-                cursor: 'pointer',
-                background: cnEnabled ? 'var(--accent)' : 'transparent',
-                color: cnEnabled ? '#fff' : 'var(--muted)',
-              }}
-              onClick={() => setCnEnabled(v => !v)}
-            >
-              {cnEnabled ? '已啟用' : '未啟用'}
-            </button>
-          </div>
-          {cnEnabled && (
-            <div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
-                以草圖線稿引導生圖構圖，強度越高越貼近草圖姿勢。
-              </div>
-              <label style={{ ...S.label, marginBottom: 4 }}>
-                引導強度：{cnWeight.toFixed(2)}
-                <span style={{ marginLeft: 6, opacity: 0.6 }}>（0.85 建議起點）</span>
-              </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>0.1</span>
-                <input type="range" min={0.1} max={1.5} step={0.05}
-                  value={cnWeight} style={{ flex: 1, accentColor: 'var(--accent)' }}
-                  onChange={e => setCnWeight(Number(e.target.value))} />
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>1.5</span>
-              </div>
-            </div>
-          )}
-        </div>
-        )}
-
-        <div>
-          <label style={S.label}>你的問題 <span style={{ opacity: 0.5 }}>（選填，空白則 AI 自動分析）</span></label>
-          <textarea
-            style={S.textarea}
-            placeholder={PLACEHOLDER_QUESTIONS[Math.floor(Math.random() * PLACEHOLDER_QUESTIONS.length)]}
-            value={question}
-            onChange={(e) => { setQuestion(e.target.value); sessionStorage.setItem('compose_question', e.target.value) }}
+          <input
+            ref={inputRef} type="file" accept="image/*"
+            style={{ display: 'none' }}
+            onChange={(e) => handleFile(e.target.files[0])}
           />
-        </div>
+        </Panel>
 
-        {activeVisionModel && (
-          <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-            視覺模型：<span style={S.modelBadge}>{activeVisionModel}</span>
-            <span style={{ marginLeft: 6, opacity: 0.6 }}>（於 ⚙ 設定切換）</span>
+        <Panel index="02" title="引導" icon="sliders-horizontal">
+          {/* IP-Adapter 角色外觀參考；不支援時顯示原因＋替代方案 */}
+          {!ipaSupported && (
+            <CapabilityNotice title="角色外觀參考" kind="ipa" family={capability.family} />
+          )}
+          {ipaSupported && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <Switch label="角色外觀參考" sub="IP-Adapter" checked={ipaEnabled} onChange={() => setIpaEnabled(v => !v)} />
+              {ipaEnabled && (
+                <>
+                  <div style={S.sub}>以草圖本身作為外觀參考，生成有色彩的構圖版本。</div>
+                  <Slider label="參考強度" hint="0.6 建議起點" value={ipaWeight} min={0.1} max={1.5} step={0.05}
+                    minLabel="0.1" maxLabel="1.5" format={v => v.toFixed(2)} onChange={setIpaWeight} />
+                </>
+              )}
+            </div>
+          )}
+
+          <div style={{ height: 1, background: 'var(--border)', margin: '0 -14px' }} />
+
+          {/* 草圖引導。cnUsable 涵蓋「原生 CN」與「img2img 替代」；兩者皆無才顯示不支援卡片 */}
+          {!cnUsable && (
+            <CapabilityNotice title="草圖線稿引導" kind="cn" family={capability.family} fallback={cnFallback} />
+          )}
+          {cnUsable && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <Switch label={cnSupported ? '草圖線稿引導' : '構圖引導'} sub={cnSupported ? 'ControlNet' : 'img2img'} checked={cnEnabled} onChange={() => setCnEnabled(v => !v)} />
+              {cnEnabled && (
+                <>
+                  <div style={S.sub}>以草圖線稿引導生圖構圖，強度越高越貼近草圖姿勢。</div>
+                  <Slider label="引導強度" hint="0.85 建議起點" value={cnWeight} min={0.1} max={1.5} step={0.05}
+                    minLabel="0.1" maxLabel="1.5" format={v => v.toFixed(2)} onChange={setCnWeight} />
+                </>
+              )}
+            </div>
+          )}
+        </Panel>
+
+        <Panel index="03" title="提問" icon="messages-square">
+          <div>
+            <FieldHead label="你的問題" hint="選填，空白則 AI 自動分析" />
+            <textarea
+              style={S.textarea}
+              placeholder={PLACEHOLDER_QUESTIONS[Math.floor(Math.random() * PLACEHOLDER_QUESTIONS.length)]}
+              value={question}
+              onChange={(e) => { setQuestion(e.target.value); sessionStorage.setItem('compose_question', e.target.value) }}
+            />
           </div>
-        )}
+          {activeVisionModel && (
+            <div style={S.sub}>
+              視覺模型 <span style={S.modelBadge}>{activeVisionModel}</span>
+              <span style={{ marginLeft: 6, color: 'var(--faint)' }}>於「設定」切換</span>
+            </div>
+          )}
+        </Panel>
 
+        {error && <p style={S.error}>{error}</p>}
         <button
-          style={{ ...S.btn, ...(canSubmit ? {} : S.btnDisabled) }}
+          style={{ ...S.btn, height: 42, ...(canSubmit ? {} : S.btnDisabled) }}
           disabled={!canSubmit}
           onClick={onSubmit}
         >
-          {loading ? '分析中...' : '生成意見 + 參考圖'}
+          {loading
+            ? <><span style={{ width: 14, height: 14, border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin .8s linear infinite' }} />分析中 {elapsed}s</>
+            : <><Icon name="sparkles" size={15} />生成意見 + 參考圖</>}
         </button>
-        {error && <p style={S.error}>{error}</p>}
       </div>
 
       {/* ── 右：輸出 ── */}
       <div style={S.right}>
-        {loading && (
-          <div style={S.loading}>
-            <div style={S.spinner} />
-            <div style={{ width: '100%', maxWidth: 300, background: 'var(--border)', height: 6, borderRadius: 3, overflow: 'hidden', position: 'relative', marginTop: 12 }}>
-              <div style={{ position: 'absolute', height: '100%', background: 'var(--accent)', borderRadius: 3, animation: 'indeterminate 1.6s ease-in-out infinite' }} />
+        <Panel
+          title="草稿 → AI 參考圖" icon="image" flush
+          actions={!loading && result ? <button style={S.btnSecondary} onClick={downloadResult}><Icon name="download" size={13} />下載參考圖</button> : null}
+        >
+          {loading && (
+            <div className="cf-dotgrid" style={{ minHeight: 420, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--canvas)' }}>
+              <div style={S.loading}>
+                <div style={S.spinner} />
+                <div style={{ width: '100%', marginTop: 8 }}><Progress /></div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>AI 分析草圖 + ComfyUI 生成參考圖…</div>
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>已耗時 {elapsed}s（通常 15–25s）</div>
+              </div>
             </div>
-            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4 }}>AI 分析草圖 + ComfyUI 生成參考圖...</div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>已耗時：{elapsed}s（通常 15-25s）</div>
-          </div>
-        )}
+          )}
+          {!loading && result && (
+            <div style={S.imgRow}>
+              <div style={S.imgHalf}>
+                <span style={S.imgCap}>Sketch</span>
+                <FitImage src={preview} alt="原始草圖" maxHeight="min(60vh, 560px)" />
+              </div>
+              <div style={S.imgHalf}>
+                <span style={S.imgCap}>AI Reference</span>
+                <FitImage src={`data:image/png;base64,${result.image}`} alt="AI 參考圖" maxHeight="min(60vh, 560px)" />
+              </div>
+            </div>
+          )}
+          {!loading && !result && (
+            <div className="cf-dotgrid" style={{ backgroundColor: 'var(--canvas)', padding: 24 }}>
+              <Empty icon="image" title="參考圖將顯示於此" style={{ background: 'transparent', border: 'none', minHeight: 300 }}>
+                上傳草圖後按「生成意見 + 參考圖」
+              </Empty>
+            </div>
+          )}
+        </Panel>
 
         {!loading && result && (
-          <>
-            {/* 草稿 vs 生成參考圖 */}
-            <div>
-              <p style={S.sectionLabel}>草稿 → AI 參考圖</p>
-              <div style={S.imgRow}>
-                <div style={S.imgHalf}>
-                  <FitImage src={preview} alt="original" maxHeight="min(60vh, 560px)" />
-                </div>
-                <div style={S.imgHalf}>
-                  <FitImage src={`data:image/png;base64,${result.image}`} alt="generated reference" maxHeight="min(60vh, 560px)" />
-                </div>
-              </div>
-              <button style={{ ...S.btnSecondary, marginTop: 8 }} onClick={downloadResult}>
-                下載參考圖
-              </button>
-            </div>
-
-            {/* 生成 prompt */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                <p style={{ ...S.sectionLabel, marginBottom: 0 }}>Ollama 生成的 Prompt{result.style ? `（${String(result.style).toUpperCase()}）` : ''}{result.mechanism ? ` · 引導：${result.mechanism}` : ''}</p>
-                {onSendToGenerate && (
-                  <button
-                    style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: 'none', background: 'var(--accent)', color: 'var(--accent-contrast)', cursor: 'pointer', fontWeight: 600 }}
-                    onClick={() => onSendToGenerate(question.trim())}
-                    title="將此次問題描述帶入文字→生圖 Tab"
-                  >→ 送到生圖</button>
-                )}
-              </div>
-              <div style={S.promptPill}>{result.suggested_prompt}</div>
-            </div>
-
-            {/* Advice */}
-            <div>
-              <p style={S.sectionLabel}>構圖意見</p>
-              <div style={S.adviceCard}>{renderInlineMd(result.advice)}</div>
-            </div>
-          </>
+          <Panel
+            title={<>Ollama 生成的 Prompt{result.style ? <span style={{ ...S.modelBadge, marginLeft: 8 }}>{String(result.style).toUpperCase()}</span> : null}{result.mechanism ? <span style={{ ...S.modelBadge, marginLeft: 6 }}>引導 {result.mechanism}</span> : null}</>}
+            icon="pen-line"
+            actions={onSendToGenerate ? (
+              <button
+                style={{ ...UI.btnSm, color: 'var(--accent)', borderColor: 'var(--accent-border)', background: 'var(--accent-soft)' }}
+                onClick={() => onSendToGenerate(question.trim())}
+                title="將此次問題描述帶入文字→生圖 Tab"
+              ><Icon name="arrow-right" size={13} />送到生圖</button>
+            ) : null}
+          >
+            <div style={S.promptPill}>{result.suggested_prompt}</div>
+          </Panel>
         )}
 
-        {!loading && !result && (
-          <>
-            <div style={S.resultImgPlaceholder}>參考圖將顯示於此</div>
-            <div style={S.advicePlaceholder}>構圖意見將顯示於此</div>
-          </>
-        )}
+        <Panel title="構圖意見" icon="messages-square">
+          {!loading && result
+            ? <div style={S.adviceCard}>{renderInlineMd(result.advice)}</div>
+            : <div style={{ ...S.sub, padding: '14px 0', textAlign: 'center' }}>構圖意見將顯示於此</div>}
+        </Panel>
       </div>
     </div>
   )

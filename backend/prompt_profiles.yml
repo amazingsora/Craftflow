@@ -45,7 +45,7 @@ families:
     style_extra: ""
     # [CN-116] SYNC-008（2026-09-24）：2.0 → 1.0，並以 tag_order 把畫風段放到 1girl, solo 之後。
     #   ComfyUI 提示詞精度 A/B：A0（2.0 加權前置）不合格、A4/A5（不加權、主體後）合格。
-    #   2.0 時 miaomiao 會把 ***REDACTED***／畫師名畫成圖底文字（#881）。回滾＝改回 2.0 並刪 tag_order。
+    #   2.0 時 miaomiao 會把作品名／畫師名畫成圖底文字（#881）。回滾＝改回 2.0 並刪 tag_order。
     style_extra_weight: 1.0
     tag_order: subject_first
     negative: >-

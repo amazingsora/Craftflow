@@ -152,7 +152,7 @@ def _find_main_ksampler_id(wf: dict) -> str | None:
     """回傳主取樣 KSampler 的 node id [FD-098]"""
     ks_ids = [
         k for k, n in wf.items()
-        if isinstance(n, dict) and n.get("class_type") == "KSampler"
+        if isinstance(n, dict) and n.get("class_type") == "KSampler" and not _is_hires_node(n)
     ]
     if not ks_ids:
         return None
@@ -343,6 +343,92 @@ def _inject_face_detailer(wf: dict, denoise: float, steps: int) -> bool:
     logger.info("[face-detailer] 已注入：VAEDecode(%s) → FaceDetailerPipe(%s) → %s，denoise=%.2f steps=%d",
                 decode_id, fd_id, consumers, denoise, steps)
     return True
+
+
+# [CN-134] Hires 第二段：以 _meta 標記第二段 KSampler（不被認成主取樣），參數一併存入供 history 讀回
+_HIRES_META_KEY = "craftflow_hires"
+# 尺寸取 16 的倍數：VAE 8 × DiT patch 2（Anima）；SDXL 亦可整除
+_HIRES_SIZE_MULTIPLE = 16
+_HIRES_IMAGE_SCALE_METHOD = "lanczos"
+_HIRES_LATENT_SCALE_METHOD = "nearest-exact"
+
+
+def _is_hires_node(node: dict) -> bool:
+    return isinstance(node.get("_meta"), dict) and _HIRES_META_KEY in node["_meta"]
+
+
+def hires_target_size(width: int, height: int, scale: float) -> tuple[int, int]:
+    """主畫布 × 倍率，四捨五入到 16 的倍數"""
+    m = _HIRES_SIZE_MULTIPLE
+    return (max(m, round(width * scale / m) * m), max(m, round(height * scale / m) * m))
+
+
+def _inject_hires(wf: dict, *, width: int, height: int, scale: float, denoise: float, steps: int,
+                  sampler: str | None = None, scheduler: str | None = None,
+                  upscale_model: str | None = None) -> bool:
+    """主 KSampler 後插入放大＋第二段重繪，主 VAEDecode 的消費端改接新結果 [FD-131]"""
+    if any(isinstance(n, dict) and _is_hires_node(n) for n in wf.values()):
+        logger.info("[hires] workflow 已含 hires 第二段，不重複注入")
+        return False
+    ks_id = _find_main_ksampler_id(wf)
+    if ks_id is None:
+        logger.info("[hires] 缺 KSampler，略過注入")
+        return False
+    decode_id = next((k for k, n in wf.items()
+                      if isinstance(n, dict) and n.get("class_type") == "VAEDecode"
+                      and n.get("inputs", {}).get("samples") == [ks_id, 0]), None)
+    if decode_id is None:
+        logger.warning("[hires] 找不到主 KSampler(%s) 的 VAEDecode，略過注入", ks_id)
+        return False
+
+    vae_src = wf[decode_id]["inputs"].get("vae")
+    tw, th = hires_target_size(width, height, scale)
+    consumers = [(k, key) for k, n in wf.items() if isinstance(n, dict)
+                 for key, v in n.get("inputs", {}).items() if v == [decode_id, 0]]
+    nid = max((int(k) for k in wf if k.isdigit()), default=0) + 1
+
+    def _add(class_type: str, inputs: dict, meta: dict | None = None) -> list:
+        nonlocal nid
+        node_id = str(nid)
+        nid += 1
+        wf[node_id] = {"class_type": class_type, "inputs": inputs}
+        if meta:
+            wf[node_id]["_meta"] = meta
+        return [node_id, 0]
+
+    if upscale_model:
+        loader = _add("UpscaleModelLoader", {"model_name": upscale_model})
+        up = _add("ImageUpscaleWithModel", {"upscale_model": loader, "image": [decode_id, 0]})
+        scaled = _add("ImageScale", {"image": up, "upscale_method": _HIRES_IMAGE_SCALE_METHOD,
+                                     "width": tw, "height": th, "crop": "disabled"})
+        latent = _add("VAEEncode", {"pixels": scaled, "vae": vae_src})
+    else:
+        latent = _add("LatentUpscale", {"samples": [ks_id, 0], "upscale_method": _HIRES_LATENT_SCALE_METHOD,
+                                        "width": tw, "height": th, "crop": "disabled"})
+
+    params = {"scale": scale, "width": tw, "height": th, "denoise": round(float(denoise), 2),
+              "steps": int(steps), "upscale_model": upscale_model or None}
+    ks_inputs = dict(wf[ks_id].get("inputs", {}))
+    ks_inputs.update({"latent_image": latent, "steps": int(steps), "denoise": round(float(denoise), 2)})
+    if sampler:
+        ks_inputs["sampler_name"] = sampler
+    if scheduler:
+        ks_inputs["scheduler"] = scheduler
+    ks2 = _add("KSampler", ks_inputs, meta={"title": "Hires (Craftflow)", _HIRES_META_KEY: params})
+    decoded = _add("VAEDecode", {"samples": ks2, "vae": vae_src})
+    for k, key in consumers:
+        wf[k]["inputs"][key] = decoded
+    logger.info("[hires] 已注入：KSampler(%s) → %s → %dx%d denoise=%.2f steps=%d → %s",
+                ks_id, upscale_model or "latent", tw, th, denoise, steps, consumers)
+    return True
+
+
+def hires_params(wf: dict) -> dict | None:
+    """讀回已注入的 hires 參數（history 用）；未注入回 None"""
+    for n in wf.values():
+        if isinstance(n, dict) and _is_hires_node(n):
+            return dict(n["_meta"][_HIRES_META_KEY])
+    return None
 
 
 # [CN-097] LLLite 是 MODEL 層注入（不碰 latent），與 CN/img2img 三者互斥；node_class 由呼叫端傳入

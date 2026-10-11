@@ -1,0 +1,2 @@
+# Shell hooks must keep LF or sh fails on \r (CN-135)
+.githooks/* text eol=lf

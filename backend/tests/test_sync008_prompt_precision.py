@@ -100,13 +100,13 @@ def test_templates_render_and_drop_whole_outfit_example():
 def test_reorder_subject_first_matches_comfyui_a4():
     assembled = (
         "1girl, child, petite, masterpiece, best quality, absurdres, safe, solo, brown hair, "
-        "short twintails, grey jacket, full body, standing, single character, ***REDACTED***, @***REDACTED***"
+        "short twintails, grey jacket, full body, standing, single character, example series, @example artist"
     )
     out = _reorder_subject_first(
-        assembled, "masterpiece, best quality, absurdres, safe", "***REDACTED***, @***REDACTED***",
+        assembled, "masterpiece, best quality, absurdres, safe", "example series, @example artist",
     )
     assert out == (
-        "masterpiece, best quality, absurdres, safe, 1girl, solo, ***REDACTED***, @***REDACTED***, "
+        "masterpiece, best quality, absurdres, safe, 1girl, solo, example series, @example artist, "
         "child, petite, brown hair, short twintails, grey jacket, full body, standing, single character"
     )
 

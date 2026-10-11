@@ -41,6 +41,7 @@ class Character(Base):
     ai_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     outfit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     concept_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
+    concept_excluded: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)  # [CN-132] 不參與生成的概念圖檔名
     ai_generated_images: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
     age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # cm
