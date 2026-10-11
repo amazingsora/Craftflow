@@ -225,6 +225,8 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 3px; }
 .cf-hover-parent:hover .cf-reveal, .cf-reveal:focus-within { opacity: 1; }
 .cf-nav-item:hover { background: var(--hover); color: var(--text) !important; }
 .cf-link:hover { color: var(--text) !important; background: var(--hover); }
+.cf-backbtn:hover { background: var(--accent) !important; color: #fff !important; }
+.cf-backbtn:focus-visible { box-shadow: var(--focus); outline: none; }
 .cf-drop:hover { border-color: var(--accent) !important; color: var(--accent) !important; }
 .cf-switch input:focus-visible + span { box-shadow: var(--focus); }
 .cf-dotgrid { background-image: radial-gradient(var(--border-strong) 1px, transparent 1px); background-size: 16px 16px; }
@@ -232,7 +234,7 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 3px; }
 /* ── 響應式版型（inline style 無法寫 media query） ───────────── */
 .cf-detail { grid-template-columns: minmax(300px, 340px) minmax(420px, 1.25fr) minmax(320px, 1fr); }
 .cf-detail--nosum { grid-template-columns: minmax(300px, 340px) minmax(0, 1fr); }
-.cf-detail > :nth-child(3) { position: sticky; top: 16px; max-height: calc(100vh - 112px); overflow-y: auto; border-radius: var(--r-lg); }
+.cf-detail > :nth-child(3) { position: sticky; top: calc(var(--cf-backbar-h, 0px) + 16px); max-height: calc(100vh - 112px - var(--cf-backbar-h, 0px)); overflow-y: auto; border-radius: var(--r-lg); }
 .cf-split { grid-template-columns: var(--split-left, minmax(380px, 560px)) minmax(0, 1fr); }
 @media (max-width: 1360px) {
   .cf-detail { grid-template-columns: minmax(280px, 320px) minmax(0, 1fr); grid-template-rows: auto 1fr; }   /* 摘要疊在角色資料下方 */

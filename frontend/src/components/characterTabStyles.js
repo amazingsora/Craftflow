@@ -9,6 +9,9 @@ export const S = {
   breadcrumb: { fontSize: 13, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   breadSep: { color: 'var(--faint)' },
   breadLink: { color: 'var(--muted)', cursor: 'pointer', textDecoration: 'none', padding: '2px 4px', margin: '0 -4px', borderRadius: 'var(--r-sm)' },
+  backBar: { position: 'sticky', top: 0, zIndex: 6, display: 'flex', alignItems: 'center', gap: 14, marginBottom: -8, background: 'var(--bg)', borderBottom: '1px solid var(--border)' },
+  backBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', flexShrink: 0, border: '1px solid var(--accent-border)', borderRadius: 'var(--r)', background: 'var(--accent-soft)', color: 'var(--accent)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' },
+  backCrumb: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 13, color: 'var(--muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
 
   addBtn: { ...UI.btnPrimary, padding: '7px 14px', fontSize: 13 },
   backBtn: { ...UI.btnGhost, color: 'var(--muted)' },

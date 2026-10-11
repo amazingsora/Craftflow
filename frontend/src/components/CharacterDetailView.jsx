@@ -73,6 +73,8 @@ function _initVariant(v = {}, charId = null, slot = null) {
   }
 }
 
+const BACKBAR_H = 52   // 返回列高度；右欄標題列與摘要欄的 sticky 位移都跟著它
+
 export function CharacterDetailView({ character: initChar, project, allFactions, onBack, onDeleted, onAddHistory, onSendToGenerate, capability = { ipa_supported: true, cn_supported: true } }) {
   const ipaSupported = capability.ipa_supported
   const cnSupported  = capability.cn_supported
@@ -758,19 +760,30 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
     return !v
   })
 
-  // 頁首（名稱／版本分頁／帶入生圖）放在左欄最上方，主版本與變體共用
+  // 「以此角色生圖」放「角色資料」標題列右側（左欄頁首的全寬按鈕太容易誤按）
+  const sendToGenButton = onSendToGenerate && (
+    <button
+      style={{ ...UI.btnSecondary, padding: '6px 12px', color: 'var(--accent)', borderColor: 'var(--accent-border)', background: 'var(--accent-soft)', fontWeight: 600, ...(sendingToGen ? { opacity: 0.7, cursor: 'wait' } : {}) }}
+      disabled={sendingToGen}
+      onClick={async () => {
+        // 後端即時編譯英文識別段；Ollama 失敗時回中文 fallback，放回中文描述欄
+        setSendingToGen(true); setError(null)
+        try {
+          const d = await (await request(`/characters/${char.id}/identity-prompt`)).json()
+          onSendToGenerate(d.source === 'compiled'
+            ? { en: d.positive, negative: d.negative, zh: '', characterId: char.id }
+            : { en: '', zh: d.zh, characterId: char.id })
+        } catch (e) { setError(e.message) } finally { setSendingToGen(false) }
+      }}
+      title="將角色識別段（英文 tag）帶入文字→生圖 Tab"
+    >{sendingToGen ? <><Spinner />編譯中…</> : <><Icon name="wand-sparkles" size={14} />以此角色生圖</>}</button>
+  )
+
+  // 頁首（名稱／版本分頁）放在左欄最上方，主版本與變體共用
   const pageHead = (
     <>
       <div style={{ minWidth: 0 }}>
-        <div style={S.breadcrumb}>
-          <span className="cf-link" style={S.breadLink} onClick={onBack} role="link" tabIndex={0}
-            onKeyDown={e => e.key === 'Enter' && onBack()}>
-            <Icon name="arrow-left" size={13} style={{ display: 'inline-block', verticalAlign: '-2px', marginRight: 4 }} />{project.title}
-          </span>
-          <span style={S.breadSep}>/</span>
-          <span>角色</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {headColor && <span style={{ width: 14, height: 14, borderRadius: 4, background: headColor, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.12)', flexShrink: 0 }} />}
           <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-.03em', lineHeight: 1.15, color: 'var(--text)' }}>{char.name}</h1>
         </div>
@@ -819,28 +832,18 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
         </div>
       )}
       {error && <p style={S.error}>{error}</p>}
-      {onSendToGenerate && (
-        <button
-          style={{ ...UI.btnSecondary, width: '100%', height: 36, color: 'var(--accent)', borderColor: 'var(--accent-border)', background: 'var(--accent-soft)', fontWeight: 600, ...(sendingToGen ? { opacity: 0.7, cursor: 'wait' } : {}) }}
-          disabled={sendingToGen}
-          onClick={async () => {
-            // 後端即時編譯英文識別段；Ollama 失敗時回中文 fallback，放回中文描述欄
-            setSendingToGen(true); setError(null)
-            try {
-              const d = await (await request(`/characters/${char.id}/identity-prompt`)).json()
-              onSendToGenerate(d.source === 'compiled'
-                ? { en: d.positive, negative: d.negative, zh: '', characterId: char.id }
-                : { en: '', zh: d.zh, characterId: char.id })
-            } catch (e) { setError(e.message) } finally { setSendingToGen(false) }
-          }}
-          title="將角色識別段（英文 tag）帶入文字→生圖 Tab"
-        >{sendingToGen ? <><Spinner />編譯角色提示詞中…</> : <><Icon name="wand-sparkles" size={15} />以此角色生圖</>}</button>
-      )}
     </>
   )
 
   return (
-    <div style={S.root} ref={rootRef}>
+    <div style={{ ...S.root, '--cf-backbar-h': `${BACKBAR_H}px` }} ref={rootRef}>
+      {/* 返回列：固定在捲動區頂端，主版本與變體共用 */}
+      <div style={{ ...S.backBar, height: BACKBAR_H }}>
+        <button className="cf-backbtn" style={S.backBtn} onClick={onBack} title={`回到「${project.title}」的角色列表`}>
+          <Icon name="arrow-left" size={16} />返回角色列表
+        </button>
+        <span style={S.backCrumb}>{project.title}<span style={S.breadSep}>/</span><span style={{ color: 'var(--text)' }}>{char.name}</span></span>
+      </div>
 
       {activeTab === 0 ? (
       <div style={S.detail} className={`cf-detail${summaryHidden ? ' cf-detail--nosum' : ''}`}>
@@ -944,9 +947,10 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
         {/* ── 資料 ── */}
         <div style={S.detailRight}>
-          <div style={{ ...S.sectionHead, marginBottom: 0, position: 'sticky', top: 0, zIndex: 3, padding: '8px 0', background: 'var(--bg)' }}>
+          <div style={{ ...S.sectionHead, marginBottom: 0, position: 'sticky', top: 'var(--cf-backbar-h, 0px)', zIndex: 3, padding: '8px 0', background: 'var(--bg)' }}>
             <span style={{ ...S.sectionLabel, marginBottom: 0 }}>角色資料</span>
             <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {sendToGenButton}
               {summaryHidden && (
                 <button style={UI.btnGhost} onClick={toggleSummary} title="顯示 AI 整理資訊">
                   <Icon name="sparkles" size={13} style={{ color: 'var(--accent)' }} />AI 整理資訊
@@ -1330,9 +1334,10 @@ export function CharacterDetailView({ character: initChar, project, allFactions,
 
         {/* ── 資料（名稱鎖定） ── */}
         <div style={S.detailRight}>
-          <div style={{ ...S.sectionHead, marginBottom: 0, position: 'sticky', top: 0, zIndex: 3, padding: '8px 0', background: 'var(--bg)' }}>
+          <div style={{ ...S.sectionHead, marginBottom: 0, position: 'sticky', top: 'var(--cf-backbar-h, 0px)', zIndex: 3, padding: '8px 0', background: 'var(--bg)' }}>
             <span style={{ ...S.sectionLabel, marginBottom: 0 }}>角色資料</span>
             <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {sendToGenButton}
               {summaryHidden && (
                 <button style={UI.btnGhost} onClick={toggleSummary} title="顯示 AI 整理資訊">
                   <Icon name="sparkles" size={13} style={{ color: 'var(--accent)' }} />AI 整理資訊
